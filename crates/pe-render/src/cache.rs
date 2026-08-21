@@ -76,6 +76,10 @@ pub struct RenderContext {
     /// Hash of the colour-management settings, which sit outside the stack but
     /// affect every stage.
     pub color: u64,
+    /// Hash of the crop and straighten settings. They run before row zero, so
+    /// a change to them makes every cached stage stale even when the output
+    /// happens to come out the same size.
+    pub geometry: u64,
     /// Which rectangle of the frame is being rendered. Panning or zooming
     /// makes every cached stage stale, because they were rendered for a
     /// different part of the picture.
@@ -196,8 +200,29 @@ mod tests {
         width: 1920,
         height: 1080,
         color: 7,
+        geometry: 11,
         view: 0,
     };
+
+    /// Cropping runs before row zero, so a change to it invalidates the whole
+    /// chain — including the case that would otherwise slip through, where a
+    /// rotation leaves the output exactly the same size.
+    #[test]
+    fn changing_the_crop_invalidates_every_stage() {
+        let stack = stack_of(3);
+        let mut cache = StageCache::new();
+        let first = cache.plan(&stack, CTX, |_| false);
+        cache.store_plan(&stack, &first);
+        assert_eq!(cache.len(), 3);
+
+        let moved = RenderContext {
+            geometry: 12,
+            ..CTX
+        };
+        let plan = cache.plan(&stack, moved, |_| false);
+        assert_eq!(plan.first_dirty, 0);
+        assert_eq!(plan.reuse, None);
+    }
 
     fn stack_of(n: u64) -> Stack {
         let mut s = Stack::default();

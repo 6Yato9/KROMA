@@ -64,6 +64,44 @@ The `key` variants are declared but unimplemented until M3. Declaring them now
 means the format does not need a version bump when masks land, and the
 renderer's row loop handles an optional key from the very first version.
 
+## Geometry is not an effect
+
+Crop, straighten, flip and quarter-turn live in `Document::geometry`, outside
+the stack, and run *before* row zero. The reason is structural: every row in
+the stack takes an image and returns an image of the same size. Cropping
+changes the size, so a crop row would force every later row — and the stage
+cache, and the export path — to cope with the frame changing shape underneath
+it.
+
+Putting it first also settles a question that otherwise has no good answer. A
+vignette darkens the corners of the photograph the user is making, not the
+corners of the sensor. Because the crop happens first, "the frame" already
+means the cropped frame everywhere downstream, and no effect had to learn
+about cropping at all. `effects_see_the_cropped_frame` is the guard.
+
+**The model is Lightroom's.** The whole image is rotated about its centre into
+*straightened space*, and the crop is an axis-aligned rectangle in there. That
+is what makes the overlay tractable: while the crop tool is open the viewer
+shows straightened space directly, so the rectangle stays axis-aligned on
+screen at any angle.
+
+**It costs no extra pass.** The crop, the angle, the turns, the flips and the
+preview's own zoom and pan are all affine, so they compose into a single map
+that the colour transform was already reading through. The source is sampled
+exactly once however many of them are set. A pass per operation would resample
+the picture two or three times over and soften it a little each time for
+nothing. `a_document_with_no_crop_does_not_resample` is what keeps the identity
+case honest — half a texel of drift would blur every photograph that ever
+passed through the program and look like nothing at all until someone compared
+at 400%.
+
+**`Document::resize` is separate and applies last.** The crop decides what is
+in the picture; the resize decides how many pixels it is delivered in. Running
+it after the stack means grain and sharpening were rendered at full resolution
+and are scaled down along with the picture, which is the only order that looks
+like the preview did. It never enlarges: a request for 2048 on the long edge
+from a 1600px file gives back the file, not a soft version of it.
+
 ## Open question: embedded or referenced source
 
 `Source` supports both. Referenced is smaller; embedded survives the user

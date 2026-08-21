@@ -54,6 +54,15 @@ impl Region {
         [self.offset[0], self.offset[1], self.size[0], self.size[1]]
     }
 
+    /// The same rectangle as an affine map, so it composes with the crop.
+    pub fn to_affine(self) -> pe_core::Affine {
+        pe_core::Affine {
+            x_axis: [self.size[0], 0.0],
+            y_axis: [0.0, self.size[1]],
+            origin: self.offset,
+        }
+    }
+
     /// A stable key for the stage cache. Panning or zooming must invalidate
     /// every cached stage, because they were rendered for a different
     /// rectangle — quantised so that sub-pixel jitter does not thrash the
@@ -73,6 +82,46 @@ impl Default for Region {
     }
 }
 
+/// How a transform pass reads its source.
+///
+/// The map and the out-of-bounds rule travel together because they are only
+/// ever meaningful together: blanking matters exactly when the map can point
+/// somewhere the photograph is not, which is what straightening does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sampling {
+    /// Output uv to source uv.
+    pub map: pe_core::Affine,
+    /// Whether a sample landing outside the source reads as blank rather than
+    /// smearing the nearest edge pixel across it.
+    pub blank_outside: bool,
+}
+
+impl Sampling {
+    /// Read the whole source, one to one.
+    pub const WHOLE: Sampling = Sampling {
+        map: pe_core::Affine::IDENTITY,
+        blank_outside: false,
+    };
+
+    /// Read what a crop describes, blanking the overhang a straightening angle
+    /// leaves behind.
+    pub fn of(geometry: &pe_core::Geometry, source_w: u32, source_h: u32) -> Sampling {
+        Sampling {
+            map: geometry.sampling(source_w, source_h),
+            blank_outside: !geometry.fits(source_w, source_h),
+        }
+    }
+
+    /// Narrow this to a sub-rectangle of its own output — what the preview
+    /// does as the view zooms in.
+    pub fn within(self, region: Region) -> Sampling {
+        Sampling {
+            map: region.to_affine().then(self.map),
+            ..self
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum RenderError {
     #[error("no suitable GPU adapter: {0}")]
@@ -85,6 +134,23 @@ pub enum RenderError {
     Surface(String),
     #[error("could not read a texture back to the CPU: {0}")]
     Readback(String),
+}
+
+/// Hash the crop and straighten settings for [`RenderContext::geometry`].
+///
+/// Serialised rather than hand-hashed for the same reason row fingerprints
+/// are: it is all floats, and a hand-rolled hash is the kind of thing that
+/// silently stops covering a field the day someone adds one.
+pub fn geometry_fingerprint(g: &pe_core::Geometry) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    match serde_json::to_string(g) {
+        Ok(s) => s.hash(&mut h),
+        // Unhashable geometry is a bug, but rendering something stale is worse
+        // than rendering something twice.
+        Err(_) => u64::MAX.hash(&mut h),
+    }
+    h.finish()
 }
 
 /// Hash the colour-management settings for [`RenderContext::color`].

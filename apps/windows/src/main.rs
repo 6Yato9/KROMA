@@ -11,6 +11,7 @@
 //! effects list already uses.
 
 mod basic;
+mod crop;
 mod curve;
 mod inspector;
 mod mixer;
@@ -77,11 +78,19 @@ pub struct App {
     /// deferred to the first frame rather than done in the constructor.
     titled: bool,
     view: View,
+    /// Whether the crop tool is open. It changes what the viewer shows — the
+    /// whole straightened frame rather than the cropped result — so it lives
+    /// here rather than inside the panel.
+    cropping: bool,
     /// Last frame's framing. Turning a drag or a scroll into a move in image
     /// space needs the scale and the visible rectangle, and both are outputs
     /// of rendering — so the interaction uses the previous frame's, which is
     /// one frame stale and entirely imperceptible.
     last: Option<(f32, egui::Rect)>,
+    /// Pixel size of the frame that was last drawn. A drag is measured against
+    /// the picture on screen, and once the photograph is cropped that is no
+    /// longer the size of the file it came from.
+    last_frame: (u32, u32),
 }
 
 impl App {
@@ -117,7 +126,9 @@ impl App {
             status: String::new(),
             titled: false,
             view: View::default(),
+            cropping: false,
             last: None,
+            last_frame: (1, 1),
         }
     }
 
@@ -150,6 +161,7 @@ impl App {
         self.image = image;
         self.path = Some(path);
         self.view.fit();
+        self.cropping = false;
         self.last = None;
         self.set_title(ctx);
     }
@@ -173,8 +185,8 @@ impl App {
             return;
         };
         let image = egui::vec2(
-            self.image.width.max(1) as f32,
-            self.image.height.max(1) as f32,
+            self.last_frame.0.max(1) as f32,
+            self.last_frame.1.max(1) as f32,
         );
 
         if response.double_clicked() {
@@ -298,12 +310,22 @@ impl App {
             .unwrap_or_else(|| PathBuf::from("export.jpg"))
             .with_extension("edited.jpg");
 
+        // The crop decides how much picture there is and the resize decides
+        // how many pixels it comes in; neither is the source's size, and
+        // assuming it was would hand the encoder the wrong dimensions for
+        // every cropped export.
+        let (w, h) = pe_render::export::output_size(
+            self.history.document(),
+            self.image.width,
+            self.image.height,
+        );
+
         match preview.export(&self.image, self.history.document()) {
             Ok(pixels) => {
-                let saved = pe_io::DecodedImage::new(self.image.width, self.image.height, pixels)
+                let saved = pe_io::DecodedImage::new(w, h, pixels)
                     .and_then(|img| pe_io::save_jpeg(&img, &out, 95));
                 self.status = match saved {
-                    Ok(()) => format!("exported {}", out.display()),
+                    Ok(()) => format!("exported {} at {w}x{h}", out.display()),
                     Err(e) => format!("export failed: {e}"),
                 };
             }
@@ -324,6 +346,10 @@ impl eframe::App for App {
                 egui::Key::Z,
             ) {
                 self.history.redo();
+            }
+            if i.consume_key(egui::Modifiers::NONE, egui::Key::C) {
+                self.cropping = !self.cropping;
+                self.view.fit();
             }
             if i.consume_key(egui::Modifiers::SHIFT, egui::Key::D) {
                 self.bypass_all = !self.bypass_all;
@@ -388,6 +414,14 @@ impl eframe::App for App {
                 ui.separator();
                 if ui.button("Export JPEG").clicked() {
                     self.export();
+                }
+                ui.separator();
+                if ui
+                    .toggle_value(&mut self.cropping, "Crop")
+                    .on_hover_text("C")
+                    .clicked()
+                {
+                    self.view.fit();
                 }
                 ui.separator();
                 ui.add_enabled_ui(!self.view.is_fit(), |ui| {
@@ -455,6 +489,17 @@ impl eframe::App for App {
                             }
                         });
 
+                    egui::CollapsingHeader::new("Crop & Size")
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            let source = (self.image.width, self.image.height);
+                            let was = self.cropping;
+                            crop::panel(ui, &mut self.history, source, &mut self.cropping);
+                            if was != self.cropping {
+                                self.view.fit();
+                            }
+                        });
+
                     egui::CollapsingHeader::new("Tone Curve").show(ui, |ui| {
                         curve::editor(ui, &mut self.history);
                     });
@@ -490,7 +535,9 @@ impl eframe::App for App {
                 // are handled against the same rectangle the image is drawn in.
                 let (rect, response) =
                     ui.allocate_exact_size(viewport, egui::Sense::click_and_drag());
-                self.handle_view_input(ui, &response, rect);
+                if !self.cropping {
+                    self.handle_view_input(ui, &response, rect);
+                }
 
                 let doc = if self.bypass_all {
                     // The cheapest honest bypass: render an empty stack. It
@@ -503,14 +550,44 @@ impl eframe::App for App {
                     self.history.document().clone()
                 };
 
+                let source = (self.image.width, self.image.height);
+                // The crop tool shows the whole straightened frame so the user
+                // can see what is outside the rectangle; everything else shows
+                // the cropped result, which is what will be exported.
+                let framing_geometry = if self.cropping {
+                    doc.geometry.enclosing(source.0, source.1)
+                } else {
+                    doc.geometry
+                };
+
                 let image = &self.image;
-                let view = self.view;
+                let view = if self.cropping {
+                    View::default()
+                } else {
+                    self.view
+                };
                 let preview = self.preview.as_mut().expect("checked above");
-                match preview.render(image, &doc, view, viewport) {
+                match preview.render(image, &doc, framing_geometry, view, viewport) {
                     Ok(framing) => {
                         self.last_passes = framing.passes;
                         self.last = Some((framing.scale, framing.visible));
-                        draw(ui, rect, &framing);
+                        self.last_frame = framing.frame;
+                        let target = draw(ui, rect, &framing);
+                        if self.cropping
+                            && let Some(next) = crop::overlay(
+                                ui,
+                                &response,
+                                target,
+                                self.history.document().geometry,
+                                source,
+                            )
+                        {
+                            self.history
+                                .edit("Crop", Some("crop.drag".into()), move |d| d.geometry = next);
+                        }
+                        if response.drag_stopped() {
+                            self.history.break_coalescing();
+                        }
                     }
                     Err(e) => {
                         ui.painter().text(
@@ -530,7 +607,7 @@ impl eframe::App for App {
 ///
 /// The uv rectangle trims the margin that was rendered for the benefit of
 /// spatial effects but is not meant to be seen.
-fn draw(ui: &egui::Ui, rect: egui::Rect, framing: &Framing) {
+fn draw(ui: &egui::Ui, rect: egui::Rect, framing: &Framing) -> egui::Rect {
     let target = egui::Rect::from_center_size(rect.center(), framing.size);
     ui.painter().add(egui::Shape::image(
         framing.texture,
@@ -538,4 +615,5 @@ fn draw(ui: &egui::Ui, rect: egui::Rect, framing: &Framing) {
         framing.uv,
         egui::Color32::WHITE,
     ));
+    target
 }

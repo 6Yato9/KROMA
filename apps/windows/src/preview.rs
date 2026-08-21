@@ -9,7 +9,7 @@ use std::sync::Arc;
 use egui::mutex::RwLock;
 use egui_wgpu::wgpu;
 use pe_color::space;
-use pe_core::Document;
+use pe_core::{Document, Geometry};
 use pe_io::DecodedImage;
 use pe_render::{EffectRenderer, GpuContext, ImageTexture, Region, RenderError, TransformPass};
 use pe_scopes::Histogram;
@@ -85,6 +85,10 @@ pub struct Framing {
     /// The visible rectangle in frame uv. The viewer needs it to turn a drag
     /// or a scroll at the cursor back into a move in image space.
     pub visible: egui::Rect,
+    /// Pixel size of the frame that was drawn. Not the source's size: the crop
+    /// decides what the frame is, and while the crop tool is open the frame is
+    /// bigger than either.
+    pub frame: (u32, u32),
     pub passes: usize,
 }
 
@@ -101,10 +105,12 @@ pub struct Preview {
     texture_id: Option<egui::TextureId>,
     size: (u32, u32),
     region: Region,
+    geometry: Geometry,
 
     hist_renderer: EffectRenderer,
     hist_working: Option<ImageTexture>,
     hist_display: ImageTexture,
+    hist_geometry: Option<Geometry>,
     histogram: Option<Histogram>,
 }
 
@@ -149,9 +155,11 @@ impl Preview {
             texture_id: None,
             size: (0, 0),
             region: Region::FULL,
+            geometry: Geometry::default(),
             hist_renderer,
             hist_working: None,
             hist_display,
+            hist_geometry: None,
             histogram: None,
         }
     }
@@ -167,16 +175,21 @@ impl Preview {
     /// document costs zero passes — and when it does, there is nothing new to
     /// read back and the GPU stall is skipped entirely. During a slider drag
     /// it is one 120 KB readback a frame, which is affordable.
-    fn update_histogram(&mut self, doc: &Document) {
-        if self.hist_working.is_none() {
-            self.hist_working = Some(self.to_working.to_working_in(
+    fn update_histogram(&mut self, doc: &Document, source: (u32, u32)) {
+        // The histogram describes the photograph the user is making, so it
+        // reads through the crop. A rejected corner should stop counting
+        // towards the clipping warning the moment it is cropped away.
+        if self.hist_working.is_none() || self.hist_geometry != Some(doc.geometry) {
+            self.hist_working = Some(self.to_working.to_working_mapped(
                 &self.gpu,
                 &self.source,
                 &doc.color.pipeline().input,
                 HIST_SIZE.0,
                 HIST_SIZE.1,
-                Region::FULL,
+                pe_render::Sampling::of(&doc.geometry, source.0, source.1),
             ));
+            self.hist_geometry = Some(doc.geometry);
+            self.hist_renderer.invalidate();
             self.histogram = None;
         }
         let working = self.hist_working.as_ref().expect("built above");
@@ -228,22 +241,31 @@ impl Preview {
         self.renderer.invalidate();
         self.hist_renderer.invalidate();
         self.hist_working = None;
+        self.hist_geometry = None;
         self.histogram = None;
         Ok(())
     }
 
     /// Render the document for the current view.
+    ///
+    /// `framing` is the geometry the *viewer* is showing, which is normally
+    /// the document's own. While the crop tool is open it is the enclosing
+    /// frame instead, so the user can see what is outside the crop; the
+    /// document is untouched either way.
     pub fn render(
         &mut self,
         image: &DecodedImage,
         doc: &Document,
+        framing: Geometry,
         view: View,
         viewport: egui::Vec2,
     ) -> Result<Framing, RenderError> {
-        let plan = frame_plan(image.width, image.height, view, viewport);
+        let (fw, fh) = framing.output_size(image.width, image.height);
+        let plan = frame_plan(fw, fh, view, viewport);
 
-        if self.size != plan.render_size || self.region != plan.rendered {
-            self.rebuild(doc, plan.render_size, plan.rendered)?;
+        if self.size != plan.render_size || self.region != plan.rendered || self.geometry != framing
+        {
+            self.rebuild(doc, image, framing, plan.render_size, plan.rendered)?;
         }
 
         let working = self.working.as_ref().expect("rebuilt above");
@@ -270,7 +292,7 @@ impl Preview {
         );
         self.gpu.queue.submit([encoder.finish()]);
 
-        self.update_histogram(doc);
+        self.update_histogram(doc, (image.width, image.height));
 
         Ok(Framing {
             texture: self.texture_id.expect("registered on rebuild"),
@@ -278,6 +300,7 @@ impl Preview {
             size: plan.on_screen,
             scale: plan.scale,
             visible: plan.visible,
+            frame: (fw, fh),
             passes,
         })
     }
@@ -285,20 +308,26 @@ impl Preview {
     fn rebuild(
         &mut self,
         doc: &Document,
+        image: &DecodedImage,
+        framing: Geometry,
         size: (u32, u32),
         region: Region,
     ) -> Result<(), RenderError> {
         let (w, h) = size;
 
-        // Decode the region straight into the working space. The fullscreen
-        // triangle plus a linear sampler gives a bilinear reduction for free.
-        self.working = Some(self.to_working.to_working_in(
+        // Decode the region straight into the working space, reading through
+        // the crop on the way. Both are affine, so they compose into one map
+        // and the source is still sampled exactly once — zooming into a
+        // straightened crop costs no more resampling than zooming into a
+        // plain one.
+        let sampling = pe_render::Sampling::of(&framing, image.width, image.height).within(region);
+        self.working = Some(self.to_working.to_working_mapped(
             &self.gpu,
             &self.source,
             &doc.color.pipeline().input,
             w,
             h,
-            region,
+            sampling,
         ));
 
         let display = ImageTexture::new(
@@ -331,6 +360,7 @@ impl Preview {
         self.display = Some(display);
         self.size = size;
         self.region = region;
+        self.geometry = framing;
         // Every cached stage was rendered for the old size or rectangle.
         self.renderer.invalidate();
         Ok(())

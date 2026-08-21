@@ -15,6 +15,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::geometry::{Geometry, Resize};
 use crate::stack::Stack;
 
 /// Bumped whenever the on-disk shape changes incompatibly. Migrations live in
@@ -86,6 +87,13 @@ pub struct Document {
     pub source: Source,
     #[serde(default)]
     pub color: ColorSettings,
+    /// Crop, straighten and flip. Applied before the stack, so "the frame"
+    /// means the cropped frame everywhere downstream.
+    #[serde(default)]
+    pub geometry: Geometry,
+    /// How big the exported file should be. The last thing applied.
+    #[serde(default)]
+    pub resize: Resize,
     #[serde(default)]
     pub stack: Stack,
     #[serde(default)]
@@ -102,6 +110,8 @@ impl Document {
             schema_version: SCHEMA_VERSION,
             source,
             color: ColorSettings::default(),
+            geometry: Geometry::default(),
+            resize: Resize::default(),
             stack: Stack::default(),
             metadata: Metadata::default(),
             unknown: Default::default(),

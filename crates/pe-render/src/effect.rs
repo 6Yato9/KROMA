@@ -232,6 +232,7 @@ impl EffectRenderer {
             width,
             height,
             color: crate::color_fingerprint(&doc.color),
+            geometry: crate::geometry_fingerprint(&doc.geometry),
             view: self.region.cache_key(),
         };
 

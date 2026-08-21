@@ -14,15 +14,17 @@ use crate::texture::{ImageTexture, WORKING_FORMAT};
 struct TransformUniform {
     /// `mat3x3<f32>` in WGSL: three columns, each padded to 16 bytes.
     gamut: [[f32; 4]; 3],
-    /// Sub-rectangle of the source to read: xy offset, zw size, in uv.
-    region: [f32; 4],
+    /// The two columns of the affine map's linear part.
+    axes: [f32; 4],
+    /// Its translation, plus the blank-outside flag.
+    origin: [f32; 4],
 }
 
 /// Renders one texture into another, rotating the gamut on the way.
 pub struct TransformPass {
-    /// Which part of the source the next `encode` reads. Reset to `FULL` by
-    /// `to_working`; set by `to_working_region`.
-    region: crate::Region,
+    /// How the next `encode` reads its source. Reset to the whole frame after
+    /// each mapped call, so the plain helpers stay plain.
+    sampling: crate::Sampling,
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
@@ -122,7 +124,7 @@ impl TransformPass {
         });
 
         Self {
-            region: crate::Region::FULL,
+            sampling: crate::Sampling::WHOLE,
             pipeline,
             bind_group_layout,
             sampler,
@@ -144,10 +146,50 @@ impl TransformPass {
         height: u32,
         region: crate::Region,
     ) -> ImageTexture {
-        self.region = region;
+        self.to_working_mapped(
+            gpu,
+            source,
+            source_space,
+            width,
+            height,
+            crate::Sampling::WHOLE.within(region),
+        )
+    }
+
+    /// The same, but reading through an arbitrary affine map.
+    ///
+    /// This is the one call that crop, straighten, flip and quarter-turn all
+    /// go through, composed with whatever rectangle the preview is zoomed
+    /// into. `blank_outside` decides what happens where the map falls off the
+    /// source, which only comes up while the crop tool is open.
+    pub fn to_working_mapped(
+        &mut self,
+        gpu: &GpuContext,
+        source: &ImageTexture,
+        source_space: &ColorSpace,
+        width: u32,
+        height: u32,
+        sampling: crate::Sampling,
+    ) -> ImageTexture {
+        self.sampling = sampling;
         let out = self.to_working_sized(gpu, source, source_space, width, height);
-        self.region = crate::Region::FULL;
+        self.sampling = crate::Sampling::WHOLE;
         out
+    }
+
+    /// Resample a working texture to a different size, changing nothing else.
+    ///
+    /// Used by export to step down towards a requested output size. It happens
+    /// in working space on purpose: averaging pixels is only meaningful in
+    /// linear light, and downscaling a gamma-encoded image darkens it.
+    pub fn resample(
+        &self,
+        gpu: &GpuContext,
+        source: &ImageTexture,
+        width: u32,
+        height: u32,
+    ) -> ImageTexture {
+        self.to_working_sized(gpu, source, &space::ACESCG, width, height)
     }
 
     /// Encode a pass converting `src` into `dst_view`, rotating from `from` to
@@ -175,7 +217,22 @@ impl TransformPass {
             0,
             bytemuck::bytes_of(&TransformUniform {
                 gamut: gamut.to_wgsl_mat3(),
-                region: self.region.to_array(),
+                axes: [
+                    self.sampling.map.x_axis[0],
+                    self.sampling.map.x_axis[1],
+                    self.sampling.map.y_axis[0],
+                    self.sampling.map.y_axis[1],
+                ],
+                origin: [
+                    self.sampling.map.origin[0],
+                    self.sampling.map.origin[1],
+                    if self.sampling.blank_outside {
+                        1.0
+                    } else {
+                        0.0
+                    },
+                    0.0,
+                ],
             }),
         );
 

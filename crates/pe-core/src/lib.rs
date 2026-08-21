@@ -13,12 +13,14 @@
 
 pub mod curve;
 pub mod document;
+pub mod geometry;
 pub mod history;
 pub mod parametric;
 pub mod params;
 pub mod stack;
 
 pub use document::{ColorSettings, Document, DocumentError, Metadata, SCHEMA_VERSION, Source};
+pub use geometry::{Affine, AspectLock, Geometry, Resize};
 pub use history::History;
 pub use params::{Curve, ParamMap, ParamValue, Wheel};
 pub use stack::{BlendMode, Key, KeyAdjust, RowId, Stack, StackRow, WindowShape};
