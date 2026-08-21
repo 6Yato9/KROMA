@@ -112,7 +112,7 @@ fn spatial_effects_look_the_same_at_two_resolutions() {
             "halation",
             &[
                 ("strength", ParamValue::Float(1.0)),
-                ("radius", ParamValue::Float(0.06)),
+                ("spread", ParamValue::Float(0.06)),
                 ("threshold", ParamValue::Float(0.4)),
             ],
         ),

@@ -69,6 +69,17 @@ fn sgn(x: f32) -> f32 {
 const CCT_A: f32 = 10.5402377416545;
 const CCT_B: f32 = 0.0729055341958355;
 
+// Tonal anchors *in ACEScct*, for effects that split the image into shadows,
+// midtones and highlights.
+//
+// These are not 0.0 / 0.5 / 1.0, and reaching for those is the mistake this
+// block exists to prevent: an SDR image occupies roughly 0.073 to 0.555 in
+// log, so a threshold at 0.6 never fires at all. Guarded by
+// pe_color::tests::acescct_anchors_match_the_shader.
+const CCT_BLACK: f32 = 0.0729055341958355;   // linear 0.0
+const CCT_GREY: f32 = 0.4135886669;          // linear 0.18
+const CCT_WHITE: f32 = 0.5547945205;         // linear 1.0
+
 fn cct_encode1(v: f32) -> f32 {
     let s = sgn(v);
     let a = abs(v);

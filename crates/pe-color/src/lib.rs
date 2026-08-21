@@ -102,6 +102,37 @@ mod tests {
         }
     }
 
+    /// The shader hardcodes the ACEScct positions of black, 18% grey and
+    /// diffuse white so effects can split the image into tonal bands.
+    ///
+    /// Reaching for 0.0 / 0.5 / 1.0 there is a real and easy mistake — an SDR
+    /// image only occupies about 0.073 to 0.555 in log, so a highlight
+    /// threshold at 0.6 silently never fires. This keeps the constants honest.
+    #[test]
+    fn acescct_anchors_match_the_shader() {
+        let shader = include_str!("../../../shaders/common.wgsl");
+        let read = |name: &str| -> f64 {
+            let decl = format!("const {name}: f32 = ");
+            let line = shader
+                .lines()
+                .find(|l| l.trim_start().starts_with(&decl))
+                .unwrap_or_else(|| panic!("{name} is missing from common.wgsl"));
+            line.split_once("= ")
+                .and_then(|(_, v)| v.split(';').next())
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or_else(|| panic!("could not parse {line:?}"))
+        };
+
+        for (name, linear) in [("CCT_BLACK", 0.0), ("CCT_GREY", 0.18), ("CCT_WHITE", 1.0)] {
+            let derived = TransferFn::AcesCct.encode(linear);
+            let in_shader = read(name);
+            assert!(
+                (derived - in_shader).abs() < 1e-6,
+                "{name}: shader has {in_shader}, ACEScct encodes linear {linear} to {derived}"
+            );
+        }
+    }
+
     #[test]
     fn ap1_luma_differs_from_rec709() {
         // Guards the doc comment above: if these ever coincide, the warning is

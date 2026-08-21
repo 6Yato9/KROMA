@@ -142,6 +142,25 @@ fn an_empty_stack_is_a_passthrough() {
     );
 }
 
+/// A Resolve-sourced default that is deliberately visible.
+///
+/// Split Tone ships at Strength 0.5, so adding it must change the image. This
+/// is the counterpart to the neutrality test: it stops someone "fixing" the
+/// exemption by quietly zeroing the default.
+#[test]
+fn split_tone_at_its_defaults_actually_does_something() {
+    let src = chart();
+    let Some(mut h) = Harness::new(&src) else {
+        return;
+    };
+    let out = h.render(&doc_with(&[("split_tone", &[])]));
+    let delta = out.max_channel_delta(&src).unwrap();
+    assert!(
+        delta > 4,
+        "Split Tone at Resolve defaults barely moved the image ({delta} levels)"
+    );
+}
+
 /// The most valuable invariant in M1.
 ///
 /// Adding any effect at its registry defaults must leave the image alone. If
@@ -154,6 +173,13 @@ fn every_effect_at_its_defaults_is_neutral() {
         return;
     };
     for effect in pe_effects::all() {
+        // A short, sourced list of look effects that Resolve ships with a
+        // visible default on purpose. Matching Resolve wins over the
+        // invariant for those; everything else must be invisible until
+        // touched.
+        if pe_effects::registry::EFFECTS_WITH_VISIBLE_DEFAULTS.contains(&effect.key) {
+            continue;
+        }
         let doc = doc_with(&[(effect.key, &[])]);
         let out = h.render(&doc);
         let delta = out.max_channel_delta(&src).unwrap();
@@ -383,7 +409,7 @@ fn halation_only_glows_from_highlights() {
         "halation",
         &[
             ("strength", ParamValue::Float(1.0)),
-            ("radius", ParamValue::Float(0.08)),
+            ("spread", ParamValue::Float(0.08)),
             ("threshold", ParamValue::Float(0.5)),
         ],
     )]);

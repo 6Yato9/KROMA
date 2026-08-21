@@ -149,14 +149,18 @@ fn row_ui(
 
         ui.add_space(2.0);
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("opacity").small().weak());
+            // Resolve calls this Blend and puts it in every plugin title bar:
+            // default 1.0, range 0..1. Ours lives on the row, so every effect
+            // gets one for free.
+            ui.label(egui::RichText::new("blend").small().weak())
+                .on_hover_text("Mixes this effect against its input. Resolve's per-effect Blend.");
             let r = ui.add(
                 egui::Slider::new(&mut opacity, 0.0..=1.0)
                     .show_value(false)
                     .fixed_decimals(2),
             );
             if r.changed() {
-                history.edit("Opacity", Some(format!("{}.opacity", id.0)), |doc| {
+                history.edit("Blend", Some(format!("{}.blend", id.0)), |doc| {
                     if let Some(row) = doc.stack.get_mut(id) {
                         row.opacity = opacity;
                     }

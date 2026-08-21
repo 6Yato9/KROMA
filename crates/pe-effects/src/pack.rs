@@ -219,37 +219,37 @@ mod tests {
 
     #[test]
     fn booleans_pack_as_zero_or_one() {
-        let e = by_key("grain").unwrap();
+        let e = by_key("split_tone").unwrap();
         let mut p = e.default_params();
-        let at = slot_of(e, "monochrome").unwrap();
+        let at = slot_of(e, "preview_influence").unwrap();
 
-        p.set("monochrome", ParamValue::Bool(true));
+        p.set("preview_influence", ParamValue::Bool(true));
         assert_eq!(pack(e, &p)[at], 1.0);
-        p.set("monochrome", ParamValue::Bool(false));
+        p.set("preview_influence", ParamValue::Bool(false));
         assert_eq!(pack(e, &p)[at], 0.0);
     }
 
     #[test]
     fn choices_pack_as_their_option_index() {
-        let e = by_key("halation").unwrap();
-        let at = slot_of(e, "tint").unwrap();
+        let e = by_key("split_tone").unwrap();
+        let at = slot_of(e, "mode").unwrap();
         let mut p = e.default_params();
 
-        p.set("tint", ParamValue::Choice("red".into()));
+        p.set("mode", ParamValue::Choice("natural".into()));
         assert_eq!(pack(e, &p)[at], 0.0);
-        p.set("tint", ParamValue::Choice("neutral".into()));
-        assert_eq!(pack(e, &p)[at], 3.0);
+        p.set("mode", ParamValue::Choice("custom".into()));
+        assert_eq!(pack(e, &p)[at], 2.0);
     }
 
     #[test]
     fn an_unknown_choice_falls_back_to_the_default_index_not_zero() {
-        // "orange" is the default and sits at index 1. Falling back to 0 would
-        // silently give a different look rather than the intended one.
-        let e = by_key("halation").unwrap();
-        let at = slot_of(e, "tint").unwrap();
+        // "strong" is index 1; an unrecognised mode must fall back to the
+        // declared default rather than to 0, which could be a different look.
+        let e = by_key("split_tone").unwrap();
+        let at = slot_of(e, "mode").unwrap();
         let mut p = e.default_params();
-        p.set("tint", ParamValue::Choice("chartreuse".into()));
-        assert_eq!(pack(e, &p)[at], 1.0);
+        p.set("mode", ParamValue::Choice("chartreuse".into()));
+        assert_eq!(pack(e, &p)[at], 0.0, "should fall back to natural");
     }
 
     #[test]

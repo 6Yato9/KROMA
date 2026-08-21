@@ -510,6 +510,7 @@ fn effect_source(name: &str) -> &'static str {
         "contrast" => include_str!("../../../shaders/effects/contrast.wgsl"),
         "curves" => include_str!("../../../shaders/effects/curves.wgsl"),
         "hsl" => include_str!("../../../shaders/effects/hsl.wgsl"),
+        "split_tone" => include_str!("../../../shaders/effects/split_tone.wgsl"),
         "primaries" => include_str!("../../../shaders/effects/primaries.wgsl"),
         "grain" => include_str!("../../../shaders/effects/grain.wgsl"),
         "halation" => include_str!("../../../shaders/effects/halation.wgsl"),

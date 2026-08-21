@@ -201,6 +201,144 @@ pub static EFFECTS: &[EffectDef] = &[
             },
         ],
     },
+    // Parameter names, ranges and defaults follow Resolve 20.1 — see
+    // docs/resolve-parameters.md. Strength 0.5 / Pivot 0.3 / Hue Angle 20 are
+    // read off the Resolve UI, so this effect is deliberately *not* neutral at
+    // its defaults; see `EFFECTS_WITH_VISIBLE_DEFAULTS`.
+    EffectDef {
+        key: "split_tone",
+        name: "Split Tone",
+        group: Group::Color,
+        space: WorkingSpace::Log,
+        shader: "split_tone",
+        spatial: false,
+        derived_slots: 0,
+        params: &[
+            ParamDef {
+                key: "mode",
+                name: "Split Tone Mode",
+                kind: ParamKind::Choice {
+                    options: &["natural", "strong", "custom"],
+                    default: "natural",
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "preview_influence",
+                name: "Preview Influence",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+            },
+            ParamDef {
+                key: "strength",
+                name: "Strength",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.0,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "pivot",
+                name: "Pivot",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.3,
+                    neutral: 0.3,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "hue_angle",
+                name: "Hue Angle",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 360.0,
+                    default: 20.0,
+                    neutral: 20.0,
+                },
+                unit: "°",
+            },
+            ParamDef {
+                key: "protect_neutrals",
+                name: "Protect Neutrals",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+            },
+            ParamDef {
+                key: "min_saturation",
+                name: "Minimum Saturation",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "max_saturation",
+                name: "Maximum Saturation",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+            },
+            // Custom mode only. Resolve hides these behind the mode dropdown;
+            // we keep them present so a document round-trips whatever mode it
+            // was saved in.
+            ParamDef {
+                key: "shadow_strength",
+                name: "Shadow Strength",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "shadow_hue",
+                name: "Shadow Hue",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 360.0,
+                    default: 200.0,
+                    neutral: 200.0,
+                },
+                unit: "°",
+            },
+            ParamDef {
+                key: "highlight_strength",
+                name: "Highlight Strength",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "highlight_hue",
+                name: "Highlight Hue",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 360.0,
+                    default: 20.0,
+                    neutral: 20.0,
+                },
+                unit: "°",
+            },
+        ],
+    },
     EffectDef {
         key: "grain",
         name: "Film Grain",
@@ -209,11 +347,26 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "grain",
         spatial: true,
         derived_slots: 0,
+        // Follows Resolve's Film Grain parameter set. Notably their
+        // Shadow/Midtone/Highlight Gain trio replaces the single "shadow bias"
+        // slider we had: three independent controls are strictly better than
+        // one that slides a peak around, and it is how a colourist expects to
+        // put grain in the midtones only.
         params: &[
-            amount("strength", "Strength"),
+            ParamDef {
+                key: "strength",
+                name: "Grain Strength",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+            },
             ParamDef {
                 key: "size",
-                name: "Size",
+                name: "Grain Size",
                 kind: ParamKind::Float {
                     min: 0.5,
                     max: 8.0,
@@ -225,20 +378,63 @@ pub static EFFECTS: &[EffectDef] = &[
                 unit: "µm",
             },
             ParamDef {
-                key: "shadow_bias",
-                name: "Shadow Bias",
+                key: "softness",
+                name: "Softness",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
-                    default: 0.5,
-                    neutral: 0.5,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+            },
+            // Resolve: "At a value of 0, grain is monochrome." A continuous
+            // control, not the boolean we had.
+            ParamDef {
+                key: "saturation",
+                name: "Saturation",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+            },
+            // "Lower values emphasize lighter grains, higher values emphasize
+            // darker grains."
+            bipolar("offset", "Offset", 1.0, ""),
+            ParamDef {
+                key: "shadow_gain",
+                name: "Shadow Gain",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 1.0,
+                    neutral: 1.0,
                 },
                 unit: "",
             },
             ParamDef {
-                key: "monochrome",
-                name: "Monochrome",
-                kind: ParamKind::Bool { default: false },
+                key: "midtone_gain",
+                name: "Midtone Gain",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "highlight_gain",
+                name: "Highlight Gain",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
                 unit: "",
             },
         ],
@@ -251,21 +447,14 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "halation",
         spatial: true,
         derived_slots: 0,
+        // Follows Resolve's Halation structure. Two changes worth noting
+        // against our M1 version: isolation is a *band* (Threshold is the low
+        // clip, Normalization the high clip) rather than a single threshold,
+        // and the glow has two independent layers. A secondary glow with its
+        // own spread is what gives the effect a tight core and a wide falloff
+        // at once, which one blur radius cannot do.
         params: &[
             amount("strength", "Strength"),
-            ParamDef {
-                key: "radius",
-                name: "Radius",
-                kind: ParamKind::Float {
-                    min: 0.0,
-                    max: 0.2,
-                    default: 0.02,
-                    neutral: 0.0,
-                },
-                // Fraction of the image's long edge. Resolution independence
-                // again: a pixel radius would shrink to a rim on export.
-                unit: "",
-            },
             ParamDef {
                 key: "threshold",
                 name: "Threshold",
@@ -278,11 +467,62 @@ pub static EFFECTS: &[EffectDef] = &[
                 unit: "",
             },
             ParamDef {
-                key: "tint",
-                name: "Tint",
-                kind: ParamKind::Choice {
-                    options: &["red", "orange", "warm", "neutral"],
-                    default: "orange",
+                key: "normalization",
+                name: "Normalization",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 8.0,
+                    default: 2.0,
+                    neutral: 2.0,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "spread",
+                name: "Spread",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 0.2,
+                    default: 0.02,
+                    neutral: 0.0,
+                },
+                // Fraction of the image's long edge. Resolution independence
+                // again: a pixel radius would shrink to a rim on export.
+                unit: "",
+            },
+            ParamDef {
+                key: "saturation",
+                name: "Saturation",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+            },
+            // Red-orange, the characteristic colour of light scattering back
+            // off the film base through the dye layers.
+            ParamDef {
+                key: "hue",
+                name: "Hue",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 360.0,
+                    default: 12.0,
+                    neutral: 12.0,
+                },
+                unit: "°",
+            },
+            amount("secondary_strength", "Secondary Glow"),
+            ParamDef {
+                key: "secondary_spread",
+                name: "Secondary Spread",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 0.4,
+                    default: 0.08,
+                    neutral: 0.0,
                 },
                 unit: "",
             },
@@ -335,6 +575,19 @@ pub static EFFECTS: &[EffectDef] = &[
     },
 ];
 
+/// Effects whose registry defaults deliberately change the image.
+///
+/// Most effects must be invisible until the user touches a control — adding
+/// one and seeing an unexplained jump reads as a bug. A few are *look*
+/// effects where Resolve ships a visible default on purpose, and matching
+/// them matters more than the invariant. Split Tone is the case: Resolve
+/// defaults it to Strength 0.5, and a look effect that does nothing until you
+/// drag something reads as broken in the other direction.
+///
+/// Adding to this list should be a deliberate, sourced decision, not a way to
+/// silence a failing test.
+pub const EFFECTS_WITH_VISIBLE_DEFAULTS: &[&str] = &["split_tone"];
+
 pub fn all() -> &'static [EffectDef] {
     EFFECTS
 }
@@ -349,8 +602,10 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn m1_ships_nine_effects() {
-        assert_eq!(EFFECTS.len(), 9, "M1's scope is exactly nine effects");
+    fn the_registry_is_the_expected_size() {
+        // Nine at M1, plus Split Tone once the Resolve parameter research
+        // landed. Pinned so an accidental duplicate or deletion is visible.
+        assert_eq!(EFFECTS.len(), 10);
     }
 
     #[test]
@@ -391,6 +646,7 @@ mod tests {
             ("curves", WorkingSpace::Log),
             ("hsl", WorkingSpace::Log),
             ("primaries", WorkingSpace::Log),
+            ("split_tone", WorkingSpace::Log),
             // Density in the negative, not light.
             ("grain", WorkingSpace::Log),
         ];
@@ -447,5 +703,51 @@ mod tests {
     #[test]
     fn unknown_keys_are_not_found() {
         assert!(by_key("dehaze").is_none(), "dehaze is M3, not M1");
+    }
+
+    #[test]
+    fn every_visible_default_effect_exists() {
+        for key in EFFECTS_WITH_VISIBLE_DEFAULTS {
+            assert!(
+                by_key(key).is_some(),
+                "{key} is exempted but not registered"
+            );
+        }
+    }
+
+    /// Resolve ships Split Tone at Strength 0.5, Pivot 0.3, Hue Angle 20 with
+    /// ranges 1 / 1 / 360. Pinned because these came from the real UI and a
+    /// silent drift would make our looks disagree with a colourist muscle
+    /// memory. See docs/resolve-parameters.md.
+    #[test]
+    fn split_tone_matches_the_resolve_defaults() {
+        let e = by_key("split_tone").unwrap();
+        let expect = [
+            ("strength", 0.5f32, 1.0f32),
+            ("pivot", 0.3, 1.0),
+            ("hue_angle", 20.0, 360.0),
+        ];
+        for (key, default, max) in expect {
+            match e.param(key).unwrap().kind {
+                ParamKind::Float {
+                    default: d,
+                    max: m,
+                    min,
+                    ..
+                } => {
+                    assert!((d - default).abs() < 1e-6, "{key} default is {d}");
+                    assert!((m - max).abs() < 1e-6, "{key} max is {m}");
+                    assert_eq!(min, 0.0, "{key} min is {min}");
+                }
+                _ => panic!("{key} should be a float"),
+            }
+        }
+        match e.param("mode").unwrap().kind {
+            ParamKind::Choice { options, default } => {
+                assert_eq!(options, ["natural", "strong", "custom"]);
+                assert_eq!(default, "natural");
+            }
+            _ => panic!("mode should be a choice"),
+        }
     }
 }
