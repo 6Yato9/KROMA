@@ -16,3 +16,4 @@ egui = "0.33"
 egui-wgpu = "0.33"
 eframe = { version = "0.33", default-features = false, features = ["wgpu", "default_fonts"] }
 pe-effects = { version = "0.0.1", path = "../../crates/pe-effects" }
+rfd = "0.17.2"

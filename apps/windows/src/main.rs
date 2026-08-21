@@ -5,10 +5,10 @@
 //! day a convenience function that touches pixels appears in here is the day
 //! the Mac port silently becomes a rewrite.
 //!
-//! M1's UI is deliberately disposable. egui gets the stack reorderable and the
-//! parameters live so the engine can be exercised by hand; the real Colour Page
-//! — viewer, scopes, palette strip — is M2, and this file is expected to be
-//! thrown away rather than grown into it.
+//! W1 of the Windows app plan: the things that block using it at all. Open a
+//! photo, save the edit, export. The Lightroom-style Basic panel and the
+//! Resolve wheels come next, as pinned rows at the head of the same stack the
+//! effects list already uses.
 
 mod inspector;
 mod preview;
@@ -42,7 +42,7 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1500.0, 950.0])
             .with_min_inner_size([900.0, 600.0])
-            .with_title("Photo Editor — M1"),
+            .with_title("Photo Editor"),
         ..Default::default()
     };
 
@@ -69,6 +69,9 @@ pub struct App {
     /// dragged, not the stack depth.
     last_passes: usize,
     status: String,
+    /// The window title can only be set once a Context exists, so it is
+    /// deferred to the first frame rather than done in the constructor.
+    titled: bool,
 }
 
 impl App {
@@ -102,7 +105,111 @@ impl App {
             bypass_all: false,
             last_passes: 0,
             status: String::new(),
+            titled: false,
         }
+    }
+
+    /// Open a photograph, replacing whatever is loaded.
+    ///
+    /// The edit is reset rather than carried over. Carrying a grade to a new
+    /// image is a real feature — Resolve's "apply grade from" — but it should
+    /// be an explicit action, not something that happens silently because you
+    /// opened a different file.
+    fn open_image(&mut self, path: PathBuf, ctx: &egui::Context) {
+        let image = match pe_io::load(&path) {
+            Ok(img) => img,
+            Err(e) => {
+                self.status = format!("could not open {}: {e}", path.display());
+                return;
+            }
+        };
+
+        if let Some(preview) = self.preview.as_mut()
+            && let Err(e) = preview.set_source(&image)
+        {
+            self.status = format!("could not upload {}: {e}", path.display());
+            return;
+        }
+
+        self.history = History::new(Document::from_path(path.to_string_lossy().to_string()));
+        self.ids = RowIdGenerator::default();
+        self.status = format!("opened {}", path.display());
+        self.image = image;
+        self.path = Some(path);
+        self.set_title(ctx);
+    }
+
+    fn set_title(&self, ctx: &egui::Context) {
+        let name = self
+            .path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "test chart".to_string());
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
+            "{name} — {}x{} — Photo Editor",
+            self.image.width, self.image.height
+        )));
+    }
+
+    fn open_dialog(&mut self, ctx: &egui::Context) {
+        let start = self
+            .path
+            .as_ref()
+            .and_then(|p| p.parent())
+            .map(|p| p.to_path_buf());
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("Images", &["jpg", "jpeg", "png"])
+            .set_title("Open photo");
+        if let Some(dir) = start {
+            dialog = dialog.set_directory(dir);
+        }
+        if let Some(path) = dialog.pick_file() {
+            self.open_image(path, ctx);
+        }
+    }
+
+    /// Save the edit beside the photo as `<name>.peproj`.
+    ///
+    /// The stack *is* the document, so this is a few kilobytes of JSON and the
+    /// original file is never touched.
+    fn save_edit(&mut self) {
+        let Some(path) = self.edit_path() else {
+            self.status = "open a photo first".into();
+            return;
+        };
+        match self
+            .history
+            .document()
+            .to_json()
+            .map_err(|e| e.to_string())
+            .and_then(|json| std::fs::write(&path, json).map_err(|e| e.to_string()))
+        {
+            Ok(()) => self.status = format!("saved {}", path.display()),
+            Err(e) => self.status = format!("save failed: {e}"),
+        }
+    }
+
+    fn load_edit(&mut self) {
+        let Some(path) = self.edit_path() else {
+            self.status = "open a photo first".into();
+            return;
+        };
+        let loaded = std::fs::read_to_string(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|json| Document::from_json(&json).map_err(|e| e.to_string()));
+        match loaded {
+            Ok(doc) => {
+                self.ids = RowIdGenerator::resuming(&doc);
+                self.history = History::new(doc);
+                self.status = format!("loaded {}", path.display());
+            }
+            Err(e) => self.status = format!("load failed: {e}"),
+        }
+    }
+
+    fn edit_path(&self) -> Option<PathBuf> {
+        Some(self.path.as_ref()?.with_extension("peproj"))
     }
 
     fn export(&mut self) {
@@ -132,6 +239,7 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let mut open_requested = false;
         ctx.input_mut(|i| {
             if i.consume_key(egui::Modifiers::COMMAND, egui::Key::Z) {
                 self.history.undo();
@@ -145,10 +253,36 @@ impl eframe::App for App {
             if i.consume_key(egui::Modifiers::SHIFT, egui::Key::D) {
                 self.bypass_all = !self.bypass_all;
             }
+            open_requested = i.consume_key(egui::Modifiers::COMMAND, egui::Key::O);
         });
+        if open_requested {
+            self.open_dialog(ctx);
+        }
+
+        // Drag a photo onto the window. Cheaper for the user than any menu,
+        // and the first thing people try.
+        let dropped: Vec<PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect()
+        });
+        if let Some(path) = dropped.into_iter().next() {
+            self.open_image(path, ctx);
+        }
+
+        if !self.titled {
+            self.set_title(ctx);
+            self.titled = true;
+        }
 
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
+                if ui.button("Open…").on_hover_text("Ctrl+O").clicked() {
+                    self.open_dialog(ctx);
+                }
+                ui.separator();
                 ui.add_enabled_ui(self.history.can_undo(), |ui| {
                     let label = self.history.undo_label().unwrap_or("").to_string();
                     if ui.button("Undo").on_hover_text(label).clicked() {
@@ -163,6 +297,19 @@ impl eframe::App for App {
                 ui.separator();
                 ui.toggle_value(&mut self.bypass_all, "Bypass all")
                     .on_hover_text("Shift+D — flatten the stack for an honest before/after");
+                ui.separator();
+                ui.add_enabled_ui(self.path.is_some(), |ui| {
+                    if ui
+                        .button("Save edit")
+                        .on_hover_text("Writes <photo>.peproj beside the original")
+                        .clicked()
+                    {
+                        self.save_edit();
+                    }
+                    if ui.button("Load edit").clicked() {
+                        self.load_edit();
+                    }
+                });
                 ui.separator();
                 if ui.button("Export JPEG").clicked() {
                     self.export();

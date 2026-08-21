@@ -69,6 +69,25 @@ impl Preview {
         }
     }
 
+    /// Swap in a different photograph.
+    ///
+    /// Zeroing `size` is what forces `resize` to rebuild the working and
+    /// display textures on the next frame — the new image may be a different
+    /// shape, so every cached stage and both intermediates are stale.
+    pub fn set_source(&mut self, image: &DecodedImage) -> Result<(), RenderError> {
+        self.source = ImageTexture::upload_rgba8(
+            &self.gpu.device,
+            &self.gpu.queue,
+            image.width,
+            image.height,
+            &image.pixels,
+            "source",
+        )?;
+        self.size = (0, 0);
+        self.renderer.invalidate();
+        Ok(())
+    }
+
     /// Render the document and return the egui texture plus the number of GPU
     /// passes the frame actually cost.
     pub fn render(
