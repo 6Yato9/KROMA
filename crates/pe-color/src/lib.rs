@@ -35,12 +35,14 @@ pub mod pipeline;
 pub mod primaries;
 pub mod space;
 pub mod transfer;
+pub mod white_balance;
 
 pub use matrix::Mat3;
 pub use pipeline::{Pipeline, WorkingSpace};
 pub use primaries::{Chromaticity, Primaries};
 pub use space::ColorSpace;
 pub use transfer::TransferFn;
+pub use white_balance::working_gains;
 
 /// Rec.709 luminance weights, for the many places that need a luma value.
 ///
@@ -63,6 +65,41 @@ mod tests {
     fn ap1_luma_weights_sum_to_one() {
         let w = ap1_luma();
         assert!((w.iter().sum::<f64>() - 1.0).abs() < 1e-10);
+    }
+
+    /// The shader hardcodes AP1's luminance weights because deriving a matrix
+    /// per pixel would be absurd. This is the only thing keeping that constant
+    /// honest — without it, changing the working gamut would leave every
+    /// saturation and grain calculation quietly weighted for the old one.
+    #[test]
+    fn ap1_luma_matches_the_shader_constant() {
+        let shader = include_str!("../../../shaders/common.wgsl");
+        let line = shader
+            .lines()
+            .find(|l| l.trim_start().starts_with("const AP1_LUMA"))
+            .expect("AP1_LUMA is missing from common.wgsl");
+
+        let inner = line
+            .split_once('(')
+            .and_then(|(_, rest)| rest.rsplit_once(')'))
+            .map(|(args, _)| args)
+            .expect("could not find the vec3 arguments");
+
+        let shader_weights: Vec<f64> = inner
+            .split(',')
+            .map(|s| s.trim().parse().expect("non-numeric weight"))
+            .collect();
+
+        let derived = ap1_luma();
+        assert_eq!(shader_weights.len(), 3);
+        for i in 0..3 {
+            assert!(
+                (shader_weights[i] - derived[i]).abs() < 1e-6,
+                "channel {i}: shader has {}, AP1 derives {}",
+                shader_weights[i],
+                derived[i]
+            );
+        }
     }
 
     #[test]

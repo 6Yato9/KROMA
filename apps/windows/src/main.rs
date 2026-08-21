@@ -5,207 +5,246 @@
 //! day a convenience function that touches pixels appears in here is the day
 //! the Mac port silently becomes a rewrite.
 //!
-//! At M0 it does the minimum that proves the pipeline is real end to end: load
-//! an image, push it through source → ACEScg (16-bit float) → display, and show
-//! the result. No controls yet — M1 adds the throwaway egui inspector.
+//! M1's UI is deliberately disposable. egui gets the stack reorderable and the
+//! parameters live so the engine can be exercised by hand; the real Colour Page
+//! — viewer, scopes, palette strip — is M2, and this file is expected to be
+//! thrown away rather than grown into it.
 
-use std::sync::Arc;
+mod inspector;
+mod preview;
 
-use pe_color::space;
-use pe_render::{GpuContext, ImageTexture, TransformPass};
-use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::{Window, WindowId};
+use std::path::PathBuf;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let source = std::env::args().nth(1);
+use pe_core::{Document, History, RowIdGenerator};
+use pe_render::GpuContext;
 
-    let image = match &source {
-        Some(path) => {
-            println!("loading {path}");
-            pe_io::load(path)?
-        }
+use crate::preview::Preview;
+
+fn main() -> eframe::Result {
+    let path = std::env::args().nth(1).map(PathBuf::from);
+
+    let image = match &path {
+        Some(p) => match pe_io::load(p) {
+            Ok(img) => img,
+            Err(e) => {
+                eprintln!("could not open {}: {e}", p.display());
+                std::process::exit(1);
+            }
+        },
         None => {
-            println!("no image given, showing the built-in test chart");
-            pe_io::test_chart(1024, 768)
+            eprintln!("no image given, showing the built-in test chart");
+            pe_io::test_chart(1600, 1200)
         }
     };
-    println!("image is {}x{}", image.width, image.height);
 
-    let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(ControlFlow::Wait);
-    let mut app = App { image, state: None };
-    event_loop.run_app(&mut app)?;
-    Ok(())
+    let options = eframe::NativeOptions {
+        renderer: eframe::Renderer::Wgpu,
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1500.0, 950.0])
+            .with_min_inner_size([900.0, 600.0])
+            .with_title("Photo Editor — M1"),
+        ..Default::default()
+    };
+
+    eframe::run_native(
+        "Photo Editor",
+        options,
+        Box::new(move |cc| Ok(Box::new(App::new(cc, image, path)))),
+    )
 }
 
-struct Renderer {
-    window: Arc<Window>,
-    surface: wgpu::Surface<'static>,
-    config: wgpu::SurfaceConfiguration,
-    gpu: GpuContext,
-    /// Source image, sRGB-encoded, linearised by the hardware on sample.
-    source: ImageTexture,
-    /// The 16-bit float working-space texture. The heart of the pipeline.
-    working: ImageTexture,
-    /// source -> working (ACEScg)
-    to_working: TransformPass,
-    /// working -> surface
-    to_display: TransformPass,
-}
-
-struct App {
+pub struct App {
     image: pe_io::DecodedImage,
-    state: Option<Renderer>,
-}
+    path: Option<PathBuf>,
+    history: History,
+    ids: RowIdGenerator,
+    preview: Option<Preview>,
+    gpu_name: String,
 
-impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.state.is_some() {
-            return;
-        }
-        match self.init(event_loop) {
-            Ok(r) => self.state = Some(r),
-            Err(e) => {
-                eprintln!("could not start the renderer: {e}");
-                event_loop.exit();
-            }
-        }
-    }
-
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        let Some(state) = self.state.as_mut() else {
-            return;
-        };
-        match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => {
-                state.resize(size.width, size.height);
-                state.window.request_redraw();
-            }
-            WindowEvent::RedrawRequested => {
-                if let Err(e) = state.render() {
-                    eprintln!("render failed: {e}");
-                }
-            }
-            _ => {}
-        }
-    }
+    /// Resolve binds this to Shift-D and you reach for it constantly: flatten
+    /// the whole stack for an honest before/after.
+    bypass_all: bool,
+    /// Passes the last frame executed. Displayed because it is the number that
+    /// proves the stage cache works — it should read 1 while a slider is being
+    /// dragged, not the stack depth.
+    last_passes: usize,
+    status: String,
 }
 
 impl App {
-    fn init(&self, event_loop: &ActiveEventLoop) -> Result<Renderer, Box<dyn std::error::Error>> {
-        let attrs = Window::default_attributes()
-            .with_title("Photo Editor — M0")
-            .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 800.0));
-        let window = Arc::new(event_loop.create_window(attrs)?);
-
-        // Order matters: one instance, the surface from it, then the adapter
-        // from that same instance. A surface belongs to its creating instance,
-        // and a device from a different one cannot present to it.
-        let instance = GpuContext::create_instance();
-        let surface = instance.create_surface(window.clone())?;
-        let gpu = pollster::block_on(GpuContext::from_instance(instance, Some(&surface)))?;
-        println!("GPU: {}", gpu.describe());
-        assert!(
-            gpu.supports_working_format(),
-            "this GPU cannot render to Rgba16Float, which the pipeline requires"
-        );
-
-        let size = window.inner_size();
-        let caps = surface.get_capabilities(&gpu.adapter);
-        // An sRGB surface format so the hardware applies the encoding OETF on
-        // write. See shaders/transform.wgsl.
-        let format = caps
-            .formats
-            .iter()
-            .copied()
-            .find(|f| f.is_srgb())
-            .unwrap_or(caps.formats[0]);
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format,
-            width: size.width.max(1),
-            height: size.height.max(1),
-            present_mode: caps.present_modes[0],
-            alpha_mode: caps.alpha_modes[0],
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
+    fn new(
+        cc: &eframe::CreationContext<'_>,
+        image: pe_io::DecodedImage,
+        path: Option<PathBuf>,
+    ) -> Self {
+        let doc = match &path {
+            Some(p) => Document::from_path(p.to_string_lossy().to_string()),
+            None => Document::from_path("<test chart>"),
         };
-        surface.configure(&gpu.device, &config);
 
-        let source = ImageTexture::upload_rgba8(
-            &gpu.device,
-            &gpu.queue,
-            self.image.width,
-            self.image.height,
-            &self.image.pixels,
-            "source",
-        )?;
+        let (preview, gpu_name) = match cc.wgpu_render_state.as_ref() {
+            Some(rs) => {
+                let gpu =
+                    GpuContext::from_parts(rs.adapter.clone(), rs.device.clone(), rs.queue.clone());
+                let name = gpu.describe();
+                (Some(Preview::new(gpu, rs.renderer.clone(), &image)), name)
+            }
+            None => (None, "no wgpu render state".to_string()),
+        };
 
-        let to_working = TransformPass::new(&gpu.device, pe_render::WORKING_FORMAT);
-        let to_display = TransformPass::new(&gpu.device, format);
+        Self {
+            image,
+            path,
+            history: History::new(doc),
+            ids: RowIdGenerator::default(),
+            preview,
+            gpu_name,
+            bypass_all: false,
+            last_passes: 0,
+            status: String::new(),
+        }
+    }
 
-        // Decode into working space once. At M1 the effect rows run between
-        // this and the display pass, and the stage cache keeps this result.
-        let working = to_working.to_working(&gpu, &source, &space::SRGB);
+    fn export(&mut self) {
+        let Some(preview) = self.preview.as_ref() else {
+            self.status = "no GPU".into();
+            return;
+        };
+        let out = self
+            .path
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("export.jpg"))
+            .with_extension("edited.jpg");
 
-        Ok(Renderer {
-            window,
-            surface,
-            config,
-            gpu,
-            source,
-            working,
-            to_working,
-            to_display,
-        })
+        match preview.export(&self.image, self.history.document()) {
+            Ok(pixels) => {
+                let saved = pe_io::DecodedImage::new(self.image.width, self.image.height, pixels)
+                    .and_then(|img| pe_io::save_jpeg(&img, &out, 95));
+                self.status = match saved {
+                    Ok(()) => format!("exported {}", out.display()),
+                    Err(e) => format!("export failed: {e}"),
+                };
+            }
+            Err(e) => self.status = format!("export failed: {e}"),
+        }
     }
 }
 
-impl Renderer {
-    fn resize(&mut self, width: u32, height: u32) {
-        if width == 0 || height == 0 {
-            return;
+impl eframe::App for App {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ctx.input_mut(|i| {
+            if i.consume_key(egui::Modifiers::COMMAND, egui::Key::Z) {
+                self.history.undo();
+            }
+            if i.consume_key(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::Z,
+            ) {
+                self.history.redo();
+            }
+            if i.consume_key(egui::Modifiers::SHIFT, egui::Key::D) {
+                self.bypass_all = !self.bypass_all;
+            }
+        });
+
+        egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.add_enabled_ui(self.history.can_undo(), |ui| {
+                    let label = self.history.undo_label().unwrap_or("").to_string();
+                    if ui.button("Undo").on_hover_text(label).clicked() {
+                        self.history.undo();
+                    }
+                });
+                ui.add_enabled_ui(self.history.can_redo(), |ui| {
+                    if ui.button("Redo").clicked() {
+                        self.history.redo();
+                    }
+                });
+                ui.separator();
+                ui.toggle_value(&mut self.bypass_all, "Bypass all")
+                    .on_hover_text("Shift+D — flatten the stack for an honest before/after");
+                ui.separator();
+                if ui.button("Export JPEG").clicked() {
+                    self.export();
+                }
+                ui.separator();
+                ui.label(
+                    egui::RichText::new(format!("{} passes", self.last_passes))
+                        .monospace()
+                        .strong(),
+                )
+                .on_hover_text(
+                    "GPU passes executed this frame. Dragging one slider in a deep \
+                     stack should read 1 — that is the stage cache doing its job.",
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(egui::RichText::new(&self.gpu_name).weak().small());
+                });
+            });
+        });
+
+        if !self.status.is_empty() {
+            egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(self.status.clone());
+                    if ui.small_button("dismiss").clicked() {
+                        self.status.clear();
+                    }
+                });
+            });
         }
-        self.config.width = width;
-        self.config.height = height;
-        self.surface.configure(&self.gpu.device, &self.config);
-    }
 
-    fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        let frame = self.surface.get_current_texture()?;
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-
-        let mut encoder = self
-            .gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("frame"),
+        egui::SidePanel::right("inspector")
+            .default_width(340.0)
+            .width_range(300.0..=560.0)
+            .show(ctx, |ui| {
+                inspector::show(ui, &mut self.history, &mut self.ids);
             });
 
-        // Working space (ACEScg, 16-bit float) out to the display space.
-        self.to_display.encode(
-            &self.gpu,
-            &mut encoder,
-            &self.working.view,
-            &view,
-            &space::ACESCG,
-            &space::SRGB,
-        );
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.fill(egui::Color32::from_gray(24)))
+            .show(ctx, |ui| {
+                let size = ui.available_size();
+                let Some(preview) = self.preview.as_mut() else {
+                    ui.centered_and_justified(|ui| ui.label("no GPU available"));
+                    return;
+                };
 
-        self.gpu.queue.submit([encoder.finish()]);
-        frame.present();
-        Ok(())
-    }
+                let doc = if self.bypass_all {
+                    // The cheapest honest bypass: render an empty stack. It
+                    // costs one frame of invalidation, and toggling back is
+                    // free because the row fingerprints have not changed.
+                    let mut d = self.history.document().clone();
+                    d.stack.rows.clear();
+                    d
+                } else {
+                    self.history.document().clone()
+                };
 
-    /// Kept so the unused-field warnings stay honest: these are what M1 builds
-    /// on, not leftovers.
-    #[allow(dead_code)]
-    fn pipeline_inputs(&self) -> (&ImageTexture, &TransformPass) {
-        (&self.source, &self.to_working)
+                match preview.render(&self.image, &doc, size) {
+                    Ok((texture, passes)) => {
+                        self.last_passes = passes;
+                        let aspect = self.image.width as f32 / self.image.height.max(1) as f32;
+                        let mut w = size.x;
+                        let mut h = w / aspect;
+                        if h > size.y {
+                            h = size.y;
+                            w = h * aspect;
+                        }
+                        ui.centered_and_justified(|ui| {
+                            ui.add(
+                                egui::Image::new(egui::load::SizedTexture::new(
+                                    texture,
+                                    egui::vec2(w, h),
+                                ))
+                                .fit_to_exact_size(egui::vec2(w, h)),
+                            );
+                        });
+                    }
+                    Err(e) => {
+                        ui.centered_and_justified(|ui| ui.label(format!("render failed: {e}")));
+                    }
+                }
+            });
     }
 }

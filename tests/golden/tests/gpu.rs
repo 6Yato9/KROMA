@@ -17,17 +17,8 @@ use pe_render::{GpuContext, ImageTexture, TransformPass};
 /// than that is a bug, not rounding.
 const GPU_TOLERANCE: u8 = 1;
 
-fn gpu() -> Option<GpuContext> {
-    match GpuContext::new_blocking() {
-        Ok(g) => {
-            eprintln!("GPU: {}", g.describe());
-            Some(g)
-        }
-        Err(e) => {
-            eprintln!("skipping GPU test: {e}");
-            None
-        }
-    }
+fn gpu() -> Option<&'static GpuContext> {
+    pe_golden::shared_gpu()
 }
 
 /// Run source → ACEScg (16-bit float) → sRGB on the GPU and read the result
@@ -79,7 +70,7 @@ fn the_gpu_pipeline_is_lossless_for_a_no_op_stack() {
     let Some(gpu) = gpu() else { return };
 
     let src = pe_io::test_chart(256, 192);
-    let out = round_trip_on_gpu(&gpu, &src);
+    let out = round_trip_on_gpu(gpu, &src);
 
     let delta = out.max_channel_delta(&src).expect("same size");
     assert!(
@@ -94,7 +85,7 @@ fn the_gpu_agrees_with_the_cpu_reference() {
     let Some(gpu) = gpu() else { return };
 
     let src = pe_io::test_chart(256, 192);
-    let on_gpu = round_trip_on_gpu(&gpu, &src);
+    let on_gpu = round_trip_on_gpu(gpu, &src);
     let on_cpu = pe_golden::render_reference(&src, &Pipeline::default(), &[]);
 
     let delta = on_gpu.max_channel_delta(&on_cpu).expect("same size");
@@ -113,7 +104,7 @@ fn a_neutral_ramp_stays_neutral_on_the_gpu() {
     let Some(gpu) = gpu() else { return };
 
     let src = pe_io::test_chart(256, 8);
-    let out = round_trip_on_gpu(&gpu, &src);
+    let out = round_trip_on_gpu(gpu, &src);
 
     for x in 0..out.width {
         let [r, g, b, _] = out.pixel(x, 0);
@@ -136,7 +127,7 @@ fn the_working_texture_really_is_16_bit_float() {
     let source =
         ImageTexture::upload_rgba8(&gpu.device, &gpu.queue, 64, 64, &src.pixels, "src").unwrap();
     let pass = TransformPass::new(&gpu.device, pe_render::WORKING_FORMAT);
-    let working = pass.to_working(&gpu, &source, &space::SRGB);
+    let working = pass.to_working(gpu, &source, &space::SRGB);
 
     assert_eq!(working.texture.format(), wgpu::TextureFormat::Rgba16Float);
 }

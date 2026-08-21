@@ -199,7 +199,25 @@ impl TransformPass {
         source: &ImageTexture,
         source_space: &ColorSpace,
     ) -> ImageTexture {
-        let dst = ImageTexture::new_working(&gpu.device, source.width, source.height, "working");
+        self.to_working_sized(gpu, source, source_space, source.width, source.height)
+    }
+
+    /// The same, at an explicit size.
+    ///
+    /// The interactive preview uses this to downsample to the viewport before
+    /// the stack runs. Without it, a 24MP image would allocate a 192 MB working
+    /// texture per row, and the stage cache — which is what keeps sliders
+    /// responsive — would be unaffordable. The fullscreen triangle plus a
+    /// linear sampler gives a bilinear downsample for free.
+    pub fn to_working_sized(
+        &self,
+        gpu: &GpuContext,
+        source: &ImageTexture,
+        source_space: &ColorSpace,
+        width: u32,
+        height: u32,
+    ) -> ImageTexture {
+        let dst = ImageTexture::new_working(&gpu.device, width, height, "working");
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {

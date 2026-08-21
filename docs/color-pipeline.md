@@ -79,7 +79,41 @@ common cause of crushed shadows.
 halation radius and vignette falloff are in physical or image-relative units.
 A pixel radius makes a 6000px export look nothing like the 1200px preview the
 user dialled in — grain becomes invisible fizz, halation shrinks to a rim.
-`spatial_radii_are_not_expressed_in_pixels` guards it as far as a test can.
+`spatial_radii_are_not_expressed_in_pixels` guards the units; the export tests
+`spatial_effects_look_the_same_at_two_resolutions` and
+`grain_survives_a_large_export` measure the actual result at 160px and 640px.
+
+**WGSL's `sign(0.0)` is `0.0`, Rust's `f32::signum(0.0)` is `1.0`.** The
+sign-preserving transfer functions rely on the Rust behaviour, so the shader
+uses `select(-1.0, 1.0, x >= 0.0)` instead. Using `sign()` would make
+`cct_encode(0.0)` return 0 rather than 0.0729 and crush every true black — and
+the CPU reference would still be right, so only a GPU-versus-CPU test would
+catch it.
+
+## The half-precision floor
+
+Measured at M1, and worth knowing before chasing it as a bug.
+
+A log-space effect at neutral settings does not return the image *exactly*. It
+shifts saturated colours by up to **two levels out of 255**. The chain is:
+
+1. Working textures are `Rgba16Float` — about 11 bits of mantissa.
+2. A log-space effect reads half, computes in `f32`, writes half again. The
+   result can land one ulp from where it started.
+3. On a saturated colour, converting back out of AP1 to a narrow output gamut
+   *amplifies* that ulp, because the inverse matrix cancels large terms down to
+   a near-zero channel.
+4. sRGB encoding is at its steepest exactly there.
+
+Two levels on saturated cyan is therefore the floor for a half-precision
+pipeline, not something to fix. `TOLERANCE` in the M1 effect tests is set to it
+deliberately, so anything larger still fails.
+
+The same amplification is why the curve LUT is **interpolated rather than
+nearest-neighbour**. Nearest-neighbour quantises to 1/255 in log space — and
+since log values for an SDR image only span roughly 0.07 to 0.55, barely half
+the table is even in use. That showed up as a 42-level shift on saturated cyan
+from an *identity* curve. With interpolation the identity is exact.
 
 ## The CPU reference path
 

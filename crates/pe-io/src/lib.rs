@@ -57,7 +57,7 @@ impl DecodedImage {
 
     /// Iterate RGB triples as 0..1 floats, dropping alpha.
     pub fn iter_rgb(&self) -> impl Iterator<Item = [f64; 3]> + '_ {
-        self.pixels.chunks_exact(4).map(|p| {
+        self.pixels.as_chunks::<4>().0.iter().map(|p| {
             [
                 p[0] as f64 / 255.0,
                 p[1] as f64 / 255.0,

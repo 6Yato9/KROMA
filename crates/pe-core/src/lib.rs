@@ -11,6 +11,7 @@
 //! properties that already exist rather than features to be added to each
 //! effect one at a time.
 
+pub mod curve;
 pub mod document;
 pub mod history;
 pub mod params;

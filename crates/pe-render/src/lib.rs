@@ -13,12 +13,16 @@
 
 pub mod cache;
 pub mod device;
+pub mod effect;
+pub mod export;
 pub mod readback;
 pub mod texture;
 pub mod transform;
 
 pub use cache::{RenderContext, RenderPlan, RowFingerprint, StageCache, fingerprint};
 pub use device::GpuContext;
+pub use effect::{EffectRenderer, Scratch};
+pub use export::render_full;
 pub use readback::read_rgba8;
 pub use texture::{ImageTexture, SOURCE_FORMAT, WORKING_FORMAT};
 pub use transform::TransformPass;
@@ -32,7 +36,7 @@ pub enum RenderError {
     #[error("expected {expected} bytes of pixel data, got {found}")]
     PixelCountMismatch { expected: usize, found: usize },
     #[error("GPU surface error: {0}")]
-    Surface(#[from] wgpu::SurfaceError),
+    Surface(String),
     #[error("could not read a texture back to the CPU: {0}")]
     Readback(String),
 }

@@ -3,32 +3,48 @@
 use crate::RenderError;
 
 /// The GPU handles everything else borrows.
+///
+/// Deliberately does not own the `Instance`. A surface belongs to the instance
+/// that created it, so the instance has to be visible to whoever creates
+/// windows — and when the app is hosted by a framework, the device already
+/// exists and there is no instance to hand over. Keeping it out of here lets
+/// [`GpuContext::from_parts`] adopt someone else's device without pretending.
 pub struct GpuContext {
-    pub instance: wgpu::Instance,
     pub adapter: wgpu::Adapter,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
 }
 
 impl GpuContext {
+    /// Acquire a device from scratch. Used by tests and headless tools.
     pub async fn new() -> Result<Self, RenderError> {
-        Self::from_instance(Self::create_instance(), None).await
-    }
-
-    /// Create the instance separately, so a surface can be made from it *before*
-    /// the adapter is chosen.
-    ///
-    /// This split is not optional. A `Surface` belongs to the `Instance` that
-    /// created it, and an adapter obtained from a different instance cannot
-    /// present to it — the failure is a panic deep inside wgpu's resource
-    /// storage ("Surface does not exist"), which is a long way from the cause.
-    pub fn create_instance() -> wgpu::Instance {
-        wgpu::Instance::new(&wgpu::InstanceDescriptor::default())
+        Self::from_instance(&Self::create_instance(), None).await
     }
 
     /// Blocking convenience for tests and CLI entry points.
     pub fn new_blocking() -> Result<Self, RenderError> {
         pollster::block_on(Self::new())
+    }
+
+    /// Create an instance separately, so a surface can be made from it *before*
+    /// the adapter is chosen.
+    ///
+    /// This split is not optional. A `Surface` belongs to the `Instance` that
+    /// created it, and an adapter obtained from a different instance cannot
+    /// present to it — the failure is a panic deep inside wgpu's resource
+    /// storage ("Surface does not exist"), a long way from the cause.
+    pub fn create_instance() -> wgpu::Instance {
+        wgpu::Instance::new(&wgpu::InstanceDescriptor::default())
+    }
+
+    /// Adopt a device someone else created — an embedding framework, or a host
+    /// application.
+    pub fn from_parts(adapter: wgpu::Adapter, device: wgpu::Device, queue: wgpu::Queue) -> Self {
+        Self {
+            adapter,
+            device,
+            queue,
+        }
     }
 
     /// Acquire a device from an existing instance, optionally one guaranteed to
@@ -37,7 +53,7 @@ impl GpuContext {
     /// Passing the surface also matters on machines with more than one GPU:
     /// without it, the adapter picked may not be able to present to the window.
     pub async fn from_instance(
-        instance: wgpu::Instance,
+        instance: &wgpu::Instance,
         compatible_surface: Option<&wgpu::Surface<'_>>,
     ) -> Result<Self, RenderError> {
         let adapter = instance
@@ -59,16 +75,12 @@ impl GpuContext {
                 required_limits: wgpu::Limits::default(),
                 memory_hints: wgpu::MemoryHints::Performance,
                 trace: wgpu::Trace::Off,
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
             })
             .await
             .map_err(|e| RenderError::NoDevice(e.to_string()))?;
 
-        Ok(Self {
-            instance,
-            adapter,
-            device,
-            queue,
-        })
+        Ok(Self::from_parts(adapter, device, queue))
     }
 
     /// One-line description of the GPU actually in use, for the About box and

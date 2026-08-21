@@ -16,8 +16,10 @@
 use pe_color::WorkingSpace;
 use pe_core::{ParamMap, ParamValue};
 
+pub mod pack;
 pub mod registry;
 
+pub use pack::{PARAM_SLOTS, declared_slots, pack, pack_all, slot_of, slots_used};
 pub use registry::{EFFECTS, all, by_key};
 
 /// Which panel an effect appears under in the inspector.
@@ -114,6 +116,15 @@ pub struct EffectDef {
     /// radius scaled by image dimensions, and cannot be fused into a single
     /// pass with their neighbours.
     pub spatial: bool,
+    /// Extra uniform slots the effect does not expose as parameters, filled by
+    /// [`pack::derive`] from CPU-side colour science.
+    ///
+    /// White balance is the motivating case: the user edits temperature and
+    /// tint, but the shader wants three channel gains, and computing those
+    /// requires the working gamut's matrices. Doing it on the CPU keeps the
+    /// colour science in `pe-color` where it is tested, and leaves the shader
+    /// as a single multiply.
+    pub derived_slots: usize,
 }
 
 impl EffectDef {

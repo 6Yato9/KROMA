@@ -11,6 +11,8 @@ pe-color = { version = "0.0.1", path = "../../crates/pe-color" }
 pe-core = { version = "0.0.1", path = "../../crates/pe-core" }
 pe-render = { version = "0.0.1", path = "../../crates/pe-render" }
 pe-io = { version = "0.0.1", path = "../../crates/pe-io" }
-wgpu = "26"
-winit = "0.30.13"
-pollster = "1.0.1"
+wgpu = "27"
+egui = "0.33"
+egui-wgpu = "0.33"
+eframe = { version = "0.33", default-features = false, features = ["wgpu", "default_fonts"] }
+pe-effects = { version = "0.0.1", path = "../../crates/pe-effects" }

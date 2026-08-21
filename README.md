@@ -3,24 +3,26 @@
 DaVinci's colour page, rebuilt for photographs, with a stacked reorderable
 inspector instead of a node graph.
 
-**Status: M0 complete.** The colour pipeline, document model and stage cache
-exist and are tested. The nine effects arrive at M1.
+**Status: M1 complete.** Nine effects run on the GPU, the stack is reorderable
+with per-row opacity, blend mode and enable, and export writes a full-resolution
+JPEG. Scopes, wheels and curve editing are M2.
 
 ## Running it
 
 ```bash
-cargo run -p pe-windows
+cargo run -p pe-windows --release -- photo.jpg
 ```
 
-With no argument it shows a built-in test chart. Pass an image to load it:
+With no argument it shows a built-in test chart.
 
-```bash
-cargo run -p pe-windows -- photo.jpg
-```
+Add effects from the menu at the top of the inspector, reorder them with the
+arrows, and drag any slider. The **passes** counter in the toolbar is the number
+to watch: with a nine-row stack, dragging the deepest slider should read `1`.
+That is the stage cache re-running only what changed, and it is why the
+application does not get slower as you do more to an image.
 
-What you get at M0 is the two ends of the pipeline wired together: an image
-decoded into a 16-bit float ACEScg working texture and rendered back out to the
-display. The effect rows slot in between at M1 without either end changing.
+`Shift+D` bypasses the whole stack. `Ctrl+Z` / `Ctrl+Shift+Z` undo and redo,
+with slider drags collapsed into a single step.
 
 ## Layout
 
@@ -82,15 +84,32 @@ A golden test blindly regenerated is a golden test deleted.
 | | | |
 |---|---|---|
 | **M0** | Foundations | ✅ complete |
-| M1 | The engine, proven — nine effects, 60fps on 24MP | |
-| M2 | The Colour Page — real UI, scopes, wheels, curves | |
+| **M1** | The engine, proven — nine effects, stage cache, export | ✅ complete |
+| M2 | The Colour Page — real UI, scopes, wheels, curve editor | |
 | M3 | Isolation — qualifier, power windows, masks | |
 | M4 | Grading workflow — stills gallery, versions, compare | |
 | M5 | RAW | |
 | M6 | macOS | |
 
-## Known constraint
+## Known constraints
 
-Pinned to **wgpu 26**. wgpu 30.0.0's DX12 backend depends on `windows` 0.62
-while the newest published `gpu-allocator` (0.28) is built against 0.58, so it
-does not compile on Windows. Revisit when upstream republishes.
+**Pinned to wgpu 27 and egui 0.33.** Two independent ceilings meet here:
+
+- wgpu 30's DX12 backend needs `windows` 0.62 while the newest published
+  `gpu-allocator` (0.28) is built against 0.58, so it does not compile on
+  Windows at all.
+- egui 0.35 removed `TopBottomPanel`/`SidePanel` and replaced `eframe::App`'s
+  `update` with `ui`. Since the M1 interface is disposable, following that
+  rewrite now would be work thrown away at M2.
+
+egui 0.33 pairs with wgpu 27, which is what keeps a single wgpu in the graph.
+Two versions in one build is not merely untidy — `Device` and `Queue` from
+different versions are different types, and the duplicate also broke `naga`
+through a `codespan-reporting` feature clash.
+
+**A 24MP export needs about 576 MB of VRAM** — two working textures plus source
+and output. Flat in stack depth, but worth knowing before a batch run on a
+small card.
+
+**Halation is a single-pass approximation** at M1. A separable multi-pass blur
+is M2; the current version shows its seams at large radii.

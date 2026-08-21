@@ -71,6 +71,18 @@ impl BlendMode {
         matches!(self, BlendMode::Add | BlendMode::Screen)
     }
 
+    /// Index the shader switches on.
+    ///
+    /// Derived from declaration order rather than written out, so the two
+    /// cannot drift apart silently — and pinned by a test against the constants
+    /// in `shaders/common.wgsl`.
+    pub fn as_index(self) -> u32 {
+        BlendMode::ALL
+            .iter()
+            .position(|m| *m == self)
+            .expect("every variant is in ALL") as u32
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             BlendMode::Normal => "Normal",
@@ -345,5 +357,50 @@ mod tests {
                 "{m:?}"
             );
         }
+    }
+
+    /// The Rust enum and the WGSL constants are one ABI across two languages,
+    /// and nothing but this test connects them. Reordering `BlendMode` without
+    /// editing the shader would silently turn every Screen-mode row into
+    /// Overlay in every saved document.
+    #[test]
+    fn blend_mode_indices_match_the_shader() {
+        let shader = include_str!("../../../shaders/common.wgsl");
+
+        for mode in BlendMode::ALL {
+            // Normal -> BLEND_NORMAL, SoftLight -> BLEND_SOFT_LIGHT
+            let mut name = String::from("BLEND");
+            for ch in format!("{mode:?}").chars() {
+                if ch.is_uppercase() {
+                    name.push('_');
+                }
+                name.push(ch.to_ascii_uppercase());
+            }
+
+            let decl = format!("const {name}: u32 = ");
+            let line = shader
+                .lines()
+                .find(|l| l.trim_start().starts_with(&decl))
+                .unwrap_or_else(|| panic!("{name} is missing from common.wgsl"));
+
+            let value: u32 = line
+                .rsplit_once("= ")
+                .and_then(|(_, v)| v.trim().trim_end_matches(&['u', ';'][..]).parse().ok())
+                .unwrap_or_else(|| panic!("could not parse {line:?}"));
+
+            assert_eq!(
+                mode.as_index(),
+                value,
+                "{mode:?} is {} in Rust but {name} is {value} in the shader",
+                mode.as_index()
+            );
+        }
+    }
+
+    #[test]
+    fn indices_are_unique_and_dense() {
+        let mut seen: Vec<u32> = BlendMode::ALL.iter().map(|m| m.as_index()).collect();
+        seen.sort();
+        assert_eq!(seen, (0..BlendMode::ALL.len() as u32).collect::<Vec<_>>());
     }
 }

@@ -61,6 +61,7 @@ pub static EFFECTS: &[EffectDef] = &[
         space: WorkingSpace::Linear,
         shader: "exposure",
         spatial: false,
+        derived_slots: 0,
         params: &[bipolar("ev", "Exposure", 5.0, "EV")],
     },
     EffectDef {
@@ -70,6 +71,8 @@ pub static EFFECTS: &[EffectDef] = &[
         space: WorkingSpace::Linear,
         shader: "white_balance",
         spatial: false,
+        // r, g, b gains, computed by pe_color::white_balance.
+        derived_slots: 3,
         params: &[
             ParamDef {
                 key: "temperature",
@@ -92,6 +95,7 @@ pub static EFFECTS: &[EffectDef] = &[
         space: WorkingSpace::Log,
         shader: "contrast",
         spatial: false,
+        derived_slots: 0,
         params: &[
             bipolar("contrast", "Contrast", 1.0, ""),
             ParamDef {
@@ -116,6 +120,7 @@ pub static EFFECTS: &[EffectDef] = &[
         space: WorkingSpace::Log,
         shader: "curves",
         spatial: false,
+        derived_slots: 0,
         params: &[
             ParamDef {
                 key: "luma",
@@ -151,6 +156,7 @@ pub static EFFECTS: &[EffectDef] = &[
         space: WorkingSpace::Log,
         shader: "hsl",
         spatial: false,
+        derived_slots: 0,
         params: &[
             bipolar("hue", "Hue", 180.0, "°"),
             bipolar("saturation", "Saturation", 1.0, ""),
@@ -164,6 +170,7 @@ pub static EFFECTS: &[EffectDef] = &[
         space: WorkingSpace::Log,
         shader: "primaries",
         spatial: false,
+        derived_slots: 0,
         params: &[
             ParamDef {
                 key: "lift",
@@ -201,6 +208,7 @@ pub static EFFECTS: &[EffectDef] = &[
         space: WorkingSpace::Log,
         shader: "grain",
         spatial: true,
+        derived_slots: 0,
         params: &[
             amount("strength", "Strength"),
             ParamDef {
@@ -242,6 +250,7 @@ pub static EFFECTS: &[EffectDef] = &[
         space: WorkingSpace::Linear,
         shader: "halation",
         spatial: true,
+        derived_slots: 0,
         params: &[
             amount("strength", "Strength"),
             ParamDef {
@@ -286,6 +295,7 @@ pub static EFFECTS: &[EffectDef] = &[
         space: WorkingSpace::Linear,
         shader: "vignette",
         spatial: true,
+        derived_slots: 0,
         params: &[
             bipolar("amount", "Amount", 1.0, ""),
             ParamDef {

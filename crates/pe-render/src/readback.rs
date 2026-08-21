@@ -59,7 +59,10 @@ pub fn read_rgba8(gpu: &GpuContext, tex: &ImageTexture) -> Result<Vec<u8>, Rende
         let _ = tx.send(r);
     });
     gpu.device
-        .poll(wgpu::PollType::Wait)
+        .poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        })
         .map_err(|e| RenderError::Readback(e.to_string()))?;
     rx.recv()
         .map_err(|e| RenderError::Readback(e.to_string()))?

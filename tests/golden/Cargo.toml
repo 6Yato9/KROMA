@@ -10,7 +10,9 @@ publish = false
 [dependencies]
 pe-color = { version = "0.0.1", path = "../../crates/pe-color" }
 pe-io = { version = "0.0.1", path = "../../crates/pe-io" }
+pe-render = { version = "0.0.1", path = "../../crates/pe-render" }
 
 [dev-dependencies]
-pe-render = { version = "0.0.1", path = "../../crates/pe-render" }
-wgpu = "26"
+pe-core = { version = "0.0.1", path = "../../crates/pe-core" }
+pe-effects = { version = "0.0.1", path = "../../crates/pe-effects" }
+wgpu = "27"

@@ -16,8 +16,34 @@
 //! blindly regenerated is a golden test deleted.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use pe_io::DecodedImage;
+use pe_render::GpuContext;
+
+/// One GPU device shared by every test in the process.
+///
+/// Each test acquiring its own device meant thirty-odd wgpu devices per run.
+/// That is wasteful, and on this hardware it is also flaky: teardown
+/// occasionally hangs, the test binary stays alive, and the *next* build then
+/// fails to link because the executable is locked. Sharing one device removed
+/// both problems and made the suite several times faster.
+///
+/// Returns `None` when there is no GPU, so tests skip rather than fail.
+pub fn shared_gpu() -> Option<&'static GpuContext> {
+    static GPU: OnceLock<Option<GpuContext>> = OnceLock::new();
+    GPU.get_or_init(|| match GpuContext::new_blocking() {
+        Ok(g) => {
+            eprintln!("GPU: {}", g.describe());
+            Some(g)
+        }
+        Err(e) => {
+            eprintln!("no GPU available, skipping GPU tests: {e}");
+            None
+        }
+    })
+    .as_ref()
+}
 
 /// Directory holding the committed reference images.
 pub fn refs_dir() -> PathBuf {
@@ -101,8 +127,10 @@ fn dump_failure(name: &str, actual: &DecodedImage, diff: Option<&DecodedImage>) 
 pub fn difference_map(a: &DecodedImage, b: &DecodedImage) -> DecodedImage {
     let pixels = a
         .pixels
-        .chunks_exact(4)
-        .zip(b.pixels.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(b.pixels.as_chunks::<4>().0.iter())
         .flat_map(|(pa, pb)| {
             let amp = |i: usize| pa[i].abs_diff(pb[i]).saturating_mul(16);
             [amp(0), amp(1), amp(2), 255]
@@ -126,7 +154,9 @@ pub fn render_reference(
 ) -> DecodedImage {
     let pixels = src
         .pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|p| {
             let rgb = [
                 p[0] as f64 / 255.0,
@@ -184,7 +214,13 @@ mod tests {
     fn a_difference_map_of_identical_images_is_black() {
         let a = pe_io::test_chart(16, 16);
         let d = difference_map(&a, &a);
-        assert!(d.pixels.chunks_exact(4).all(|p| p[..3] == [0, 0, 0]));
+        assert!(
+            d.pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|p| p[..3] == [0, 0, 0])
+        );
     }
 
     #[test]
