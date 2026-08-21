@@ -15,6 +15,9 @@ struct Transform {
     // Gamut rotation. Column-major with 16-byte stride; pe_color::Mat3::to_wgsl_mat3
     // produces exactly this layout.
     gamut: mat3x3<f32>,
+    // Sub-rectangle of the source to read: xy offset, zw size, in uv. The
+    // preview narrows this as the view zooms in so that 100% is genuinely 1:1.
+    region: vec4<f32>,
 }
 
 @group(0) @binding(0) var src_texture: texture_2d<f32>;
@@ -41,7 +44,7 @@ fn vs_fullscreen(@builtin(vertex_index) idx: u32) -> VsOut {
 
 @fragment
 fn fs_transform(in: VsOut) -> @location(0) vec4<f32> {
-    let c = textureSample(src_texture, src_sampler, in.uv);
+    let c = textureSample(src_texture, src_sampler, xf.region.xy + in.uv * xf.region.zw);
     // No clamping. Values outside 0..1 are legitimate here — highlights above
     // diffuse white, and negative channels where a wide-gamut colour does not
     // fit the destination. Clamping now would bake in a hue shift before gamut

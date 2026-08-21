@@ -24,8 +24,54 @@ pub use device::GpuContext;
 pub use effect::{EffectRenderer, Scratch};
 pub use export::render_full;
 pub use readback::read_rgba8;
+pub use texture::padded_bytes_per_row;
 pub use texture::{ImageTexture, SOURCE_FORMAT, WORKING_FORMAT};
 pub use transform::TransformPass;
+
+/// Which rectangle of the whole frame a pass renders, in frame uv.
+///
+/// `Region::FULL` is the whole image, and is what export always uses. The
+/// interactive preview narrows it as the view zooms in, so that 100% renders
+/// the visible pixels at their own resolution instead of magnifying a
+/// downscaled preview.
+///
+/// Anything in a shader that reasons about the *frame* — a vignette's centre,
+/// a grain lattice, a halation radius — goes through `frame_uv()` /
+/// `frame_to_uv()` in `common.wgsl`, which are driven by this.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Region {
+    pub offset: [f32; 2],
+    pub size: [f32; 2],
+}
+
+impl Region {
+    pub const FULL: Region = Region {
+        offset: [0.0, 0.0],
+        size: [1.0, 1.0],
+    };
+
+    pub fn to_array(self) -> [f32; 4] {
+        [self.offset[0], self.offset[1], self.size[0], self.size[1]]
+    }
+
+    /// A stable key for the stage cache. Panning or zooming must invalidate
+    /// every cached stage, because they were rendered for a different
+    /// rectangle — quantised so that sub-pixel jitter does not thrash the
+    /// cache on every frame.
+    pub fn cache_key(self) -> u64 {
+        let q = |v: f32| (v * 4096.0).round() as i64 as u64;
+        q(self.offset[0])
+            ^ q(self.offset[1]).rotate_left(16)
+            ^ q(self.size[0]).rotate_left(32)
+            ^ q(self.size[1]).rotate_left(48)
+    }
+}
+
+impl Default for Region {
+    fn default() -> Self {
+        Region::FULL
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum RenderError {

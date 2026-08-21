@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use pe_core::{Document, History, RowIdGenerator};
 use pe_render::GpuContext;
 
-use crate::preview::Preview;
+use crate::preview::{Framing, Preview, View};
 
 fn main() -> eframe::Result {
     let path = std::env::args().nth(1).map(PathBuf::from);
@@ -72,6 +72,12 @@ pub struct App {
     /// The window title can only be set once a Context exists, so it is
     /// deferred to the first frame rather than done in the constructor.
     titled: bool,
+    view: View,
+    /// Last frame's framing. Turning a drag or a scroll into a move in image
+    /// space needs the scale and the visible rectangle, and both are outputs
+    /// of rendering — so the interaction uses the previous frame's, which is
+    /// one frame stale and entirely imperceptible.
+    last: Option<(f32, egui::Rect)>,
 }
 
 impl App {
@@ -106,6 +112,8 @@ impl App {
             last_passes: 0,
             status: String::new(),
             titled: false,
+            view: View::default(),
+            last: None,
         }
     }
 
@@ -136,7 +144,69 @@ impl App {
         self.status = format!("opened {}", path.display());
         self.image = image;
         self.path = Some(path);
+        self.view.fit();
+        self.last = None;
         self.set_title(ctx);
+    }
+
+    /// Zoom so one image pixel is one screen pixel.
+    fn zoom_to_actual_pixels(&mut self) {
+        // `scale` is screen pixels per image pixel at the current zoom, so the
+        // factor that takes it to 1.0 is what we want.
+        if let Some((scale, _)) = self.last {
+            self.view.zoom = (self.view.zoom / scale.max(1e-4)).clamp(1.0, 32.0);
+        }
+    }
+
+    /// Scroll to zoom about the cursor, drag to pan, double-click to fit.
+    ///
+    /// Zooming keeps the point under the cursor fixed, which is the difference
+    /// between a viewer that feels direct and one that feels like it is
+    /// fighting you.
+    fn handle_view_input(&mut self, ui: &egui::Ui, response: &egui::Response, rect: egui::Rect) {
+        let Some((scale, visible)) = self.last else {
+            return;
+        };
+        let image = egui::vec2(
+            self.image.width.max(1) as f32,
+            self.image.height.max(1) as f32,
+        );
+
+        if response.double_clicked() {
+            self.view.fit();
+            return;
+        }
+
+        if response.dragged() {
+            // Screen points -> image pixels -> frame uv.
+            let delta = response.drag_delta() / scale.max(1e-4);
+            self.view.centre -= egui::vec2(delta.x / image.x, delta.y / image.y);
+        }
+
+        let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+        if scroll.abs() > 0.1
+            && let Some(pointer) = response.hover_pos()
+        {
+            let factor = (scroll * 0.004).exp();
+            let new_zoom = (self.view.zoom * factor).clamp(1.0, 32.0);
+            let applied = new_zoom / self.view.zoom;
+            if (applied - 1.0).abs() > 1e-4 {
+                // Where the cursor sits within the visible rectangle, 0..1.
+                let frac = egui::vec2(
+                    ((pointer.x - rect.min.x) / rect.width().max(1e-4)).clamp(0.0, 1.0),
+                    ((pointer.y - rect.min.y) / rect.height().max(1e-4)).clamp(0.0, 1.0),
+                );
+                // The frame point under the cursor, which must not move.
+                let anchor =
+                    visible.min + egui::vec2(frac.x * visible.width(), frac.y * visible.height());
+                let new_size = egui::vec2(visible.width() / applied, visible.height() / applied);
+                self.view.centre = egui::vec2(
+                    anchor.x - (frac.x - 0.5) * new_size.x,
+                    anchor.y - (frac.y - 0.5) * new_size.y,
+                );
+                self.view.zoom = new_zoom;
+            }
+        }
     }
 
     fn set_title(&self, ctx: &egui::Context) {
@@ -315,6 +385,27 @@ impl eframe::App for App {
                     self.export();
                 }
                 ui.separator();
+                ui.add_enabled_ui(!self.view.is_fit(), |ui| {
+                    if ui
+                        .button("Fit")
+                        .on_hover_text("Double-click the image")
+                        .clicked()
+                    {
+                        self.view.fit();
+                    }
+                });
+                if ui.button("100%").clicked() {
+                    self.zoom_to_actual_pixels();
+                }
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{:.0}%",
+                        self.last.map_or(100.0, |l| l.0 * 100.0)
+                    ))
+                    .monospace(),
+                )
+                .on_hover_text("Screen pixels per image pixel");
+                ui.separator();
                 ui.label(
                     egui::RichText::new(format!("{} passes", self.last_passes))
                         .monospace()
@@ -351,11 +442,17 @@ impl eframe::App for App {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(egui::Color32::from_gray(24)))
             .show(ctx, |ui| {
-                let size = ui.available_size();
-                let Some(preview) = self.preview.as_mut() else {
+                let viewport = ui.available_size();
+                if self.preview.is_none() {
                     ui.centered_and_justified(|ui| ui.label("no GPU available"));
                     return;
-                };
+                }
+
+                // Claim the whole viewport before rendering, so scroll and drag
+                // are handled against the same rectangle the image is drawn in.
+                let (rect, response) =
+                    ui.allocate_exact_size(viewport, egui::Sense::click_and_drag());
+                self.handle_view_input(ui, &response, rect);
 
                 let doc = if self.bypass_all {
                     // The cheapest honest bypass: render an empty stack. It
@@ -368,30 +465,39 @@ impl eframe::App for App {
                     self.history.document().clone()
                 };
 
-                match preview.render(&self.image, &doc, size) {
-                    Ok((texture, passes)) => {
-                        self.last_passes = passes;
-                        let aspect = self.image.width as f32 / self.image.height.max(1) as f32;
-                        let mut w = size.x;
-                        let mut h = w / aspect;
-                        if h > size.y {
-                            h = size.y;
-                            w = h * aspect;
-                        }
-                        ui.centered_and_justified(|ui| {
-                            ui.add(
-                                egui::Image::new(egui::load::SizedTexture::new(
-                                    texture,
-                                    egui::vec2(w, h),
-                                ))
-                                .fit_to_exact_size(egui::vec2(w, h)),
-                            );
-                        });
+                let image = &self.image;
+                let view = self.view;
+                let preview = self.preview.as_mut().expect("checked above");
+                match preview.render(image, &doc, view, viewport) {
+                    Ok(framing) => {
+                        self.last_passes = framing.passes;
+                        self.last = Some((framing.scale, framing.visible));
+                        draw(ui, rect, &framing);
                     }
                     Err(e) => {
-                        ui.centered_and_justified(|ui| ui.label(format!("render failed: {e}")));
+                        ui.painter().text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            format!("render failed: {e}"),
+                            egui::FontId::proportional(14.0),
+                            ui.visuals().error_fg_color,
+                        );
                     }
                 }
             });
     }
+}
+
+/// Draw the graded texture centred in the viewport.
+///
+/// The uv rectangle trims the margin that was rendered for the benefit of
+/// spatial effects but is not meant to be seen.
+fn draw(ui: &egui::Ui, rect: egui::Rect, framing: &Framing) {
+    let target = egui::Rect::from_center_size(rect.center(), framing.size);
+    ui.painter().add(egui::Shape::image(
+        framing.texture,
+        target,
+        framing.uv,
+        egui::Color32::WHITE,
+    ));
 }

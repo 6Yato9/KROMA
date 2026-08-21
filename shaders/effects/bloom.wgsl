@@ -20,14 +20,16 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
         return c;
     }
 
-    let aspect = u.image_size.x / max(u.image_size.y, 1.0);
+    let aspect = frame_aspect();
+    // Radius is frame-relative; convert it into this pass's uv.
+    let uv_radius = frame_to_uv(radius);
     var glow = vec3<f32>(0.0);
     var total = 0.0;
 
     for (var i = 0; i < BLOOM_SAMPLES; i = i + 1) {
         let fi = f32(i);
         let angle = fi * 2.39996323;
-        let r = sqrt((fi + 0.5) / f32(BLOOM_SAMPLES)) * radius;
+        let r = sqrt((fi + 0.5) / f32(BLOOM_SAMPLES)) * uv_radius;
         let offset = vec2<f32>(cos(angle) * r / aspect, sin(angle) * r);
         let s = textureSampleLevel(src_texture, src_sampler, uv + offset, 0.0).rgb;
         // Only what is above the threshold spills. Everything below it is not

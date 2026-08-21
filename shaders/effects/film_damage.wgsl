@@ -50,14 +50,17 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let scratch_blur = slot(14u);
     let scratch_colour = slot3(15u);
 
-    let aspect = u.image_size.x / max(u.image_size.y, 1.0);
+    let aspect = frame_aspect();
+    // Damage belongs to the film, not to the viewport, so every position below
+    // is in frame coordinates and nothing moves when the view is panned.
+    let fuv = frame_uv(uv);
     var out = c;
 
     // --- Film blur: knock the digital sharpness off ------------------------
     if film_blur > 0.0 {
         var sum = vec3<f32>(0.0);
         var total = 0.0;
-        let radius = film_blur * 0.006;
+        let radius = frame_to_uv(film_blur * 0.006);
         for (var i = 0; i < DAMAGE_BLUR_SAMPLES; i = i + 1) {
             let fi = f32(i);
             let angle = fi * 2.39996323;
@@ -85,7 +88,7 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
 
     // --- Lens vignetting ---------------------------------------------------
     if focal_factor > 0.0 {
-        var d = uv - vec2<f32>(0.5);
+        var d = fuv - vec2<f32>(0.5);
         // Tilt slides the darkening off-centre, so the top and bottom (or left
         // and right) are unevenly shaded the way a misaligned gate would.
         let tilt = radians(tilt_angle);
@@ -104,7 +107,7 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     // white as dirt on a negative, which is why the colour is a control.
     if dirt_density > 0.0 && dirt_size > 0.0 {
         let cells = 180.0 / max(dirt_size, 0.05);
-        let grid = uv * vec2<f32>(cells, cells / max(aspect, 1e-4));
+        let grid = fuv * vec2<f32>(cells, cells / max(aspect, 1e-4));
         let cell = floor(grid);
         let present = hash21(cell + vec2<f32>(dirt_seed));
         if present < dirt_density {
@@ -126,7 +129,7 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     var scratch = 0.0;
     for (var i = 0u; i < 5u; i = i + 1u) {
         let base = 18u + i * 3u;
-        let m = scratch_mask(uv, slot(base), slot(base + 1u), scratch_blur);
+        let m = scratch_mask(fuv, slot(base), slot(base + 1u), scratch_blur);
         scratch = max(scratch, m * slot(base + 2u));
     }
     if scratch > 0.0 {

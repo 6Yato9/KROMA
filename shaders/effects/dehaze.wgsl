@@ -25,10 +25,10 @@ const DEHAZE_OMEGA: f32 = 0.92;
 const DEHAZE_MIN_T: f32 = 0.08;
 
 fn transmission(uv: vec2<f32>, haze: vec3<f32>) -> f32 {
-    let aspect = u.image_size.x / max(u.image_size.y, 1.0);
+    let aspect = frame_aspect();
     // Patch radius as a fraction of the frame, so the estimate covers the same
-    // real area in a preview and in a full-resolution export.
-    let radius = 0.012;
+    // real area in a preview, a zoomed view, and a full-resolution export.
+    let radius = frame_to_uv(0.012);
 
     var dark = 1e9;
     for (var i = 0; i < DEHAZE_SAMPLES; i = i + 1) {

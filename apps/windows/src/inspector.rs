@@ -13,6 +13,93 @@
 use pe_core::{BlendMode, Curve, History, ParamValue, RowId, RowIdGenerator, StackRow, Wheel};
 use pe_effects::{EffectDef, Group, ParamKind};
 
+/// Icons are drawn, not typed.
+///
+/// egui 0.33 bundles only Hack and NotoEmoji. Neither covers the geometric
+/// shapes and dingbats an inspector wants — ▲ ▼ ✕ ☰ all render as tofu boxes.
+/// Rather than ship a font for four glyphs, or settle for word buttons, these
+/// are a handful of lines from the painter: guaranteed to render, and they
+/// pick up the hover and disabled styling for free.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Icon {
+    Up,
+    Down,
+    Trash,
+}
+
+fn icon_button(ui: &mut egui::Ui, icon: Icon, hover: &str) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
+
+    if ui.is_rect_visible(rect) {
+        let visuals = *ui.style().interact(&response);
+        let painter = ui.painter();
+        painter.rect_filled(rect, 3.0, visuals.bg_fill);
+
+        let c = rect.center();
+        let r = 4.5;
+        let colour = visuals.fg_stroke.color;
+        let stroke = egui::Stroke::new(1.4_f32, colour);
+
+        match icon {
+            Icon::Up => {
+                painter.add(egui::Shape::convex_polygon(
+                    vec![
+                        c + egui::vec2(0.0, -r),
+                        c + egui::vec2(-r, r * 0.7),
+                        c + egui::vec2(r, r * 0.7),
+                    ],
+                    colour,
+                    egui::Stroke::NONE,
+                ));
+            }
+            Icon::Down => {
+                painter.add(egui::Shape::convex_polygon(
+                    vec![
+                        c + egui::vec2(0.0, r),
+                        c + egui::vec2(-r, -r * 0.7),
+                        c + egui::vec2(r, -r * 0.7),
+                    ],
+                    colour,
+                    egui::Stroke::NONE,
+                ));
+            }
+            Icon::Trash => {
+                // A tapered bin: handle, lid, then three sides. Line segments
+                // only, so there is no dependency on which rect-stroke
+                // signature this egui version happens to have.
+                painter.line_segment(
+                    [c + egui::vec2(-r * 0.35, -r), c + egui::vec2(r * 0.35, -r)],
+                    stroke,
+                );
+                painter.line_segment(
+                    [c + egui::vec2(-r, -r * 0.55), c + egui::vec2(r, -r * 0.55)],
+                    stroke,
+                );
+                painter.line_segment(
+                    [
+                        c + egui::vec2(-r * 0.75, -r * 0.55),
+                        c + egui::vec2(-r * 0.55, r),
+                    ],
+                    stroke,
+                );
+                painter.line_segment(
+                    [
+                        c + egui::vec2(r * 0.75, -r * 0.55),
+                        c + egui::vec2(r * 0.55, r),
+                    ],
+                    stroke,
+                );
+                painter.line_segment(
+                    [c + egui::vec2(-r * 0.55, r), c + egui::vec2(r * 0.55, r)],
+                    stroke,
+                );
+            }
+        }
+    }
+
+    response.on_hover_text(hover)
+}
+
 pub fn show(ui: &mut egui::Ui, history: &mut History, ids: &mut RowIdGenerator) {
     ui.add_space(6.0);
     add_effect_menu(ui, history, ids);
@@ -48,7 +135,7 @@ pub fn show(ui: &mut egui::Ui, history: &mut History, ids: &mut RowIdGenerator) 
 }
 
 fn add_effect_menu(ui: &mut egui::Ui, history: &mut History, ids: &mut RowIdGenerator) {
-    ui.menu_button("＋  Add effect", |ui| {
+    ui.menu_button("+  Add effect", |ui| {
         for group in [Group::Basic, Group::Color, Group::Film, Group::Optics] {
             ui.label(egui::RichText::new(group.as_str()).small().weak());
             for def in pe_effects::all().iter().filter(|e| e.group == group) {
@@ -70,8 +157,8 @@ fn add_effect_menu(ui: &mut egui::Ui, history: &mut History, ids: &mut RowIdGene
 fn unknown_row(ui: &mut egui::Ui, history: &mut History, id: RowId, key: &str) {
     egui::Frame::group(ui.style()).show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(format!("⚠ {key}")).weak());
-            if ui.small_button("✕").clicked() {
+            ui.label(egui::RichText::new(format!("unknown: {key}")).weak());
+            if icon_button(ui, Icon::Trash, "Delete").clicked() {
                 history.edit("Delete row", None, |doc| {
                     doc.stack.remove(id);
                 });
@@ -116,20 +203,20 @@ fn row_ui(
             ui.label(egui::RichText::new(def.name).strong());
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button("✕").on_hover_text("Delete").clicked() {
+                if icon_button(ui, Icon::Trash, "Delete").clicked() {
                     history.edit(format!("Delete {}", def.name), None, |doc| {
                         doc.stack.remove(id);
                     });
                 }
                 ui.add_enabled_ui(index + 1 < count, |ui| {
-                    if ui.small_button("▼").on_hover_text("Move down").clicked() {
+                    if icon_button(ui, Icon::Down, "Move down").clicked() {
                         history.edit("Reorder", None, |doc| {
                             doc.stack.reorder(id, index + 1);
                         });
                     }
                 });
                 ui.add_enabled_ui(index > 0, |ui| {
-                    if ui.small_button("▲").on_hover_text("Move up").clicked() {
+                    if icon_button(ui, Icon::Up, "Move up").clicked() {
                         history.edit("Reorder", None, |doc| {
                             doc.stack.reorder(id, index.saturating_sub(1));
                         });

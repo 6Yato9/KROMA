@@ -359,7 +359,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
-                    default: 0.0,
+                    default: 0.35,
                     neutral: 0.0,
                 },
                 unit: "",
@@ -454,15 +454,32 @@ pub static EFFECTS: &[EffectDef] = &[
         // own spread is what gives the effect a tight core and a wide falloff
         // at once, which one blur radius cannot do.
         params: &[
-            amount("strength", "Strength"),
+            // A look effect, so it ships visible — see
+            // EFFECTS_WITH_VISIBLE_DEFAULTS.
+            ParamDef {
+                key: "strength",
+                name: "Strength",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.0,
+                },
+                unit: "",
+            },
+            // Threshold and Normalization are in *linear light*, where diffuse
+            // white is 1.0. Defaulting the threshold to 1.0 meant nothing in an
+            // SDR photograph ever exceeded it, so the effect could not fire at
+            // any strength. 0.5 to 1.0 is the top stop of an SDR image, which
+            // is exactly what should be glowing.
             ParamDef {
                 key: "threshold",
                 name: "Threshold",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 4.0,
-                    default: 1.0,
-                    neutral: 1.0,
+                    default: 0.5,
+                    neutral: 0.5,
                 },
                 unit: "",
             },
@@ -472,8 +489,8 @@ pub static EFFECTS: &[EffectDef] = &[
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 8.0,
-                    default: 2.0,
-                    neutral: 2.0,
+                    default: 1.0,
+                    neutral: 1.0,
                 },
                 unit: "",
             },
@@ -483,7 +500,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 0.2,
-                    default: 0.02,
+                    default: 0.04,
                     neutral: 0.0,
                 },
                 // Fraction of the image's long edge. Resolution independence
@@ -587,7 +604,17 @@ pub static EFFECTS: &[EffectDef] = &[
         // Composite Type is the row's blend mode, and Transparency is folded
         // into Amount, which is bipolar and so can brighten the corners too.
         params: &[
-            bipolar("amount", "Amount", 1.0, ""),
+            ParamDef {
+                key: "amount",
+                name: "Amount",
+                kind: ParamKind::Float {
+                    min: -1.0,
+                    max: 1.0,
+                    default: 0.4,
+                    neutral: 0.0,
+                },
+                unit: "",
+            },
             ParamDef {
                 key: "size",
                 name: "Size",
@@ -713,26 +740,38 @@ pub static EFFECTS: &[EffectDef] = &[
         spatial: true,
         derived_slots: 0,
         params: &[
-            amount("amount", "Amount"),
+            ParamDef {
+                key: "amount",
+                name: "Amount",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.4,
+                    neutral: 0.0,
+                },
+                unit: "",
+            },
             ParamDef {
                 key: "radius",
                 name: "Radius",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 0.3,
-                    default: 0.05,
-                    neutral: 0.05,
+                    default: 0.06,
+                    neutral: 0.06,
                 },
                 unit: "",
             },
+            // Linear light again: 1.0 is diffuse white and an SDR photo never
+            // passes it. The same trap Halation had.
             ParamDef {
                 key: "threshold",
                 name: "Threshold",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 4.0,
-                    default: 1.0,
-                    neutral: 1.0,
+                    default: 0.5,
+                    neutral: 0.5,
                 },
                 unit: "",
             },
@@ -756,7 +795,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
-                    default: 0.0,
+                    default: 0.25,
                     neutral: 0.0,
                 },
                 unit: "",
@@ -815,7 +854,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
-                    default: 0.0,
+                    default: 0.15,
                     neutral: 0.0,
                 },
                 unit: "",
@@ -912,7 +951,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
-                    default: 0.0,
+                    default: 0.5,
                     neutral: 0.0,
                 },
                 unit: "",
@@ -1055,16 +1094,33 @@ pub static EFFECTS: &[EffectDef] = &[
 
 /// Effects whose registry defaults deliberately change the image.
 ///
-/// Most effects must be invisible until the user touches a control — adding
-/// one and seeing an unexplained jump reads as a bug. A few are *look*
-/// effects where Resolve ships a visible default on purpose, and matching
-/// them matters more than the invariant. Split Tone is the case: Resolve
-/// defaults it to Strength 0.5, and a look effect that does nothing until you
-/// drag something reads as broken in the other direction.
+/// The dividing line is **corrective versus look**, and it is worth stating
+/// plainly because getting it wrong is what made this list grow.
 ///
-/// Adding to this list should be a deliberate, sourced decision, not a way to
-/// silence a failing test.
-pub const EFFECTS_WITH_VISIBLE_DEFAULTS: &[&str] = &["split_tone"];
+/// A *corrective* tool must be invisible until touched — Exposure, White
+/// Balance, Contrast, Curves, HSL, the wheels, Dehaze. Adding one and seeing an
+/// unexplained jump reads as a bug, and zero is the honest starting point.
+///
+/// A *look* effect is the opposite. You add Halation because you want
+/// halation; if it sits there doing nothing until you find the right slider,
+/// the effect reads as broken. Resolve ships Split Tone at Strength 0.5 for
+/// exactly this reason, and the same argument covers Grain, Bloom, Vignette
+/// and Film Damage.
+///
+/// Every parameter still carries its true `neutral` value separately, so
+/// double-clicking a slider returns it to no-op even where the default is
+/// visible.
+///
+/// Adding to this list should be a decision about which kind of tool an effect
+/// is, never a way to silence a failing test.
+pub const EFFECTS_WITH_VISIBLE_DEFAULTS: &[&str] = &[
+    "split_tone",
+    "halation",
+    "bloom",
+    "grain",
+    "vignette",
+    "film_damage",
+];
 
 pub fn all() -> &'static [EffectDef] {
     EFFECTS

@@ -27,8 +27,11 @@ const HALATION_SAMPLES: i32 = 24;
 
 // One radius for all three channels. The cheap path, used when Fine Tune is
 // off — a third of the texture fetches of the per-channel version.
-fn gather_glow(uv: vec2<f32>, radius: f32, threshold: f32, normalization: f32) -> vec3<f32> {
-    let aspect = u.image_size.x / max(u.image_size.y, 1.0);
+fn gather_glow(uv: vec2<f32>, spread: f32, threshold: f32, normalization: f32) -> vec3<f32> {
+    let aspect = frame_aspect();
+    // Spread is a fraction of the frame, so it has to be converted into this
+    // pass's uv, or it would shrink as the view zooms in.
+    let radius = frame_to_uv(spread);
     let band = max(normalization - threshold, 1e-3);
 
     var glow = vec3<f32>(0.0);
@@ -54,12 +57,13 @@ fn gather_glow(uv: vec2<f32>, radius: f32, threshold: f32, normalization: f32) -
 // one glow that was tinted.
 fn gather_glow_rgb(
     uv: vec2<f32>,
-    radius: f32,
+    spread: f32,
     threshold: f32,
     normalization: f32,
     relative: vec3<f32>,
 ) -> vec3<f32> {
-    let aspect = u.image_size.x / max(u.image_size.y, 1.0);
+    let aspect = frame_aspect();
+    let radius = frame_to_uv(spread);
     let band = max(normalization - threshold, 1e-3);
 
     var glow = vec3<f32>(0.0);

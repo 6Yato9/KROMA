@@ -28,8 +28,11 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
 
     // 36mm of film width, expressed as grains across the frame.
     let across = 36000.0 / size_um;
-    let aspect = u.image_size.y / max(u.image_size.x, 1.0);
-    let scaled = uv * vec2<f32>(across, across * aspect) + vec2<f32>(u.seed);
+    let f = frame_size();
+    let aspect = f.y / max(f.x, 1.0);
+    // Frame coordinates: grain belongs to the negative, so it must not crawl
+    // across the picture when the view is panned.
+    let scaled = frame_uv(uv) * vec2<f32>(across, across * aspect) + vec2<f32>(u.seed);
     let cell = floor(scaled);
 
     var mono = hash21(cell) - 0.5;

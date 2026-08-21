@@ -142,23 +142,31 @@ fn an_empty_stack_is_a_passthrough() {
     );
 }
 
-/// A Resolve-sourced default that is deliberately visible.
+/// Every look effect must visibly do something the moment it is added.
 ///
-/// Split Tone ships at Strength 0.5, so adding it must change the image. This
-/// is the counterpart to the neutrality test: it stops someone "fixing" the
-/// exemption by quietly zeroing the default.
+/// The counterpart to the neutrality test, and the more important half in
+/// practice: this is the failure a user actually hits. Adding Halation and
+/// watching nothing happen reads as a broken application, and it is exactly
+/// what happened — its Threshold defaulted to linear 1.0, which is diffuse
+/// white, so an SDR photograph could never exceed it at any strength.
+///
+/// It also stops anyone "fixing" the exemption list by quietly zeroing a
+/// default until the neutrality test goes green.
 #[test]
-fn split_tone_at_its_defaults_actually_does_something() {
+fn every_look_effect_does_something_at_its_defaults() {
     let src = chart();
     let Some(mut h) = Harness::new(&src) else {
         return;
     };
-    let out = h.render(&doc_with(&[("split_tone", &[])]));
-    let delta = out.max_channel_delta(&src).unwrap();
-    assert!(
-        delta > 4,
-        "Split Tone at Resolve defaults barely moved the image ({delta} levels)"
-    );
+    for key in pe_effects::registry::EFFECTS_WITH_VISIBLE_DEFAULTS {
+        let out = h.render(&doc_with(&[(key, &[])]));
+        let delta = out.max_channel_delta(&src).unwrap();
+        assert!(
+            delta > 3,
+            "{key} is listed as having a visible default but moved the image \
+             by only {delta} levels — adding it would look like nothing happened"
+        );
+    }
 }
 
 /// The most valuable invariant in M1.

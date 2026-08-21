@@ -76,6 +76,10 @@ pub struct RenderContext {
     /// Hash of the colour-management settings, which sit outside the stack but
     /// affect every stage.
     pub color: u64,
+    /// Which rectangle of the frame is being rendered. Panning or zooming
+    /// makes every cached stage stale, because they were rendered for a
+    /// different part of the picture.
+    pub view: u64,
 }
 
 #[derive(Default)]
@@ -181,6 +185,7 @@ mod tests {
         width: 1920,
         height: 1080,
         color: 7,
+        view: 0,
     };
 
     fn stack_of(n: u64) -> Stack {
@@ -374,6 +379,17 @@ mod tests {
         let mut c = warmed(&stack);
         let plan = c.plan(&stack, RenderContext { source: 2, ..CTX });
         assert_eq!(plan.first_dirty, 0);
+    }
+
+    #[test]
+    fn panning_or_zooming_invalidates_everything() {
+        // The cached stages were rendered for a different rectangle of the
+        // photograph, so none of them can be reused.
+        let stack = stack_of(6);
+        let mut c = warmed(&stack);
+        let plan = c.plan(&stack, RenderContext { view: 99, ..CTX });
+        assert_eq!(plan.first_dirty, 0);
+        assert_eq!(plan.execute.len(), 6);
     }
 
     #[test]

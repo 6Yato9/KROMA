@@ -39,6 +39,14 @@ struct EffectUniform {
     _pad0: f32,
     _pad1: f32,
     _pad2: f32,
+    // Which part of the whole frame this pass renders, in frame uv:
+    // xy = top-left offset, zw = size. (0, 0, 1, 1) is the whole image.
+    //
+    // The preview renders only the visible rectangle when zoomed in, so that
+    // 100% is genuinely 1:1 rather than an upscaled thumbnail. Anything that
+    // reasons about the *frame* rather than the texture has to go through the
+    // helpers below, or it will drift as you pan.
+    region: vec4<f32>,
     // Parameters, packed by pe_effects::pack. Slot n is p[n / 4][n % 4].
     p: array<vec4<f32>, 12>,
 }
@@ -56,6 +64,29 @@ const AP1_LUMA = vec3<f32>(0.2722287, 0.6740818, 0.0536895);
 
 fn luma(c: vec3<f32>) -> f32 {
     return dot(c, AP1_LUMA);
+}
+
+// Position within the whole frame, for effects anchored to the image rather
+// than to the viewport — a vignette's centre, a grain lattice.
+fn frame_uv(uv: vec2<f32>) -> vec2<f32> {
+    return u.region.xy + uv * u.region.zw;
+}
+
+// A distance expressed as a fraction of the frame, converted to this pass's uv.
+// Without it a halation radius would shrink as you zoom in, because the texture
+// covers less of the frame.
+fn frame_to_uv(d: f32) -> f32 {
+    return d / max(u.region.z, 1e-6);
+}
+
+// Pixel dimensions of the whole frame, not of this pass's texture.
+fn frame_size() -> vec2<f32> {
+    return u.image_size / max(u.region.zw, vec2<f32>(1e-6));
+}
+
+fn frame_aspect() -> f32 {
+    let f = frame_size();
+    return f.x / max(f.y, 1.0);
 }
 
 // Read parameter slot `i` by its flat index, matching pe_effects::pack.

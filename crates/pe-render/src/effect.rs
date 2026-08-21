@@ -43,6 +43,7 @@ struct EffectUniform {
     scale: f32,
     seed: f32,
     _pad: [f32; 3],
+    region: [f32; 4],
     p: [[f32; 4]; 12],
 }
 
@@ -76,6 +77,9 @@ pub struct EffectRenderer {
     resolved: Vec<Option<usize>>,
     size: (u32, u32),
     last_passes: usize,
+    /// Which part of the frame the next render covers. Set before `render`;
+    /// export leaves it at `Region::FULL`.
+    region: crate::Region,
 }
 
 impl EffectRenderer {
@@ -187,7 +191,21 @@ impl EffectRenderer {
             resolved: Vec::new(),
             size: (0, 0),
             last_passes: 0,
+            region: crate::Region::FULL,
         }
+    }
+
+    /// Set the rectangle of the frame subsequent renders cover.
+    ///
+    /// Stored on the renderer rather than threaded through `render` because
+    /// it applies to every pass in the stack uniformly, and the encode path
+    /// already carries as many arguments as it can hold.
+    pub fn set_region(&mut self, region: crate::Region) {
+        self.region = region;
+    }
+
+    pub fn region(&self) -> crate::Region {
+        self.region
     }
 
     /// Number of effect passes the last render actually executed.
@@ -214,6 +232,7 @@ impl EffectRenderer {
             width,
             height,
             color: crate::color_fingerprint(&doc.color),
+            view: self.region.cache_key(),
         };
 
         let plan = self.cache.plan(&doc.stack, context);
@@ -336,6 +355,7 @@ impl EffectRenderer {
             // a visible pattern.
             seed: (row.id.0 % 991) as f32 * 37.0,
             _pad: [0.0; 3],
+            region: self.region.to_array(),
             p: to_vec4s(pack_all(effect, &row.params)),
         };
         gpu.queue
@@ -559,8 +579,8 @@ mod tests {
 
     #[test]
     fn the_uniform_matches_the_shader_layout() {
-        // 4 vec2/scalars blocks of 16 bytes, then 8 vec4s.
-        assert_eq!(std::mem::size_of::<EffectUniform>(), 48 + 16 * 12);
+        // Three 16-byte blocks of scalars, the region, then twelve vec4s.
+        assert_eq!(std::mem::size_of::<EffectUniform>(), 48 + 16 + 16 * 12);
         assert_eq!(std::mem::align_of::<EffectUniform>(), 4);
     }
 

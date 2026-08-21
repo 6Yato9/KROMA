@@ -27,7 +27,9 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let centre = vec2<f32>(u.p[1].z, u.p[1].w);
     let colour = slot3(8u);
 
-    var d = uv - centre;
+    // Frame coordinates, so the vignette stays anchored to the photograph
+    // rather than following the viewport when the view is zoomed or panned.
+    var d = frame_uv(uv) - centre;
 
     // Rotation first, so it turns the shape rather than the frame.
     if rotation != 0.0 {
