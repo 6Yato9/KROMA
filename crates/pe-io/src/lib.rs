@@ -101,6 +101,88 @@ pub fn load_from_memory(bytes: &[u8]) -> Result<DecodedImage, IoError> {
     DecodedImage::new(width, height, img.into_raw())
 }
 
+/// The sRGB decode, tabulated. Two hundred and fifty-six entries, so a
+/// reduction never calls `powf`.
+fn srgb_to_linear() -> &'static [f32; 256] {
+    use std::sync::OnceLock;
+    static TABLE: OnceLock<[f32; 256]> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        std::array::from_fn(|i| {
+            let s = i as f32 / 255.0;
+            if s <= 0.04045 {
+                s / 12.92
+            } else {
+                ((s + 0.055) / 1.055).powf(2.4)
+            }
+        })
+    })
+}
+
+fn linear_to_srgb(v: f32) -> u8 {
+    let v = v.clamp(0.0, 1.0);
+    let s = if v <= 0.003_130_8 {
+        v * 12.92
+    } else {
+        1.055 * v.powf(1.0 / 2.4) - 0.055
+    };
+    (s * 255.0).round() as u8
+}
+
+/// A box-filtered reduction to fit `long_edge`, averaged in linear light.
+///
+/// The linear part is not a nicety. Averaging half black and half white in the
+/// sRGB encoding gives 128; averaging the light they represent gives 188. Get
+/// it wrong and every thumbnail in the filmstrip comes out darker than the
+/// photograph it stands for, which is the one job a thumbnail has.
+///
+/// A box filter rather than anything cleverer because the ratios here are
+/// large — a 6000 pixel frame down to 128 — and at that reduction a box filter
+/// is averaging fifty pixels a cell and there is nothing a windowed sinc would
+/// add except time.
+pub fn thumbnail(img: &DecodedImage, long_edge: u32) -> DecodedImage {
+    let long_edge = long_edge.max(1);
+    let scale = (long_edge as f32 / img.width.max(img.height).max(1) as f32).min(1.0);
+    let w = ((img.width as f32 * scale).round() as u32).max(1);
+    let h = ((img.height as f32 * scale).round() as u32).max(1);
+    if (w, h) == (img.width, img.height) {
+        return img.clone();
+    }
+
+    let table = srgb_to_linear();
+    let mut out = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        // Source rows this output row averages, as a half-open range. Derived
+        // from the edges rather than a fixed block size so that a size that
+        // does not divide evenly still covers every source pixel exactly once.
+        let y0 = (y as u64 * img.height as u64 / h as u64) as u32;
+        let y1 = (((y + 1) as u64 * img.height as u64).div_ceil(h as u64) as u32).min(img.height);
+        for x in 0..w {
+            let x0 = (x as u64 * img.width as u64 / w as u64) as u32;
+            let x1 = (((x + 1) as u64 * img.width as u64).div_ceil(w as u64) as u32).min(img.width);
+
+            let mut sum = [0.0f32; 3];
+            let mut n = 0.0f32;
+            for sy in y0..y1.max(y0 + 1) {
+                for sx in x0..x1.max(x0 + 1) {
+                    let p = img.pixel(sx, sy);
+                    for c in 0..3 {
+                        sum[c] += table[p[c] as usize];
+                    }
+                    n += 1.0;
+                }
+            }
+            let n = n.max(1.0);
+            out.extend_from_slice(&[
+                linear_to_srgb(sum[0] / n),
+                linear_to_srgb(sum[1] / n),
+                linear_to_srgb(sum[2] / n),
+                255,
+            ]);
+        }
+    }
+    DecodedImage::new(w, h, out).expect("built to size")
+}
+
 /// Save as PNG. Lossless, which is what the golden references need — a JPEG
 /// reference would drift with every encoder update.
 pub fn save_png(img: &DecodedImage, path: impl AsRef<Path>) -> Result<(), IoError> {
@@ -183,6 +265,99 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
         3 => (p, q, v),
         4 => (t, p, v),
         _ => (v, p, q),
+    }
+}
+
+#[cfg(test)]
+mod thumbnail_tests {
+    use super::*;
+
+    fn flat(w: u32, h: u32, c: [u8; 3]) -> DecodedImage {
+        let px: Vec<u8> = std::iter::repeat_n([c[0], c[1], c[2], 255], (w * h) as usize)
+            .flatten()
+            .collect();
+        DecodedImage::new(w, h, px).unwrap()
+    }
+
+    #[test]
+    fn a_thumbnail_fits_the_long_edge_and_keeps_the_shape() {
+        let t = thumbnail(&flat(4000, 3000, [90, 90, 90]), 128);
+        assert_eq!(t.size(), (128, 96));
+    }
+
+    #[test]
+    fn a_portrait_frame_fits_its_own_long_edge() {
+        let t = thumbnail(&flat(1000, 2000, [90, 90, 90]), 100);
+        assert_eq!(t.size(), (50, 100));
+    }
+
+    /// A thumbnail is a stand-in for the photograph. If it came out darker
+    /// than the photograph, the filmstrip would be lying about every frame in
+    /// it — and averaging in the encoding rather than in the light is exactly
+    /// how that happens.
+    #[test]
+    fn reducing_averages_in_linear_light() {
+        let mut px = Vec::new();
+        for y in 0..64u32 {
+            for x in 0..64u32 {
+                let v = if (x + y).is_multiple_of(2) { 255u8 } else { 0 };
+                px.extend_from_slice(&[v, v, v, 255]);
+            }
+        }
+        let src = DecodedImage::new(64, 64, px).unwrap();
+        let t = thumbnail(&src, 8);
+        assert_eq!(t.size(), (8, 8));
+        for y in 0..8 {
+            for x in 0..8 {
+                let v = t.pixel(x, y)[0] as i32;
+                assert!(
+                    (v - 188).abs() <= 2,
+                    "a checkerboard averaged to {v}, not 188 — the reduction                      is happening in the encoding rather than in the light"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_flat_colour_survives_intact() {
+        let t = thumbnail(&flat(300, 200, [200, 40, 90]), 50);
+        for y in 0..t.height {
+            for x in 0..t.width {
+                let p = t.pixel(x, y);
+                assert!(
+                    (p[0] as i32 - 200).abs() <= 1
+                        && (p[1] as i32 - 40).abs() <= 1
+                        && (p[2] as i32 - 90).abs() <= 1,
+                    "{p:?} at {x},{y}"
+                );
+            }
+        }
+    }
+
+    /// Enlarging invents detail, and a filmstrip full of soft upscales of
+    /// small files would be worse than one showing them at their own size.
+    #[test]
+    fn something_already_smaller_is_left_alone() {
+        let src = flat(60, 40, [10, 20, 30]);
+        assert_eq!(thumbnail(&src, 128), src);
+    }
+
+    /// Every source pixel has to land in exactly one cell. A size that does
+    /// not divide evenly is the normal case, not the exception.
+    #[test]
+    fn an_awkward_ratio_still_covers_the_whole_frame() {
+        // Left half black, right half white, at a width that does not divide.
+        let mut px = Vec::new();
+        for _ in 0..30u32 {
+            for x in 0..101u32 {
+                let v = if x < 50 { 0u8 } else { 255 };
+                px.extend_from_slice(&[v, v, v, 255]);
+            }
+        }
+        let src = DecodedImage::new(101, 30, px).unwrap();
+        let t = thumbnail(&src, 7);
+        assert_eq!(t.pixel(0, 0)[0], 0, "the dark end went missing");
+        assert_eq!(t.pixel(t.width - 1, 0)[0], 255, "so did the bright end");
     }
 }
 

@@ -102,6 +102,30 @@ and are scaled down along with the picture, which is the only order that looks
 like the preview did. It never enlarges: a request for 2048 on the long edge
 from a 1600px file gives back the file, not a soft version of it.
 
+## One edit per photograph, one photograph in memory
+
+A set is a list of paths, a few kilobytes of edit each, and a 128-pixel
+thumbnail. Only the photograph being worked on is decoded: a 24-megapixel
+frame is 96 MB of RGBA, so a folder of two hundred would be twenty gigabytes,
+and making a set navigable *without* holding it is the entire reason a
+filmstrip exists.
+
+What is parked per photograph is the whole `History`, not just the
+`Document`. Clicking the wrong thumbnail and clicking back must not cost an
+undo stack — losing an hour of work that way is not a tolerable thing for an
+editor to do. `History` deliberately does not implement `Clone` for the same
+reason: an undo stack with two owners is a bug waiting to be written, so
+switching moves it out wholesale instead.
+
+**A pasted grade is the stack only.** A crop belongs to the frame it was drawn
+on, and pasting a 16:9 crop onto a portrait shot is almost never what anyone
+meant. The grade travels between photographs; the framing does not.
+
+**Nothing in the program deletes a file.** Taking a photograph out of the set
+removes it from a list, and a batch export always writes into a folder the
+user chose — never beside the original, which would quietly turn the next
+run's input into its own output.
+
 ## Open question: embedded or referenced source
 
 `Source` supports both. Referenced is smaller; embedded survives the user

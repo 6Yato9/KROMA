@@ -13,15 +13,19 @@
 mod basic;
 mod crop;
 mod curve;
+mod filmstrip;
 mod inspector;
+mod library;
 mod mixer;
 mod preview;
 mod scopes;
 mod wheels;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use pe_core::{Document, History, RowIdGenerator};
+use pe_core::{Document, History, RowIdGenerator, Stack};
+
+use crate::library::Library;
 use pe_render::GpuContext;
 
 use crate::preview::{Framing, Preview, View};
@@ -79,6 +83,13 @@ pub struct App {
     /// deferred to the first frame rather than done in the constructor.
     titled: bool,
     view: View,
+    /// Every photograph open at once. The current one's pixels and edit
+    /// live in the fields above; the rest are parked here.
+    library: Library,
+    show_strip: bool,
+    /// A grade waiting to be applied to another photograph.
+    clipboard: Option<Stack>,
+    batch: Option<Batch>,
     /// Which comparison view is running, and where its divider sits.
     compare: Compare,
     /// The wipe position, as a fraction across the picture.
@@ -131,6 +142,10 @@ impl App {
             None => (None, "no wgpu render state".to_string()),
         };
 
+        // Whatever the window opened with is the set, so the filmstrip and
+        // the batch export have something to work with from the first frame.
+        let library_paths: Vec<PathBuf> = path.iter().cloned().collect();
+
         Self {
             image,
             path,
@@ -143,6 +158,10 @@ impl App {
             status: String::new(),
             titled: false,
             view: View::default(),
+            library: Library::new(library_paths),
+            show_strip: true,
+            clipboard: None,
+            batch: None,
             compare: Compare::Off,
             wipe: 0.5,
             wipe_x: None,
@@ -154,6 +173,107 @@ impl App {
             last: None,
             last_frame: (1, 1),
         }
+    }
+
+    /// Move to a different photograph in the set.
+    ///
+    /// The outgoing edit is parked whole — history and all — so that clicking
+    /// the wrong thumbnail and clicking back does not cost an hour of undo.
+    fn select(&mut self, index: usize, ctx: &egui::Context) {
+        if index >= self.library.len() || index == self.library.current() {
+            return;
+        }
+        let Some(path) = self.library.path(index).map(|p| p.to_path_buf()) else {
+            return;
+        };
+        let image = match pe_io::load(&path) {
+            Ok(img) => img,
+            Err(e) => {
+                self.status = format!("could not open {}: {e}", path.display());
+                return;
+            }
+        };
+        if let Some(preview) = self.preview.as_mut()
+            && let Err(e) = preview.set_source(&image)
+        {
+            self.status = format!("could not upload {}: {e}", path.display());
+            return;
+        }
+
+        // Swap in a placeholder so the outgoing history can be moved out
+        // wholesale rather than cloned; `History` deliberately is not `Clone`,
+        // because an undo stack with two owners is a bug waiting to happen.
+        let outgoing = std::mem::replace(
+            &mut self.history,
+            History::new(Document::from_path(String::new())),
+        );
+        let outgoing_ids = std::mem::take(&mut self.ids);
+        let (history, ids) = self.library.switch(index, outgoing, outgoing_ids);
+        self.history = history;
+        self.ids = ids;
+
+        self.image = image;
+        self.path = Some(path);
+        self.view.fit();
+        self.cropping = false;
+        self.last = None;
+        self.set_title(ctx);
+    }
+
+    /// Decode and upload whatever photograph the library is pointing at.
+    fn load_current(&mut self, ctx: &egui::Context) {
+        let Some(path) = self
+            .library
+            .path(self.library.current())
+            .map(|p| p.to_path_buf())
+        else {
+            return;
+        };
+        let image = match pe_io::load(&path) {
+            Ok(img) => img,
+            Err(e) => {
+                self.status = format!("could not open {}: {e}", path.display());
+                return;
+            }
+        };
+        if let Some(preview) = self.preview.as_mut()
+            && let Err(e) = preview.set_source(&image)
+        {
+            self.status = format!("could not upload {}: {e}", path.display());
+            return;
+        }
+        self.image = image;
+        self.path = Some(path);
+        self.view.fit();
+        self.cropping = false;
+        self.last = None;
+        self.set_title(ctx);
+    }
+
+    /// Take a photograph out of the set.
+    ///
+    /// The file is untouched. This is a list of what is open, not a folder,
+    /// and nothing in this program deletes anything off a disc.
+    fn remove_photo(&mut self, index: usize, ctx: &egui::Context) {
+        if index >= self.library.len() {
+            return;
+        }
+        let was_current = index == self.library.current();
+        self.library.remove(index);
+        if self.library.is_empty() {
+            self.status = "no photos open".into();
+            return;
+        }
+        if was_current {
+            // The edit in hand belonged to the photograph just removed, so
+            // there is nothing to park — and no index to compare against
+            // either, which is why this cannot go through `select`.
+            let (history, ids) = self.library.take_current();
+            self.history = history;
+            self.ids = ids;
+            self.load_current(ctx);
+        }
+        self.set_title(ctx);
     }
 
     /// Open a photograph, replacing whatever is loaded.
@@ -178,7 +298,8 @@ impl App {
             return;
         }
 
-        let doc = pe_effects::new_document(path.to_string_lossy().to_string());
+        let doc = library::load_edit(&path)
+            .unwrap_or_else(|| pe_effects::new_document(path.to_string_lossy().to_string()));
         self.ids = RowIdGenerator::resuming(&doc);
         self.history = History::new(doc);
         self.status = format!("opened {}", path.display());
@@ -257,8 +378,13 @@ impl App {
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "test chart".to_string());
+        let position = if self.library.len() > 1 {
+            format!(" [{}/{}]", self.library.current() + 1, self.library.len())
+        } else {
+            String::new()
+        };
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
-            "{name} — {}x{} — Photo Editor",
+            "{name}{position} — {}x{} — Photo Editor",
             self.image.width, self.image.height
         )));
     }
@@ -275,9 +401,148 @@ impl App {
         if let Some(dir) = start {
             dialog = dialog.set_directory(dir);
         }
-        if let Some(path) = dialog.pick_file() {
-            self.open_image(path, ctx);
+        if let Some(paths) = dialog.pick_files() {
+            self.add_and_show(paths, ctx);
         }
+    }
+
+    fn open_folder_dialog(&mut self, ctx: &egui::Context) {
+        let start = self.path.as_ref().and_then(|p| p.parent());
+        let mut dialog = rfd::FileDialog::new().set_title("Open folder");
+        if let Some(dir) = start {
+            dialog = dialog.set_directory(dir);
+        }
+        let Some(dir) = dialog.pick_folder() else {
+            return;
+        };
+        let found = Library::scan(&dir);
+        if found.is_empty() {
+            self.status = format!("no images in {}", dir.display());
+            return;
+        }
+        let n = found.len();
+        self.add_and_show(found, ctx);
+        self.status = format!("opened {n} photos from {}", dir.display());
+    }
+
+    /// Add photographs to the set and move to the first genuinely new one.
+    fn add_and_show(&mut self, paths: Vec<PathBuf>, ctx: &egui::Context) {
+        let first_run = self.library.is_empty();
+        let Some(index) = self.library.add(paths) else {
+            self.status = "already open".into();
+            return;
+        };
+        self.show_strip = true;
+        if first_run {
+            // The set was empty, so this is index zero and the library is
+            // already pointing at it. Nothing to park either: the document the
+            // window started with belongs to no photograph.
+            let Some(path) = self.library.path(index).map(|p| p.to_path_buf()) else {
+                return;
+            };
+            self.open_image(path, ctx);
+        } else {
+            self.select(index, ctx);
+        }
+    }
+
+    /// Start a batch export of every photograph in the set.
+    fn batch_export(&mut self) {
+        if self.library.is_empty() {
+            self.status = "no photos open".into();
+            return;
+        }
+        let start = self.path.as_ref().and_then(|p| p.parent());
+        let mut dialog = rfd::FileDialog::new().set_title("Export all to");
+        if let Some(dir) = start {
+            dialog = dialog.set_directory(dir);
+        }
+        let Some(dir) = dialog.pick_folder() else {
+            return;
+        };
+        self.batch = Some(Batch {
+            targets: (0..self.library.len()).collect(),
+            next: 0,
+            dir,
+            done: 0,
+            failed: 0,
+        });
+    }
+
+    /// Export one photograph of a batch. Returns false when there is no more
+    /// to do.
+    fn batch_step(&mut self) -> bool {
+        let Some(batch) = self.batch.as_mut() else {
+            return false;
+        };
+        let Some(&index) = batch.targets.get(batch.next) else {
+            let (done, failed) = (batch.done, batch.failed);
+            let dir = batch.dir.clone();
+            self.batch = None;
+            self.status = if failed == 0 {
+                format!("exported {done} photos to {}", dir.display())
+            } else {
+                format!("exported {done} to {}, {failed} failed", dir.display())
+            };
+            return false;
+        };
+        batch.next += 1;
+
+        let Some(preview) = self.preview.as_ref() else {
+            batch.failed += 1;
+            return true;
+        };
+        let Some(path) = self.library.path(index).map(|p| p.to_path_buf()) else {
+            batch.failed += 1;
+            return true;
+        };
+        let out = export_path(&batch.dir, &path);
+
+        // The photograph in hand has its edit in the live history; every other
+        // one has it parked, or has none at all and gets the defaults.
+        let doc = if index == self.library.current() {
+            self.history.document().clone()
+        } else {
+            match self.library.entries()[index].document() {
+                Some(d) => d.clone(),
+                None => library::load_edit(&path).unwrap_or_else(|| {
+                    pe_effects::new_document(path.to_string_lossy().to_string())
+                }),
+            }
+        };
+
+        // Decoded here rather than held: the whole reason a set is navigable
+        // is that only one frame is in memory at a time.
+        let image = if index == self.library.current() {
+            self.image.clone()
+        } else {
+            match pe_io::load(&path) {
+                Ok(img) => img,
+                Err(_) => {
+                    if let Some(b) = self.batch.as_mut() {
+                        b.failed += 1;
+                    }
+                    return true;
+                }
+            }
+        };
+
+        let (w, h) = pe_render::export::output_size(&doc, image.width, image.height);
+        let result = preview
+            .export(&image, &doc)
+            .map_err(|e| e.to_string())
+            .and_then(|pixels| {
+                pe_io::DecodedImage::new(w, h, pixels)
+                    .and_then(|img| pe_io::save_jpeg(&img, &out, 95))
+                    .map_err(|e| e.to_string())
+            });
+        if let Some(b) = self.batch.as_mut() {
+            match result {
+                Ok(()) => b.done += 1,
+                Err(_) => b.failed += 1,
+            }
+        }
+        true
     }
 
     /// Save the edit beside the photo as `<name>.peproj`.
@@ -317,6 +582,48 @@ impl App {
             }
             Err(e) => self.status = format!("load failed: {e}"),
         }
+    }
+
+    /// Write a `.peproj` beside every photograph that has one to write.
+    ///
+    /// Without this, pasting a grade across fifty photographs would leave
+    /// forty-nine of them holding an edit that exists only in memory — which
+    /// is a fine way to lose an afternoon to a crash.
+    fn save_all_edits(&mut self) {
+        let mut written = 0;
+        let mut failed = 0;
+        let current = self.library.current();
+
+        let mut write = |path: &Path, doc: &Document| match doc
+            .to_json()
+            .map_err(|e| e.to_string())
+            .and_then(|json| {
+                std::fs::write(path.with_extension("peproj"), json).map_err(|e| e.to_string())
+            }) {
+            Ok(()) => written += 1,
+            Err(_) => failed += 1,
+        };
+
+        for (i, entry) in self.library.entries().iter().enumerate() {
+            if i == current {
+                continue;
+            }
+            // A photograph nobody has opened and nobody has pasted onto has
+            // no edit, and writing a file full of defaults beside it would be
+            // noise in the user's folder.
+            if let Some(doc) = entry.document() {
+                write(&entry.path, doc);
+            }
+        }
+        if let Some(path) = self.path.clone() {
+            write(&path, self.history.document());
+        }
+
+        self.status = if failed == 0 {
+            format!("saved {written} edits")
+        } else {
+            format!("saved {written} edits, {failed} failed")
+        };
     }
 
     fn edit_path(&self) -> Option<PathBuf> {
@@ -360,7 +667,22 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Thumbnails arriving from the worker.
+        if self.library.collect(ctx) {
+            ctx.request_repaint();
+        }
+        // One photograph of a batch per frame, so the window keeps drawing and
+        // the progress readout means something.
+        if self.batch.is_some() {
+            self.batch_step();
+            ctx.request_repaint();
+        }
+
+        let mut selected: Option<usize> = None;
+        let mut action: Option<filmstrip::Action> = None;
         let mut open_requested = false;
+        let mut open_folder_requested = false;
+        let mut stop_batch = false;
         ctx.input_mut(|i| {
             if i.consume_key(egui::Modifiers::COMMAND, egui::Key::Z) {
                 self.history.undo();
@@ -370,6 +692,17 @@ impl eframe::App for App {
                 egui::Key::Z,
             ) {
                 self.history.redo();
+            }
+            if !self.library.is_empty() {
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight) {
+                    selected = Some((self.library.current() + 1).min(self.library.len() - 1));
+                }
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft) {
+                    selected = Some(self.library.current().saturating_sub(1));
+                }
+            }
+            if i.consume_key(egui::Modifiers::NONE, egui::Key::F) {
+                self.show_strip = !self.show_strip;
             }
             if i.consume_key(egui::Modifiers::NONE, egui::Key::S) {
                 self.show_scopes = !self.show_scopes;
@@ -382,9 +715,16 @@ impl eframe::App for App {
                 self.bypass_all = !self.bypass_all;
             }
             open_requested = i.consume_key(egui::Modifiers::COMMAND, egui::Key::O);
+            open_folder_requested = i.consume_key(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::O,
+            );
         });
         if open_requested {
             self.open_dialog(ctx);
+        }
+        if open_folder_requested {
+            self.open_folder_dialog(ctx);
         }
 
         // Drag a photo onto the window. Cheaper for the user than any menu,
@@ -396,8 +736,18 @@ impl eframe::App for App {
                 .filter_map(|f| f.path.clone())
                 .collect()
         });
-        if let Some(path) = dropped.into_iter().next() {
-            self.open_image(path, ctx);
+        if !dropped.is_empty() {
+            // A dropped folder is as good as a dropped file, and dropping the
+            // folder is what people do when they mean the whole shoot.
+            let mut paths = Vec::new();
+            for path in dropped {
+                if path.is_dir() {
+                    paths.extend(Library::scan(&path));
+                } else {
+                    paths.push(path);
+                }
+            }
+            self.add_and_show(paths, ctx);
         }
 
         if !self.titled {
@@ -426,6 +776,13 @@ impl eframe::App for App {
                 ui.toggle_value(&mut self.bypass_all, "Bypass all")
                     .on_hover_text("Shift+D — flatten the stack for an honest before/after");
                 ui.separator();
+                if ui
+                    .button("Open folder…")
+                    .on_hover_text("Ctrl+Shift+O")
+                    .clicked()
+                {
+                    open_folder_requested = true;
+                }
                 ui.add_enabled_ui(self.path.is_some(), |ui| {
                     if ui
                         .button("Save edit")
@@ -438,10 +795,58 @@ impl eframe::App for App {
                         self.load_edit();
                     }
                 });
+                ui.add_enabled_ui(self.library.len() > 1, |ui| {
+                    if ui
+                        .button("Save all")
+                        .on_hover_text(
+                            "A .peproj beside every photo that has been edited —                              including ones a grade was pasted onto",
+                        )
+                        .clicked()
+                    {
+                        self.save_all_edits();
+                    }
+                });
                 ui.separator();
                 if ui.button("Export JPEG").clicked() {
                     self.export();
                 }
+                ui.add_enabled_ui(self.library.len() > 1 && self.batch.is_none(), |ui| {
+                    if ui
+                        .button("Export all…")
+                        .on_hover_text("Every photo in the set, into a folder you choose")
+                        .clicked()
+                    {
+                        self.batch_export();
+                    }
+                });
+                ui.separator();
+                ui.add_enabled_ui(self.library.len() > 1, |ui| {
+                    if ui.button("Copy grade").clicked() {
+                        self.clipboard = Some(self.history.document().stack.clone());
+                        self.status = "grade copied".into();
+                    }
+                });
+                ui.add_enabled_ui(self.clipboard.is_some(), |ui| {
+                    if ui.button("Paste").clicked()
+                        && let Some(stack) = self.clipboard.clone()
+                    {
+                        self.history
+                            .edit("Paste Grade", None, move |doc| doc.stack = stack);
+                        self.ids = RowIdGenerator::resuming(self.history.document());
+                        self.status = "grade pasted".into();
+                    }
+                    if ui
+                        .button("Paste to all")
+                        .on_hover_text(
+                            "The grade only — a crop belongs to the frame it was drawn on",
+                        )
+                        .clicked()
+                        && let Some(stack) = self.clipboard.clone()
+                    {
+                        let n = self.library.paste_stack_to_all(&stack);
+                        self.status = format!("grade pasted to {n} photos");
+                    }
+                });
                 ui.separator();
                 ui.label(egui::RichText::new("Compare").small().weak());
                 for (label, mode) in [
@@ -501,6 +906,15 @@ impl eframe::App for App {
             });
         });
 
+        if self.show_strip && !self.library.is_empty() {
+            egui::TopBottomPanel::bottom("filmstrip")
+                .exact_height(92.0)
+                .show(ctx, |ui| {
+                    ui.add_space(2.0);
+                    action = filmstrip::strip(ui, &mut self.library);
+                });
+        }
+
         if self.show_scopes {
             egui::TopBottomPanel::bottom("scopes")
                 .resizable(true)
@@ -533,6 +947,23 @@ impl eframe::App for App {
                         &self.shown,
                     );
                 });
+        }
+
+        if let Some(batch) = self.batch.as_ref() {
+            let total = batch.targets.len();
+            let left = batch.remaining();
+            egui::TopBottomPanel::bottom("batch").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::ProgressBar::new((total - left) as f32 / total.max(1) as f32)
+                            .desired_width(220.0)
+                            .text(format!("exporting {} of {total}", total - left)),
+                    );
+                    if ui.small_button("Stop").clicked() {
+                        stop_batch = true;
+                    }
+                });
+            });
         }
 
         if !self.status.is_empty() {
@@ -694,7 +1125,53 @@ impl eframe::App for App {
                     }
                 }
             });
+
+        if stop_batch && let Some(batch) = self.batch.take() {
+            self.status = format!("stopped after {} of {}", batch.done, batch.targets.len());
+        }
+        match action {
+            Some(filmstrip::Action::Show(index)) => selected = Some(index),
+            Some(filmstrip::Action::Remove(index)) => self.remove_photo(index, ctx),
+            None => {}
+        }
+        if let Some(index) = selected {
+            self.select(index, ctx);
+        }
     }
+}
+
+/// A batch export in progress.
+///
+/// One photograph per frame, on the main thread. The obvious alternative is a
+/// worker, but the GPU work would have to be marshalled back anyway and the
+/// window would still need to know how far along it was — so this trades a
+/// visible hitch per frame for a progress readout that cannot lie and no
+/// second render path to keep in step with the first.
+struct Batch {
+    targets: Vec<usize>,
+    next: usize,
+    dir: PathBuf,
+    done: usize,
+    failed: usize,
+}
+
+impl Batch {
+    fn remaining(&self) -> usize {
+        self.targets.len().saturating_sub(self.next)
+    }
+}
+
+/// Where a batch writes one photograph.
+///
+/// Beside the original would overwrite the next run's input the moment someone
+/// exports JPEGs into the folder they came from, so a batch always goes
+/// somewhere chosen.
+fn export_path(dir: &Path, source: &Path) -> PathBuf {
+    let stem = source
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "export".to_string());
+    dir.join(format!("{stem}.jpg"))
 }
 
 /// How the graded picture is being held up against the ungraded one.

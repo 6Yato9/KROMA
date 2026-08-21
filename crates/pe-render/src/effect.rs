@@ -318,6 +318,7 @@ impl EffectRenderer {
             input_view,
             &stage.texture.view,
             (width, height),
+            self.region,
             // Spatial effects need to know how much smaller the preview is than
             // the source, or grain and halation would change size on export.
             width as f32 / source.width.max(1) as f32,
@@ -329,6 +330,16 @@ impl EffectRenderer {
     /// Encode one effect pass. Shared by the preview and the export paths, so
     /// there is exactly one place where a row becomes GPU work.
     #[allow(clippy::too_many_arguments, reason = "an explicit pass description")]
+    /// Encode one row's pass.
+    ///
+    /// `region` says which rectangle of the *frame* this pass covers, and it
+    /// is an argument rather than read from the renderer on purpose. Every
+    /// spatial effect anchors itself with it — a vignette's centre, a grain
+    /// lattice, a halation radius — so a pass that inherited the preview's
+    /// current zoom would render a vignette as though the whole photograph
+    /// were the part that happened to be on screen. Export shares this
+    /// renderer with the preview, which is exactly how that would happen.
+    #[allow(clippy::too_many_arguments)]
     pub fn encode_into(
         &self,
         gpu: &GpuContext,
@@ -337,6 +348,7 @@ impl EffectRenderer {
         input_view: &wgpu::TextureView,
         output_view: &wgpu::TextureView,
         size: (u32, u32),
+        region: crate::Region,
         scale: f32,
         row: &StackRow,
         effect: &EffectDef,
@@ -356,7 +368,7 @@ impl EffectRenderer {
             // a visible pattern.
             seed: (row.id.0 % 991) as f32 * 37.0,
             _pad: [0.0; 3],
-            region: self.region.to_array(),
+            region: region.to_array(),
             p: to_vec4s(pack_all(effect, &row.params)),
         };
         gpu.queue

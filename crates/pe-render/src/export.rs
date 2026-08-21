@@ -95,6 +95,11 @@ pub fn render_full(
             &front.view,
             &back.view,
             (crop_w, crop_h),
+            // The whole frame, always. The renderer is shared with the
+            // preview, whose region follows the zoom, and inheriting that here
+            // would export a vignette centred on whatever part of the picture
+            // happened to be on screen.
+            crate::Region::FULL,
             // Export is full resolution by definition, so spatial effects get
             // a scale of 1. This is the number that makes grain and halation
             // match the preview instead of shrinking to nothing.

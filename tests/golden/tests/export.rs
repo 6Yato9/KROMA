@@ -36,6 +36,45 @@ fn export(gpu: &GpuContext, src: &DecodedImage, doc: &Document) -> DecodedImage 
     DecodedImage::new(src.width, src.height, pixels).expect("decoded")
 }
 
+/// Export must not inherit the preview's zoom.
+///
+/// The two share a renderer, and the renderer carries the rectangle of the
+/// frame the last pass covered. Every spatial effect anchors itself with that
+/// — a vignette's centre, a grain lattice, a halation radius — so a zoomed-in
+/// preview would export a vignette centred on whatever part of the picture
+/// happened to be on screen. It would look perfectly fine until someone
+/// exported twice from two different zoom levels.
+#[test]
+fn exporting_is_the_same_whatever_the_preview_was_last_showing() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = pe_io::test_chart(160, 120);
+
+    let mut doc = Document::from_path("chart.png");
+    let def = pe_effects::by_key("vignette").expect("registered");
+    let mut row = pe_core::StackRow::new(pe_core::RowId(0), "vignette");
+    row.params = def.default_params();
+    doc.stack.push(row);
+
+    let fresh = EffectRenderer::new(&gpu.device);
+    let at_fit =
+        pe_render::render_full(gpu, &fresh, src.width, src.height, &src.pixels, &doc).expect("fit");
+
+    let mut zoomed = EffectRenderer::new(&gpu.device);
+    zoomed.set_region(pe_render::Region {
+        offset: [0.4, 0.4],
+        size: [0.2, 0.2],
+    });
+    let after_zoom = pe_render::render_full(gpu, &zoomed, src.width, src.height, &src.pixels, &doc)
+        .expect("zoomed");
+
+    assert_eq!(
+        at_fit, after_zoom,
+        "the exported picture depended on where the preview was looking"
+    );
+}
+
 #[test]
 fn exporting_an_empty_stack_returns_the_source() {
     let Some(gpu) = gpu() else { return };
