@@ -1,0 +1,16 @@
+[package]
+name = "pe-windows"
+description = "Windows shell. Contains no image processing."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pe-color = { version = "0.0.1", path = "../../crates/pe-color" }
+pe-core = { version = "0.0.1", path = "../../crates/pe-core" }
+pe-render = { version = "0.0.1", path = "../../crates/pe-render" }
+pe-io = { version = "0.0.1", path = "../../crates/pe-io" }
+wgpu = "26"
+winit = "0.30.13"
+pollster = "1.0.1"

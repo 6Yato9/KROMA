@@ -1,0 +1,10 @@
+[package]
+name = "pe-scopes"
+description = "Waveform, parade, vectorscope and histogram (CPU reference)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pe-color = { version = "0.0.1", path = "../pe-color" }

@@ -1,0 +1,12 @@
+# LF in the repository, always. This project is developed on Windows and built
+# on macOS, and mixed line endings make `cargo fmt --check` fail on one
+# platform and pass on the other — a CI failure with no visible cause.
+* text=auto eol=lf
+
+# Shell scripts must keep LF or they will not execute on macOS.
+*.sh text eol=lf
+
+# Golden references are binary. Never let git touch their bytes: a line-ending
+# "fix" applied to a PNG silently corrupts every reference in the suite.
+*.png binary
+*.jpg binary

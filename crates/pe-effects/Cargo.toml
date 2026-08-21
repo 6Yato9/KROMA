@@ -1,0 +1,11 @@
+[package]
+name = "pe-effects"
+description = "Effect registry: parameters, shaders, and working-space declarations"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pe-color = { version = "0.0.1", path = "../pe-color" }
+pe-core = { version = "0.0.1", path = "../pe-core" }

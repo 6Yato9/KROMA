@@ -1,0 +1,36 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/pe-color",
+    "crates/pe-core",
+    "crates/pe-effects",
+    "crates/pe-render",
+    "crates/pe-scopes",
+    "crates/pe-io",
+    "crates/pe-ffi",
+    "apps/windows",
+    "tests/golden",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.87"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/local/photo-editor"
+
+[workspace.dependencies]
+pe-color = { path = "crates/pe-color" }
+pe-core = { path = "crates/pe-core" }
+pe-effects = { path = "crates/pe-effects" }
+pe-render = { path = "crates/pe-render" }
+pe-scopes = { path = "crates/pe-scopes" }
+pe-io = { path = "crates/pe-io" }
+
+# Release profile matters more than usual here: the CPU reference path in
+# pe-color is used by the golden tests, and a debug build of it is ~40x slower.
+[profile.dev.package."pe-color"]
+opt-level = 2
+
+[profile.dev.package."pe-io"]
+opt-level = 2

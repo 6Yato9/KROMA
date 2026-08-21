@@ -1,0 +1,12 @@
+[package]
+name = "pe-color"
+description = "Colour spaces, transfer functions and the two-space working pipeline"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Intentionally dependency-free. Everything else in the workspace depends on
+# this crate; keeping it free of third-party code means the colour maths can
+# never be broken by someone else's semver decision.
+[dependencies]

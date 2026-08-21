@@ -1,0 +1,16 @@
+[package]
+name = "pe-golden"
+description = "Golden-image test harness"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+pe-color = { version = "0.0.1", path = "../../crates/pe-color" }
+pe-io = { version = "0.0.1", path = "../../crates/pe-io" }
+
+[dev-dependencies]
+pe-render = { version = "0.0.1", path = "../../crates/pe-render" }
+wgpu = "26"

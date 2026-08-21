@@ -1,0 +1,13 @@
+[package]
+name = "pe-core"
+description = "Document model: the effect stack, parameters, history"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pe-color = { version = "0.0.1", path = "../pe-color" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+thiserror = "2.0.20"

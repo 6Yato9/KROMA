@@ -1,0 +1,5 @@
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+# Added as the Mac port approaches:
+#   targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]

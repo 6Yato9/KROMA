@@ -1,0 +1,7 @@
+[alias]
+# Regenerate the committed golden references. Always inspect the diff before
+# committing — a golden test blindly regenerated is a golden test deleted.
+golden-update = "test -p pe-golden"
+
+[env]
+# Nothing yet. LibRaw and OpenColorIO paths land here at M5.

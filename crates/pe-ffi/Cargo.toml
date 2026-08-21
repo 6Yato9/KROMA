@@ -1,0 +1,16 @@
+[package]
+name = "pe-ffi"
+description = "C ABI surface for the Swift front ends"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+# staticlib for linking into the Xcode project; cdylib for anything that wants
+# a dynamic library; rlib so the Rust tests can still see it.
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+pe-core = { version = "0.0.1", path = "../pe-core" }
+pe-color = { version = "0.0.1", path = "../pe-color" }

@@ -1,0 +1,349 @@
+//! The effect stack — an ordered list of rows, each of which is a node in
+//! disguise.
+//!
+//! In Resolve, a node has an RGB input, a key input, an opacity and a composite
+//! mode. Every row here has the same anatomy, and that is the single most
+//! important decision in this file. Because the key and the blend live on the
+//! *row* rather than inside particular effects, "grain at 40% in Screen mode,
+//! sky only" needs no special code anywhere — it is three fields that already
+//! exist. Put them inside individual effects instead and each becomes a
+//! separate feature request against every effect in the registry, forever.
+
+use serde::{Deserialize, Serialize};
+
+use crate::params::ParamMap;
+
+/// Stable identifier for a row. Survives reordering, which is why the UI keys
+/// off this and never off the index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RowId(pub u64);
+
+/// How a row's result is combined with what came before it.
+///
+/// The set Resolve exposes on a node, minus the ones that only make sense with
+/// an alpha channel we do not have.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BlendMode {
+    #[default]
+    Normal,
+    Add,
+    Multiply,
+    Screen,
+    Overlay,
+    SoftLight,
+    HardLight,
+    Darken,
+    Lighten,
+    Difference,
+    Exclusion,
+    /// Takes hue and saturation from the result, luminance from the input.
+    Color,
+    /// Takes luminance from the result, hue and saturation from the input.
+    Luminosity,
+}
+
+impl BlendMode {
+    pub const ALL: &'static [BlendMode] = &[
+        BlendMode::Normal,
+        BlendMode::Add,
+        BlendMode::Multiply,
+        BlendMode::Screen,
+        BlendMode::Overlay,
+        BlendMode::SoftLight,
+        BlendMode::HardLight,
+        BlendMode::Darken,
+        BlendMode::Lighten,
+        BlendMode::Difference,
+        BlendMode::Exclusion,
+        BlendMode::Color,
+        BlendMode::Luminosity,
+    ];
+
+    /// Blend modes that model light arriving at a sensor and should therefore
+    /// be evaluated in linear space regardless of what the effect above them
+    /// asked for. The rest are perceptual and belong in log.
+    ///
+    /// This distinction is the two-space rule applied to compositing, and it is
+    /// the reason `Screen`-mode halation looks like glow rather than haze.
+    pub fn is_light_like(self) -> bool {
+        matches!(self, BlendMode::Add | BlendMode::Screen)
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BlendMode::Normal => "Normal",
+            BlendMode::Add => "Add",
+            BlendMode::Multiply => "Multiply",
+            BlendMode::Screen => "Screen",
+            BlendMode::Overlay => "Overlay",
+            BlendMode::SoftLight => "Soft Light",
+            BlendMode::HardLight => "Hard Light",
+            BlendMode::Darken => "Darken",
+            BlendMode::Lighten => "Lighten",
+            BlendMode::Difference => "Difference",
+            BlendMode::Exclusion => "Exclusion",
+            BlendMode::Color => "Color",
+            BlendMode::Luminosity => "Luminosity",
+        }
+    }
+}
+
+/// The key (mask) that limits a row's effect to part of the image.
+///
+/// M0 defines the shape only; the variants are implemented at M3. Declaring
+/// them now means the document format does not need a migration when they
+/// land, and it forces the renderer's row loop to handle an optional key from
+/// the very first version.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum Key {
+    /// Resolve's power windows.
+    Window(WindowShape),
+    /// HSL qualifier.
+    Qualifier(ParamMap),
+    /// Painted mask, stored as strokes so it stays resolution-independent.
+    Brush(ParamMap),
+    /// Machine-generated: subject, sky, skin, depth.
+    Generated { source: String, params: ParamMap },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WindowShape {
+    Linear,
+    Circle,
+    Polygon,
+    Curve,
+    Gradient,
+}
+
+/// Modifiers applied to a key after it is generated. Resolve keeps these in the
+/// Key palette; they apply uniformly to every kind of key, so they live here
+/// rather than inside each variant.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KeyAdjust {
+    pub invert: bool,
+    /// Multiplies the matte. Resolve calls this Key Output Gain.
+    pub gain: f32,
+    /// Added to the matte before gain.
+    pub offset: f32,
+    /// Blur radius in image-relative units, not pixels.
+    pub softness: f32,
+}
+
+impl Default for KeyAdjust {
+    fn default() -> Self {
+        Self {
+            invert: false,
+            gain: 1.0,
+            offset: 0.0,
+            softness: 0.0,
+        }
+    }
+}
+
+/// One row of the stack.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StackRow {
+    pub id: RowId,
+    /// Registry key of the effect, e.g. `"exposure"`. A string rather than an
+    /// enum so that a document containing an effect this build does not know
+    /// about can still round-trip instead of failing to open.
+    pub effect: String,
+    #[serde(default)]
+    pub params: ParamMap,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_one")]
+    pub opacity: f32,
+    #[serde(default)]
+    pub blend: BlendMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<Key>,
+    #[serde(default)]
+    pub key_adjust: KeyAdjust,
+    /// User-visible label. `None` means "use the effect's display name".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+fn default_one() -> f32 {
+    1.0
+}
+
+impl StackRow {
+    pub fn new(id: RowId, effect: impl Into<String>) -> Self {
+        Self {
+            id,
+            effect: effect.into(),
+            params: ParamMap::default(),
+            enabled: true,
+            opacity: 1.0,
+            blend: BlendMode::Normal,
+            key: None,
+            key_adjust: KeyAdjust::default(),
+            label: None,
+        }
+    }
+
+    /// Whether this row can be skipped entirely by the renderer.
+    ///
+    /// A disabled row and a fully transparent row are the same thing as far as
+    /// output goes, and skipping them keeps a long stack cheap when the user is
+    /// A/B-ing with the enable toggles.
+    pub fn is_noop(&self) -> bool {
+        !self.enabled || self.opacity <= 0.0
+    }
+}
+
+/// The ordered list of rows.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Stack {
+    pub rows: Vec<StackRow>,
+}
+
+impl Stack {
+    pub fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, StackRow> {
+        self.rows.iter()
+    }
+
+    pub fn push(&mut self, row: StackRow) {
+        self.rows.push(row);
+    }
+
+    pub fn insert(&mut self, index: usize, row: StackRow) {
+        self.rows.insert(index.min(self.rows.len()), row);
+    }
+
+    pub fn remove(&mut self, id: RowId) -> Option<StackRow> {
+        let i = self.index_of(id)?;
+        Some(self.rows.remove(i))
+    }
+
+    pub fn index_of(&self, id: RowId) -> Option<usize> {
+        self.rows.iter().position(|r| r.id == id)
+    }
+
+    pub fn get(&self, id: RowId) -> Option<&StackRow> {
+        self.rows.iter().find(|r| r.id == id)
+    }
+
+    pub fn get_mut(&mut self, id: RowId) -> Option<&mut StackRow> {
+        self.rows.iter_mut().find(|r| r.id == id)
+    }
+
+    /// Move a row to a new index. Returns the range of indices whose rendered
+    /// output is now invalid, which the stage cache uses to decide how much to
+    /// throw away.
+    pub fn reorder(&mut self, id: RowId, to: usize) -> Option<usize> {
+        let from = self.index_of(id)?;
+        let to = to.min(self.rows.len().saturating_sub(1));
+        if from == to {
+            return Some(from);
+        }
+        let row = self.rows.remove(from);
+        self.rows.insert(to, row);
+        Some(from.min(to))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stack_of(n: u64) -> Stack {
+        let mut s = Stack::default();
+        for i in 0..n {
+            s.push(StackRow::new(RowId(i), format!("effect{i}")));
+        }
+        s
+    }
+
+    #[test]
+    fn a_new_row_is_enabled_opaque_and_unmasked() {
+        // These defaults are load-bearing: adding an effect must visibly do
+        // something immediately, or the UI feels broken.
+        let r = StackRow::new(RowId(1), "exposure");
+        assert!(r.enabled);
+        assert_eq!(r.opacity, 1.0);
+        assert_eq!(r.blend, BlendMode::Normal);
+        assert!(r.key.is_none());
+        assert!(!r.is_noop());
+    }
+
+    #[test]
+    fn disabled_or_transparent_rows_are_noops() {
+        let mut r = StackRow::new(RowId(1), "grain");
+        r.enabled = false;
+        assert!(r.is_noop());
+
+        let mut r = StackRow::new(RowId(2), "grain");
+        r.opacity = 0.0;
+        assert!(r.is_noop());
+    }
+
+    #[test]
+    fn reorder_reports_the_earliest_dirty_index() {
+        let mut s = stack_of(5);
+        // Moving row 3 up to position 1 invalidates everything from 1 onward.
+        assert_eq!(s.reorder(RowId(3), 1), Some(1));
+        let order: Vec<_> = s.iter().map(|r| r.id.0).collect();
+        assert_eq!(order, vec![0, 3, 1, 2, 4]);
+
+        // Moving row 1 down to 3 invalidates from 1 onward too.
+        let mut s = stack_of(5);
+        assert_eq!(s.reorder(RowId(1), 3), Some(1));
+        let order: Vec<_> = s.iter().map(|r| r.id.0).collect();
+        assert_eq!(order, vec![0, 2, 3, 1, 4]);
+    }
+
+    #[test]
+    fn reordering_to_the_same_place_is_a_noop() {
+        let mut s = stack_of(3);
+        let before = s.clone();
+        assert_eq!(s.reorder(RowId(1), 1), Some(1));
+        assert_eq!(s, before);
+    }
+
+    #[test]
+    fn reorder_past_the_end_clamps() {
+        let mut s = stack_of(3);
+        assert!(s.reorder(RowId(0), 99).is_some());
+        let order: Vec<_> = s.iter().map(|r| r.id.0).collect();
+        assert_eq!(order, vec![1, 2, 0]);
+    }
+
+    #[test]
+    fn ids_survive_reordering() {
+        let mut s = stack_of(4);
+        s.reorder(RowId(0), 3);
+        assert!(s.get(RowId(0)).is_some());
+        assert_eq!(s.index_of(RowId(0)), Some(3));
+    }
+
+    #[test]
+    fn add_and_screen_are_the_light_like_modes() {
+        for m in BlendMode::ALL {
+            assert_eq!(
+                m.is_light_like(),
+                matches!(m, BlendMode::Add | BlendMode::Screen),
+                "{m:?}"
+            );
+        }
+    }
+}

@@ -1,0 +1,11 @@
+[package]
+name = "pe-io"
+description = "Image decode and encode"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+image = { version = "0.25.9", default-features = false, features = ["jpeg", "png"] }
+thiserror = "2.0.20"

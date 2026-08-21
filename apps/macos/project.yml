@@ -1,0 +1,30 @@
+# XcodeGen spec.
+#
+# The .xcodeproj is generated, not committed, because a pbxproj is unmergeable
+# and every branch that touches it conflicts. On the Mac:
+#
+#   brew install xcodegen cbindgen
+#   cd apps/macos && xcodegen generate && open PhotoEditor.xcodeproj
+name: PhotoEditor
+options:
+  bundleIdPrefix: local.photoeditor
+  deploymentTarget:
+    macOS: "14.0"
+
+targets:
+  PhotoEditor:
+    type: application
+    platform: macOS
+    sources:
+      - path: PhotoEditor
+    settings:
+      base:
+        SWIFT_OBJC_BRIDGING_HEADER: PhotoEditor/PhotoEditor-Bridging-Header.h
+        # Points at the universal library build-engine.sh produces.
+        LIBRARY_SEARCH_PATHS: $(SRCROOT)/../../target/universal/$(CONFIGURATION:lower)
+        OTHER_LDFLAGS: -lpe_ffi
+        HEADER_SEARCH_PATHS: $(SRCROOT)/PhotoEditor
+    preBuildScripts:
+      - name: Build Rust engine
+        script: "\"$SRCROOT/build-engine.sh\""
+        basedOnDependencyAnalysis: false
