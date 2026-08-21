@@ -3,9 +3,14 @@
 DaVinci's colour page, rebuilt for photographs, with a stacked reorderable
 inspector instead of a node graph.
 
-**Status: M1 complete.** Nine effects run on the GPU, the stack is reorderable
-with per-row opacity, blend mode and enable, and export writes a full-resolution
-JPEG. Scopes, wheels and curve editing are M2.
+**Status: M1 complete, plus the Resolve film effects.** Thirteen effects run on
+the GPU, the stack is reorderable with per-row Blend, blend mode and enable, and
+export writes a full-resolution JPEG. Scopes, wheels and curve editing are M2.
+
+Effect parameters follow Resolve's own — names, ranges and defaults researched
+from the Resolve 20 manuals and recorded in
+[docs/resolve-parameters.md](docs/resolve-parameters.md), which marks each value
+confirmed or inferred.
 
 ## Running it
 
@@ -85,6 +90,7 @@ A golden test blindly regenerated is a golden test deleted.
 |---|---|---|
 | **M0** | Foundations | ✅ complete |
 | **M1** | The engine, proven — nine effects, stage cache, export | ✅ complete |
+| — | Resolve film effects — Split Tone, Dehaze, Bloom, Film Damage | ✅ |
 | M2 | The Colour Page — real UI, scopes, wheels, curve editor | |
 | M3 | Isolation — qualifier, power windows, masks | |
 | M4 | Grading workflow — stills gallery, versions, compare | |

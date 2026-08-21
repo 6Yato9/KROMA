@@ -55,6 +55,9 @@ Pivot is "the point where highlights and shadows diverge". At its extremes of
 
 ---
 
+**Implemented:** Split Tone, Dehaze, Bloom, Film Damage, Film Grain, Halation,
+Vignette. Film Look Creator is a map for later, not a target.
+
 ## Dehaze
 
 | Parameter | Type | Default | Range | Status |
@@ -64,6 +67,14 @@ Pivot is "the point where highlights and shadows diverge". At its extremes of
 | Display Depth | checkbox | off | — | confirmed |
 | Shadow | slider | 0.0 | −1…1 | inferred |
 | Highlight | slider | 0.0 | −1…1 | inferred |
+
+Implemented with a dark-channel-prior estimate: in a haze-free patch of a
+natural image at least one channel is nearly black, so whatever floor a patch
+has is mostly haze. We approximate the patch minimum with a golden-angle disc
+rather than a true min-filter and skip the guided-filter refinement, so edges
+are softer than a full implementation — both are multi-pass work. Verified
+against a synthetic haze built with the same scattering model, so there is a
+real ground truth rather than only "it changed".
 
 Bipolar by design: raising it "subtly increases contrast (especially in the
 shadows) while rebalancing color toward the complement of the currently

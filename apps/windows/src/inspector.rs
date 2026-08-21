@@ -298,6 +298,30 @@ fn param_ui(
                     });
             });
         }
+        ParamKind::Rgb { default } => {
+            let mut v = match current {
+                Some(ParamValue::Rgb(v)) => v,
+                _ => default,
+            };
+            ui.horizontal(|ui| {
+                ui.label(def.name);
+                // Working-gamut linear values, so the picker is fed the same
+                // numbers the shader sees rather than a display-space guess.
+                if ui.color_edit_button_rgb(&mut v).changed() {
+                    set(history, id, def.key, ParamValue::Rgb(v), def.name, None);
+                }
+                if ui.small_button("Reset").clicked() {
+                    set(
+                        history,
+                        id,
+                        def.key,
+                        ParamValue::Rgb(default),
+                        def.name,
+                        None,
+                    );
+                }
+            });
+        }
         ParamKind::Wheel => {
             let mut w = current
                 .as_ref()

@@ -40,7 +40,7 @@ struct EffectUniform {
     _pad1: f32,
     _pad2: f32,
     // Parameters, packed by pe_effects::pack. Slot n is p[n / 4][n % 4].
-    p: array<vec4<f32>, 8>,
+    p: array<vec4<f32>, 12>,
 }
 
 @group(0) @binding(0) var src_texture: texture_2d<f32>;
@@ -56,6 +56,20 @@ const AP1_LUMA = vec3<f32>(0.2722287, 0.6740818, 0.0536895);
 
 fn luma(c: vec3<f32>) -> f32 {
     return dot(c, AP1_LUMA);
+}
+
+// Read parameter slot `i` by its flat index, matching pe_effects::pack.
+//
+// Most effects index `u.p[0].x` directly and read fine that way. Film Damage
+// has 33 parameters, where hand-written vec4 lanes stop being readable and
+// start being a place for off-by-one errors to hide.
+fn slot(i: u32) -> f32 {
+    let v = u.p[i / 4u];
+    return v[i % 4u];
+}
+
+fn slot3(i: u32) -> vec3<f32> {
+    return vec3<f32>(slot(i), slot(i + 1u), slot(i + 2u));
 }
 
 // NOT `sign()`. WGSL's sign(0.0) is 0.0, which would make cct_encode(0.0)

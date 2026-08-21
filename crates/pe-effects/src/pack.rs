@@ -14,12 +14,13 @@ use pe_core::{ParamMap, ParamValue};
 
 use crate::{EffectDef, ParamKind};
 
-/// Number of `f32` slots available to an effect. Four `vec4`s.
+/// Number of `f32` slots available to an effect. Twelve `vec4`s.
 ///
-/// Sized for the largest current effect (Lift/Gamma/Gain: four wheels = 16
-/// floats) with room to spare. Raising it costs a little uniform bandwidth per
-/// pass and nothing else.
-pub const PARAM_SLOTS: usize = 32;
+/// Sized for Film Damage, which needs 29 on its own because Resolve gives each
+/// of its five scratches independent position, width and strength — and one
+/// scratch control with a count would not let you place them. Raising this
+/// costs a little uniform bandwidth per pass and nothing else.
+pub const PARAM_SLOTS: usize = 48;
 
 /// How many `f32` slots a parameter kind occupies.
 ///
@@ -29,6 +30,7 @@ pub const PARAM_SLOTS: usize = 32;
 pub const fn slot_width(kind: &ParamKind) -> usize {
     match kind {
         ParamKind::Float { .. } | ParamKind::Bool { .. } | ParamKind::Choice { .. } => 1,
+        ParamKind::Rgb { .. } => 3,
         ParamKind::Wheel => 4,
         ParamKind::Curve => 0,
     }
@@ -95,6 +97,15 @@ pub fn pack(effect: &EffectDef, params: &ParamMap) -> [f32; PARAM_SLOTS] {
                     .position(|o| *o == chosen)
                     .or_else(|| options.iter().position(|o| *o == default))
                     .unwrap_or(0) as f32;
+            }
+            ParamKind::Rgb { default } => {
+                let v = match value {
+                    Some(ParamValue::Rgb(v)) => *v,
+                    _ => default,
+                };
+                out[at] = v[0];
+                out[at + 1] = v[1];
+                out[at + 2] = v[2];
             }
             ParamKind::Wheel => {
                 let w = value

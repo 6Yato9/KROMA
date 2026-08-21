@@ -43,7 +43,7 @@ struct EffectUniform {
     scale: f32,
     seed: f32,
     _pad: [f32; 3],
-    p: [[f32; 4]; 8],
+    p: [[f32; 4]; 12],
 }
 
 /// The per-pass resources an effect needs beyond its input and output
@@ -480,8 +480,8 @@ fn new_scratch(device: &wgpu::Device) -> Scratch {
     }
 }
 
-fn to_vec4s(slots: [f32; PARAM_SLOTS]) -> [[f32; 4]; 8] {
-    let mut out = [[0.0f32; 4]; 8];
+fn to_vec4s(slots: [f32; PARAM_SLOTS]) -> [[f32; 4]; 12] {
+    let mut out = [[0.0f32; 4]; 12];
     for (i, chunk) in slots.as_chunks::<4>().0.iter().enumerate() {
         out[i].copy_from_slice(chunk);
     }
@@ -515,6 +515,9 @@ fn effect_source(name: &str) -> &'static str {
         "grain" => include_str!("../../../shaders/effects/grain.wgsl"),
         "halation" => include_str!("../../../shaders/effects/halation.wgsl"),
         "vignette" => include_str!("../../../shaders/effects/vignette.wgsl"),
+        "bloom" => include_str!("../../../shaders/effects/bloom.wgsl"),
+        "dehaze" => include_str!("../../../shaders/effects/dehaze.wgsl"),
+        "film_damage" => include_str!("../../../shaders/effects/film_damage.wgsl"),
         other => panic!("no shader source embedded for {other:?}"),
     }
 }
@@ -557,7 +560,7 @@ mod tests {
     #[test]
     fn the_uniform_matches_the_shader_layout() {
         // 4 vec2/scalars blocks of 16 bytes, then 8 vec4s.
-        assert_eq!(std::mem::size_of::<EffectUniform>(), 48 + 128);
+        assert_eq!(std::mem::size_of::<EffectUniform>(), 48 + 16 * 12);
         assert_eq!(std::mem::align_of::<EffectUniform>(), 4);
     }
 

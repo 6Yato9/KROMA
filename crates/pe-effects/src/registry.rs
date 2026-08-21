@@ -573,6 +573,385 @@ pub static EFFECTS: &[EffectDef] = &[
             },
         ],
     },
+    EffectDef {
+        key: "dehaze",
+        name: "Dehaze",
+        group: Group::Optics,
+        space: WorkingSpace::Linear,
+        shader: "dehaze",
+        spatial: true,
+        derived_slots: 0,
+        params: &[
+            // Bipolar like Resolve's: above zero removes haze, below zero adds
+            // it by running the same scattering model forwards.
+            bipolar("strength", "Dehaze Strength", 1.0, ""),
+            ParamDef {
+                key: "display_depth",
+                name: "Display Depth",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+            },
+            bipolar("shadow", "Shadow", 1.0, ""),
+            bipolar("highlight", "Highlight", 1.0, ""),
+            ParamDef {
+                key: "haze_color",
+                name: "Haze Color",
+                // Slightly blue-grey: the usual colour of atmospheric
+                // scattering, and a sane start before sampling the image.
+                kind: ParamKind::Rgb {
+                    default: [0.78, 0.82, 0.90],
+                },
+                unit: "",
+            },
+        ],
+    },
+    EffectDef {
+        key: "bloom",
+        name: "Bloom",
+        group: Group::Film,
+        space: WorkingSpace::Linear,
+        shader: "bloom",
+        spatial: true,
+        derived_slots: 0,
+        params: &[
+            amount("amount", "Amount"),
+            ParamDef {
+                key: "radius",
+                name: "Radius",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 0.3,
+                    default: 0.05,
+                    neutral: 0.05,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "threshold",
+                name: "Threshold",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 4.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+            },
+        ],
+    },
+    EffectDef {
+        key: "film_damage",
+        name: "Film Damage",
+        group: Group::Film,
+        space: WorkingSpace::Linear,
+        shader: "film_damage",
+        spatial: true,
+        derived_slots: 0,
+        // Parameter order is the shader ABI — see the slot table at the top
+        // of shaders/effects/film_damage.wgsl. Reordering this array quietly
+        // rewires every saved document that uses the effect.
+        params: &[
+            ParamDef {
+                key: "film_blur",
+                name: "Film Blur",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+            },
+            // Positive warms, simulating a projector bulb running hot;
+            // positive tint yellows, simulating dye failure.
+            bipolar("temp_shift", "Temp Shift", 1.0, ""),
+            bipolar("tint_shift", "Tint Shift", 1.0, ""),
+            ParamDef {
+                key: "focal_factor",
+                name: "Focal Factor",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "geometry_factor",
+                name: "Geometry Factor",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.5,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "tilt_amount",
+                name: "Tilt Amount",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "tilt_angle",
+                name: "Tilt Angle",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 360.0,
+                    default: 90.0,
+                    neutral: 90.0,
+                },
+                unit: "°",
+            },
+            ParamDef {
+                key: "dirt_density",
+                name: "Dirt Density",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "dirt_size",
+                name: "Dirt Size",
+                kind: ParamKind::Float {
+                    min: 0.05,
+                    max: 4.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "dirt_blur",
+                name: "Dirt Blur",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 0.4,
+                    neutral: 0.4,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "dirt_seed",
+                name: "Dirt Seed",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 999.0,
+                    default: 7.0,
+                    neutral: 7.0,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "dirt_color",
+                name: "Dirt Color",
+                // Black reads as dirt on a print, white as dirt on a negative.
+                kind: ParamKind::Rgb {
+                    default: [0.0, 0.0, 0.0],
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "scratch_blur",
+                name: "Scratch Blur",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 0.3,
+                    neutral: 0.3,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "scratch_color",
+                name: "Scratch Color",
+                kind: ParamKind::Rgb {
+                    default: [1.0, 1.0, 1.0],
+                },
+                unit: "",
+            },
+            // Five independent scratches, matching Resolve. A count
+            // parameter could not place them, and placement is most of
+            // what makes damage read as real rather than procedural.
+            ParamDef {
+                key: "scratch1_position",
+                name: "Scratch 1 Position",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.2,
+                    neutral: 0.2,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "scratch1_width",
+                name: "Scratch 1 Width",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 0.05,
+                    default: 0.002,
+                    neutral: 0.002,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "scratch1_strength",
+                name: "Scratch 1 Strength",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "scratch2_position",
+                name: "Scratch 2 Position",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.35,
+                    neutral: 0.35,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "scratch2_width",
+                name: "Scratch 2 Width",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 0.05,
+                    default: 0.002,
+                    neutral: 0.002,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "scratch2_strength",
+                name: "Scratch 2 Strength",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "scratch3_position",
+                name: "Scratch 3 Position",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.5,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "scratch3_width",
+                name: "Scratch 3 Width",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 0.05,
+                    default: 0.002,
+                    neutral: 0.002,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "scratch3_strength",
+                name: "Scratch 3 Strength",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "scratch4_position",
+                name: "Scratch 4 Position",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.65,
+                    neutral: 0.65,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "scratch4_width",
+                name: "Scratch 4 Width",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 0.05,
+                    default: 0.002,
+                    neutral: 0.002,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "scratch4_strength",
+                name: "Scratch 4 Strength",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "scratch5_position",
+                name: "Scratch 5 Position",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.8,
+                    neutral: 0.8,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "scratch5_width",
+                name: "Scratch 5 Width",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 0.05,
+                    default: 0.002,
+                    neutral: 0.002,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "scratch5_strength",
+                name: "Scratch 5 Strength",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+            },
+        ],
+    },
 ];
 
 /// Effects whose registry defaults deliberately change the image.
@@ -605,7 +984,7 @@ mod tests {
     fn the_registry_is_the_expected_size() {
         // Nine at M1, plus Split Tone once the Resolve parameter research
         // landed. Pinned so an accidental duplicate or deletion is visible.
-        assert_eq!(EFFECTS.len(), 10);
+        assert_eq!(EFFECTS.len(), 13);
     }
 
     #[test]
@@ -641,6 +1020,11 @@ mod tests {
             ("white_balance", WorkingSpace::Linear),
             ("halation", WorkingSpace::Linear),
             ("vignette", WorkingSpace::Linear),
+            // Aerial perspective, lens spill and physical film damage are all
+            // things happening to light.
+            ("dehaze", WorkingSpace::Linear),
+            ("bloom", WorkingSpace::Linear),
+            ("film_damage", WorkingSpace::Linear),
             // Perception: pivoting, shaping, drawing.
             ("contrast", WorkingSpace::Log),
             ("curves", WorkingSpace::Log),
@@ -663,7 +1047,10 @@ mod tests {
         // cannot be fused into one pass. The renderer branches on this, so a
         // wrong flag is a correctness bug, not a performance one.
         for e in EFFECTS {
-            let expected = matches!(e.key, "grain" | "halation" | "vignette");
+            let expected = matches!(
+                e.key,
+                "grain" | "halation" | "vignette" | "bloom" | "dehaze" | "film_damage"
+            );
             assert_eq!(e.spatial, expected, "{}", e.key);
         }
     }
@@ -702,7 +1089,7 @@ mod tests {
 
     #[test]
     fn unknown_keys_are_not_found() {
-        assert!(by_key("dehaze").is_none(), "dehaze is M3, not M1");
+        assert!(by_key("colour_warper").is_none(), "the colour warper is M2");
     }
 
     #[test]

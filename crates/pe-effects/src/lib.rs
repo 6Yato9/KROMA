@@ -62,6 +62,11 @@ pub enum ParamKind {
     Bool {
         default: bool,
     },
+    /// A colour, in the working gamut. Resolve exposes these as a picker with
+    /// an eyedropper — Haze Color, Dirt Color, Scratch Color.
+    Rgb {
+        default: [f32; 3],
+    },
     /// A four-way colour wheel.
     Wheel,
     /// An editable curve.
@@ -89,6 +94,7 @@ impl ParamDef {
         match self.kind {
             ParamKind::Float { default, .. } => ParamValue::Float(default),
             ParamKind::Bool { default } => ParamValue::Bool(default),
+            ParamKind::Rgb { default } => ParamValue::Rgb(default),
             ParamKind::Wheel => ParamValue::Wheel(Default::default()),
             ParamKind::Curve => ParamValue::Curve(Default::default()),
             ParamKind::Choice { default, .. } => ParamValue::Choice(default.into()),
