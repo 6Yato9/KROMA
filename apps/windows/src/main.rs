@@ -10,6 +10,7 @@
 //! Resolve wheels come next, as pinned rows at the head of the same stack the
 //! effects list already uses.
 
+mod basic;
 mod inspector;
 mod preview;
 
@@ -87,8 +88,8 @@ impl App {
         path: Option<PathBuf>,
     ) -> Self {
         let doc = match &path {
-            Some(p) => Document::from_path(p.to_string_lossy().to_string()),
-            None => Document::from_path("<test chart>"),
+            Some(p) => pe_effects::new_document(p.to_string_lossy().to_string()),
+            None => pe_effects::new_document("<test chart>"),
         };
 
         let (preview, gpu_name) = match cc.wgpu_render_state.as_ref() {
@@ -139,8 +140,9 @@ impl App {
             return;
         }
 
-        self.history = History::new(Document::from_path(path.to_string_lossy().to_string()));
-        self.ids = RowIdGenerator::default();
+        let doc = pe_effects::new_document(path.to_string_lossy().to_string());
+        self.ids = RowIdGenerator::resuming(&doc);
+        self.history = History::new(doc);
         self.status = format!("opened {}", path.display());
         self.image = image;
         self.path = Some(path);
@@ -436,7 +438,36 @@ impl eframe::App for App {
             .default_width(340.0)
             .width_range(300.0..=560.0)
             .show(ctx, |ui| {
-                inspector::show(ui, &mut self.history, &mut self.ids);
+                ui.add_space(4.0);
+                basic::histogram(ui, self.preview.as_ref().and_then(|p| p.histogram()));
+                ui.add_space(4.0);
+
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    egui::CollapsingHeader::new("Basic")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            basic::panel(ui, &mut self.history);
+                            if ui.small_button("Reset Basic").clicked() {
+                                basic::reset(&mut self.history);
+                            }
+                        });
+
+                    egui::CollapsingHeader::new("Tone Curve").show(ui, |ui| {
+                        inspector::pinned_params(ui, &mut self.history, "curves");
+                    });
+
+                    egui::CollapsingHeader::new("Colour Wheels").show(ui, |ui| {
+                        inspector::pinned_params(ui, &mut self.history, "primaries");
+                    });
+
+                    ui.add_space(6.0);
+                    ui.separator();
+                    egui::CollapsingHeader::new("Effects")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            inspector::show(ui, &mut self.history, &mut self.ids);
+                        });
+                });
             });
 
         egui::CentralPanel::default()

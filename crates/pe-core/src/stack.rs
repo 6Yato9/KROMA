@@ -180,6 +180,18 @@ pub struct StackRow {
     /// User-visible label. `None` means "use the effect's display name".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// A fixed panel rather than a row the user added.
+    ///
+    /// Lightroom's Basic panel is always there — you do not add Exposure, it
+    /// exists, sitting at zero. That looks incompatible with a stack and is
+    /// not: a fixed panel is simply a row created with the document that
+    /// cannot be deleted or reordered. The renderer, the cache and export see
+    /// one ordered list and know nothing about panels.
+    ///
+    /// Pinned rows always occupy the head of the stack, so user rows are
+    /// always applied after them.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 fn default_true() -> bool {
@@ -201,6 +213,15 @@ impl StackRow {
             key: None,
             key_adjust: KeyAdjust::default(),
             label: None,
+            pinned: false,
+        }
+    }
+
+    /// A fixed panel row, created with the document.
+    pub fn pinned(id: RowId, effect: impl Into<String>) -> Self {
+        Self {
+            pinned: true,
+            ..Self::new(id, effect)
         }
     }
 
@@ -238,17 +259,36 @@ impl Stack {
         self.rows.push(row);
     }
 
+    /// How many pinned rows sit at the head of the stack.
+    ///
+    /// User rows begin here, and reordering is confined to that range.
+    pub fn pinned_count(&self) -> usize {
+        self.rows.iter().take_while(|r| r.pinned).count()
+    }
+
     pub fn insert(&mut self, index: usize, row: StackRow) {
         self.rows.insert(index.min(self.rows.len()), row);
     }
 
+    /// Remove a row. Pinned rows refuse — they are panels, not entries.
     pub fn remove(&mut self, id: RowId) -> Option<StackRow> {
         let i = self.index_of(id)?;
+        if self.rows[i].pinned {
+            return None;
+        }
         Some(self.rows.remove(i))
     }
 
     pub fn index_of(&self, id: RowId) -> Option<usize> {
         self.rows.iter().position(|r| r.id == id)
+    }
+
+    /// The first row running a given effect.
+    ///
+    /// How a fixed panel finds the row it drives: the Basic panel knows it
+    /// owns `exposure`, not which index that landed at.
+    pub fn find_by_effect(&self, effect: &str) -> Option<RowId> {
+        self.rows.iter().find(|r| r.effect == effect).map(|r| r.id)
     }
 
     pub fn get(&self, id: RowId) -> Option<&StackRow> {
@@ -262,9 +302,15 @@ impl Stack {
     /// Move a row to a new index. Returns the range of indices whose rendered
     /// output is now invalid, which the stage cache uses to decide how much to
     /// throw away.
+    /// Move a row. Pinned rows do not move, and user rows cannot be dragged
+    /// above them — the fixed panels are always applied first.
     pub fn reorder(&mut self, id: RowId, to: usize) -> Option<usize> {
         let from = self.index_of(id)?;
-        let to = to.min(self.rows.len().saturating_sub(1));
+        if self.rows[from].pinned {
+            return Some(from);
+        }
+        let floor = self.pinned_count();
+        let to = to.clamp(floor, self.rows.len().saturating_sub(1));
         if from == to {
             return Some(from);
         }
@@ -346,6 +392,56 @@ mod tests {
         s.reorder(RowId(0), 3);
         assert!(s.get(RowId(0)).is_some());
         assert_eq!(s.index_of(RowId(0)), Some(3));
+    }
+
+    #[test]
+    fn a_pinned_row_cannot_be_deleted() {
+        let mut s = Stack::default();
+        s.push(StackRow::pinned(RowId(0), "exposure"));
+        assert!(s.remove(RowId(0)).is_none());
+        assert_eq!(s.len(), 1);
+    }
+
+    #[test]
+    fn a_pinned_row_cannot_be_moved() {
+        let mut s = Stack::default();
+        s.push(StackRow::pinned(RowId(0), "exposure"));
+        s.push(StackRow::pinned(RowId(1), "contrast"));
+        s.push(StackRow::new(RowId(2), "grain"));
+        s.reorder(RowId(0), 2);
+        let order: Vec<_> = s.iter().map(|r| r.id.0).collect();
+        assert_eq!(order, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn a_user_row_cannot_be_dragged_above_the_pinned_panels() {
+        // The fixed panels are always applied first. Letting grain sit above
+        // Exposure would make the inspector lie about the order of operations.
+        let mut s = Stack::default();
+        s.push(StackRow::pinned(RowId(0), "exposure"));
+        s.push(StackRow::pinned(RowId(1), "contrast"));
+        s.push(StackRow::new(RowId(2), "grain"));
+        s.push(StackRow::new(RowId(3), "halation"));
+
+        s.reorder(RowId(3), 0);
+        let order: Vec<_> = s.iter().map(|r| r.id.0).collect();
+        assert_eq!(order, vec![0, 1, 3, 2], "halation should stop at the floor");
+        assert_eq!(s.pinned_count(), 2);
+    }
+
+    #[test]
+    fn pinned_state_survives_a_save() {
+        let row = StackRow::pinned(RowId(1), "exposure");
+        let json = serde_json::to_string(&row).unwrap();
+        let back: StackRow = serde_json::from_str(&json).unwrap();
+        assert!(back.pinned);
+    }
+
+    #[test]
+    fn rows_from_before_pinning_existed_load_as_user_rows() {
+        let json = r#"{"id":7,"effect":"grain"}"#;
+        let row: StackRow = serde_json::from_str(json).unwrap();
+        assert!(!row.pinned);
     }
 
     #[test]

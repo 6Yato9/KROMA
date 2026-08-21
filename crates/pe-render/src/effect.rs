@@ -235,7 +235,7 @@ impl EffectRenderer {
             view: self.region.cache_key(),
         };
 
-        let plan = self.cache.plan(&doc.stack, context);
+        let plan = self.cache.plan(&doc.stack, context, row_is_inert);
         self.ensure_stages(gpu, doc.stack.len(), width, height);
         self.resolved.resize(doc.stack.len(), None);
         self.last_passes = plan.execute.len();
@@ -251,7 +251,7 @@ impl EffectRenderer {
                 let row = &doc.stack.rows[i];
                 let input_index = if i == 0 { None } else { self.resolved[i - 1] };
 
-                if row.is_noop() {
+                if row_is_inert(row) {
                     // A skipped row outputs exactly its input. Recording the
                     // alias avoids a full-texture copy per disabled row, which
                     // matters when someone A/Bs a deep stack with the enable
@@ -538,8 +538,29 @@ fn effect_source(name: &str) -> &'static str {
         "bloom" => include_str!("../../../shaders/effects/bloom.wgsl"),
         "dehaze" => include_str!("../../../shaders/effects/dehaze.wgsl"),
         "film_damage" => include_str!("../../../shaders/effects/film_damage.wgsl"),
+        "tone" => include_str!("../../../shaders/effects/tone.wgsl"),
+        "presence" => include_str!("../../../shaders/effects/presence.wgsl"),
+        "colour" => include_str!("../../../shaders/effects/colour.wgsl"),
         other => panic!("no shader source embedded for {other:?}"),
     }
+}
+
+/// Whether a row would leave the image untouched, so the renderer can skip it.
+///
+/// Wider than `StackRow::is_noop`, which only knows about the enable toggle and
+/// the blend. This also asks the registry whether the parameters sit at their
+/// neutral values, which matters now that every document carries nine pinned
+/// panels that start out doing nothing — without it a freshly opened photo
+/// would burn nine full-screen passes a frame to produce itself.
+///
+/// An effect this build does not recognise is inert too: the row round-trips
+/// through the document, but there is nothing to render.
+pub fn row_is_inert(row: &StackRow) -> bool {
+    row.is_noop()
+        || match pe_effects::by_key(&row.effect) {
+            Some(def) => def.is_neutral(&row.params),
+            None => true,
+        }
 }
 
 /// Stack helper: the rows an export would actually execute.

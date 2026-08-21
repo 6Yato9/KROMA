@@ -1090,6 +1090,53 @@ pub static EFFECTS: &[EffectDef] = &[
             },
         ],
     },
+    // --- Lightroom's Basic panel ------------------------------------------
+    // These three fill the gaps between the effects that already existed, so
+    // one Basic panel can drive the whole set. The panel spans both working
+    // spaces, which is why it is several rows rather than one effect.
+    EffectDef {
+        key: "tone",
+        name: "Tone",
+        group: Group::Basic,
+        space: WorkingSpace::Log,
+        shader: "tone",
+        spatial: false,
+        derived_slots: 0,
+        params: &[
+            bipolar("highlights", "Highlights", 1.0, ""),
+            bipolar("shadows", "Shadows", 1.0, ""),
+            bipolar("whites", "Whites", 1.0, ""),
+            bipolar("blacks", "Blacks", 1.0, ""),
+        ],
+    },
+    EffectDef {
+        key: "presence",
+        name: "Presence",
+        group: Group::Basic,
+        space: WorkingSpace::Linear,
+        shader: "presence",
+        // Local contrast: it reads the neighbourhood, so its radii are
+        // frame-relative and it cannot be fused with its neighbours.
+        spatial: true,
+        derived_slots: 0,
+        params: &[
+            bipolar("texture", "Texture", 1.0, ""),
+            bipolar("clarity", "Clarity", 1.0, ""),
+        ],
+    },
+    EffectDef {
+        key: "colour",
+        name: "Colour",
+        group: Group::Basic,
+        space: WorkingSpace::Log,
+        shader: "colour",
+        spatial: false,
+        derived_slots: 0,
+        params: &[
+            bipolar("vibrance", "Vibrance", 1.0, ""),
+            bipolar("saturation", "Saturation", 1.0, ""),
+        ],
+    },
 ];
 
 /// Effects whose registry defaults deliberately change the image.
@@ -1122,6 +1169,39 @@ pub const EFFECTS_WITH_VISIBLE_DEFAULTS: &[&str] = &[
     "film_damage",
 ];
 
+/// The fixed panels, in the order they are applied.
+///
+/// A document is created with exactly these rows, pinned. The order is
+/// Lightroom's, which is also the order that makes physical sense: neutralise
+/// the light, set the exposure, then shape the tone, then the detail, then the
+/// colour, and finally the curve and the wheels.
+///
+/// Their effects are ordinary registry entries — nothing about them is special
+/// beyond being created up front and refusing to be deleted or moved.
+pub const PINNED_ROWS: &[&str] = &[
+    "white_balance",
+    "exposure",
+    "contrast",
+    "tone",
+    "presence",
+    "dehaze",
+    "colour",
+    "curves",
+    "primaries",
+];
+
+/// A new document with the fixed panels already in place.
+pub fn new_document(source: impl Into<String>) -> pe_core::Document {
+    let mut doc = pe_core::Document::from_path(source);
+    for (i, key) in PINNED_ROWS.iter().enumerate() {
+        let def = by_key(key).expect("every pinned row is a registered effect");
+        let mut row = pe_core::StackRow::pinned(pe_core::RowId(i as u64), *key);
+        row.params = def.default_params();
+        doc.stack.push(row);
+    }
+    doc
+}
+
 pub fn all() -> &'static [EffectDef] {
     EFFECTS
 }
@@ -1139,7 +1219,7 @@ mod tests {
     fn the_registry_is_the_expected_size() {
         // Nine at M1, plus Split Tone once the Resolve parameter research
         // landed. Pinned so an accidental duplicate or deletion is visible.
-        assert_eq!(EFFECTS.len(), 13);
+        assert_eq!(EFFECTS.len(), 16);
     }
 
     #[test]
@@ -1180,6 +1260,11 @@ mod tests {
             ("dehaze", WorkingSpace::Linear),
             ("bloom", WorkingSpace::Linear),
             ("film_damage", WorkingSpace::Linear),
+            // Local contrast adds light back to a region.
+            ("presence", WorkingSpace::Linear),
+            // Reshaping how the picture reads, not how much light fell.
+            ("tone", WorkingSpace::Log),
+            ("colour", WorkingSpace::Log),
             // Perception: pivoting, shaping, drawing.
             ("contrast", WorkingSpace::Log),
             ("curves", WorkingSpace::Log),
@@ -1204,7 +1289,7 @@ mod tests {
         for e in EFFECTS {
             let expected = matches!(
                 e.key,
-                "grain" | "halation" | "vignette" | "bloom" | "dehaze" | "film_damage"
+                "grain" | "halation" | "vignette" | "bloom" | "dehaze" | "film_damage" | "presence"
             );
             assert_eq!(e.spatial, expected, "{}", e.key);
         }
@@ -1245,6 +1330,48 @@ mod tests {
     #[test]
     fn unknown_keys_are_not_found() {
         assert!(by_key("colour_warper").is_none(), "the colour warper is M2");
+    }
+
+    /// A fresh document must cost nothing to render.
+    ///
+    /// Nine pinned panels exist the moment a photo is opened. If each ran a
+    /// full-screen pass to do nothing, the pass counter would read 9 before
+    /// the user touched anything and the number would stop meaning "the work
+    /// your edit costs".
+    #[test]
+    fn a_new_document_is_entirely_neutral() {
+        let doc = new_document("photo.jpg");
+        assert_eq!(doc.stack.len(), PINNED_ROWS.len());
+        assert_eq!(doc.stack.pinned_count(), PINNED_ROWS.len());
+        for row in doc.stack.iter() {
+            let def = by_key(&row.effect).unwrap();
+            assert!(
+                def.is_neutral(&row.params),
+                "{} is not neutral in a fresh document",
+                row.effect
+            );
+        }
+    }
+
+    #[test]
+    fn no_pinned_row_is_a_look_effect() {
+        // Look effects ship visible on purpose. One of those pinned into every
+        // new document would mean opening a photo already changed it.
+        for key in PINNED_ROWS {
+            assert!(
+                !EFFECTS_WITH_VISIBLE_DEFAULTS.contains(key),
+                "{key} ships visible and must not be a fixed panel"
+            );
+        }
+    }
+
+    #[test]
+    fn touching_a_parameter_stops_it_being_neutral() {
+        let e = by_key("tone").unwrap();
+        let mut p = e.default_params();
+        assert!(e.is_neutral(&p));
+        p.set("shadows", pe_core::ParamValue::Float(0.4));
+        assert!(!e.is_neutral(&p));
     }
 
     #[test]

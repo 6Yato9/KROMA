@@ -100,45 +100,73 @@ fn icon_button(ui: &mut egui::Ui, icon: Icon, hover: &str) -> egui::Response {
     response.on_hover_text(hover)
 }
 
+/// Draw just the parameters of a pinned row, with no frame, header or
+/// controls around them.
+///
+/// Fixed panels own their own presentation — the Tone Curve panel is a curve
+/// editor, not a row with a delete button — so they borrow the parameter
+/// widgets and nothing else.
+pub fn pinned_params(ui: &mut egui::Ui, history: &mut History, effect: &str) {
+    let Some(def) = pe_effects::by_key(effect) else {
+        return;
+    };
+    let Some(id) = history.document().stack.find_by_effect(effect) else {
+        return;
+    };
+    for param in def.params {
+        param_ui(ui, history, id, param);
+    }
+}
+
 pub fn show(ui: &mut egui::Ui, history: &mut History, ids: &mut RowIdGenerator) {
     ui.add_space(6.0);
     add_effect_menu(ui, history, ids);
     ui.separator();
 
+    // Only the rows the user added. The pinned panels are drawn above by
+    // whichever panel owns them.
     let rows: Vec<(RowId, String)> = history
         .document()
         .stack
         .iter()
+        .filter(|r| !r.pinned)
         .map(|r| (r.id, r.effect.clone()))
         .collect();
 
     if rows.is_empty() {
-        ui.add_space(24.0);
+        ui.add_space(12.0);
         ui.vertical_centered(|ui| {
-            ui.label(egui::RichText::new("No effects yet").weak());
-            ui.label(egui::RichText::new("Add one above.").weak().small());
+            ui.label(egui::RichText::new("No effects yet").weak().small());
         });
         return;
     }
 
+    // Indices here are positions among the *user* rows, so the move buttons
+    // read naturally; `reorder` maps them back past the pinned floor.
+    let floor = history.document().stack.pinned_count();
     let count = rows.len();
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        for (index, (id, effect_key)) in rows.into_iter().enumerate() {
-            let Some(def) = pe_effects::by_key(&effect_key) else {
-                unknown_row(ui, history, id, &effect_key);
-                continue;
-            };
-            row_ui(ui, history, id, def, index, count);
-            ui.add_space(4.0);
-        }
-    });
+    for (index, (id, effect_key)) in rows.into_iter().enumerate() {
+        let Some(def) = pe_effects::by_key(&effect_key) else {
+            unknown_row(ui, history, id, &effect_key);
+            continue;
+        };
+        row_ui(ui, history, id, def, index, count, floor);
+        ui.add_space(4.0);
+    }
 }
 
 fn add_effect_menu(ui: &mut egui::Ui, history: &mut History, ids: &mut RowIdGenerator) {
     ui.menu_button("+  Add effect", |ui| {
         for group in [Group::Basic, Group::Color, Group::Film, Group::Optics] {
             ui.label(egui::RichText::new(group.as_str()).small().weak());
-            for def in pe_effects::all().iter().filter(|e| e.group == group) {
+            // Effects that already exist as fixed panels are not offered
+            // again — adding a second Exposure row is legitimate, but the menu
+            // is not where anyone would look for it.
+            for def in pe_effects::all()
+                .iter()
+                .filter(|e| e.group == group)
+                .filter(|e| !pe_effects::registry::PINNED_ROWS.contains(&e.key))
+            {
                 if ui.button(def.name).clicked() {
                     let id = ids.allocate();
                     history.edit(format!("Add {}", def.name), None, |doc| {
@@ -179,6 +207,7 @@ fn row_ui(
     def: &'static EffectDef,
     index: usize,
     count: usize,
+    floor: usize,
 ) {
     let Some(row) = history.document().stack.get(id) else {
         return;
@@ -211,14 +240,14 @@ fn row_ui(
                 ui.add_enabled_ui(index + 1 < count, |ui| {
                     if icon_button(ui, Icon::Down, "Move down").clicked() {
                         history.edit("Reorder", None, |doc| {
-                            doc.stack.reorder(id, index + 1);
+                            doc.stack.reorder(id, floor + index + 1);
                         });
                     }
                 });
                 ui.add_enabled_ui(index > 0, |ui| {
                     if icon_button(ui, Icon::Up, "Move up").clicked() {
                         history.edit("Reorder", None, |doc| {
-                            doc.stack.reorder(id, index.saturating_sub(1));
+                            doc.stack.reorder(id, floor + index.saturating_sub(1));
                         });
                     }
                 });

@@ -76,6 +76,34 @@ impl Histogram {
         h
     }
 
+    /// Bin already-encoded display values, 0..255 straight into 0..255.
+    ///
+    /// The counterpart to [`Histogram::from_linear`], and the two exist for
+    /// genuinely different jobs. A *scope* is scene-referred and bins in log,
+    /// because that is how a colourist reads exposure. The histogram over a
+    /// Basic panel is asking a different question — what is about to be
+    /// clipped on output — so it bins the display signal itself, exactly as
+    /// Lightroom does. Binning display values in log would put the ends in the
+    /// wrong place for that.
+    pub fn from_display(pixels: &[u8]) -> Self {
+        let mut h = Histogram::default();
+        for px in pixels.as_chunks::<4>().0 {
+            let (r, g, b) = (px[0] as usize, px[1] as usize, px[2] as usize);
+            h.red[r] += 1;
+            h.green[g] += 1;
+            h.blue[b] += 1;
+            // Rec.709 weights: this histogram is display-referred, so the
+            // display primaries are the right ones here, not AP1.
+            let l = 0.2126 * px[0] as f32 + 0.7152 * px[1] as f32 + 0.0722 * px[2] as f32;
+            h.luma[(l.round() as usize).min(BINS - 1)] += 1;
+            if r == BINS - 1 || g == BINS - 1 || b == BINS - 1 {
+                h.over_white += 1;
+            }
+            h.total += 1;
+        }
+        h
+    }
+
     /// The tallest bin across all channels — the scale a scope draws against.
     pub fn peak(&self) -> u32 {
         [&self.red, &self.green, &self.blue, &self.luma]
@@ -174,6 +202,31 @@ mod tests {
     fn a_normally_exposed_image_reports_no_highlights() {
         let h = Histogram::from_linear((0..100).map(|i| [i as f64 / 100.0; 3]));
         assert_eq!(h.over_white, 0);
+    }
+
+    #[test]
+    fn display_binning_puts_black_and_white_at_the_ends() {
+        let pixels = [0u8, 0, 0, 255, 255, 255, 255, 255];
+        let h = Histogram::from_display(&pixels);
+        assert_eq!(h.total, 2);
+        assert_eq!(h.red[0], 1, "black should land in bin 0");
+        assert_eq!(h.red[BINS - 1], 1, "white should land in the last bin");
+        assert_eq!(h.over_white, 1, "a clipped white counts as clipping");
+    }
+
+    #[test]
+    fn display_binning_is_linear_in_the_display_signal() {
+        // Every 8-bit level gets its own bin, which is what makes the shape
+        // over a Basic panel match what the exported file will look like.
+        let mut pixels = Vec::new();
+        for v in 0..=255u8 {
+            pixels.extend_from_slice(&[v, v, v, 255]);
+        }
+        let h = Histogram::from_display(&pixels);
+        assert!(
+            h.red.iter().all(|c| *c == 1),
+            "each level should be its own bin"
+        );
     }
 
     #[test]

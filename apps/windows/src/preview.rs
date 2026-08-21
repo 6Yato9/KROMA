@@ -12,6 +12,16 @@ use pe_color::space;
 use pe_core::Document;
 use pe_io::DecodedImage;
 use pe_render::{EffectRenderer, GpuContext, ImageTexture, Region, RenderError, TransformPass};
+use pe_scopes::Histogram;
+
+/// Size of the off-screen render the histogram is measured from.
+///
+/// The histogram describes the whole photograph, not the part currently on
+/// screen — that is what a Basic panel is for, and it must not change when you
+/// zoom in. So it gets its own tiny full-frame render rather than reading the
+/// viewport. Thirty thousand pixels through nine passes is nothing, and it has
+/// its own stage cache, so it only re-runs when the edit actually changes.
+const HIST_SIZE: (u32, u32) = (200, 150);
 
 /// Upper bound on preview dimensions.
 ///
@@ -91,6 +101,11 @@ pub struct Preview {
     texture_id: Option<egui::TextureId>,
     size: (u32, u32),
     region: Region,
+
+    hist_renderer: EffectRenderer,
+    hist_working: Option<ImageTexture>,
+    hist_display: ImageTexture,
+    histogram: Option<Histogram>,
 }
 
 impl Preview {
@@ -112,6 +127,15 @@ impl Preview {
         let to_working = TransformPass::new(&gpu.device, pe_render::WORKING_FORMAT);
         let to_display = TransformPass::new(&gpu.device, pe_render::SOURCE_FORMAT);
         let renderer = EffectRenderer::new(&gpu.device);
+        let hist_renderer = EffectRenderer::new(&gpu.device);
+        let hist_display = ImageTexture::new(
+            &gpu.device,
+            HIST_SIZE.0,
+            HIST_SIZE.1,
+            pe_render::SOURCE_FORMAT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            "histogram",
+        );
 
         Self {
             gpu,
@@ -125,6 +149,64 @@ impl Preview {
             texture_id: None,
             size: (0, 0),
             region: Region::FULL,
+            hist_renderer,
+            hist_working: None,
+            hist_display,
+            histogram: None,
+        }
+    }
+
+    /// The histogram of the whole photograph as currently graded.
+    pub fn histogram(&self) -> Option<&Histogram> {
+        self.histogram.as_ref()
+    }
+
+    /// Re-measure the histogram, but only when the edit has actually moved.
+    ///
+    /// The dedicated renderer has its own stage cache, so an unchanged
+    /// document costs zero passes — and when it does, there is nothing new to
+    /// read back and the GPU stall is skipped entirely. During a slider drag
+    /// it is one 120 KB readback a frame, which is affordable.
+    fn update_histogram(&mut self, doc: &Document) {
+        if self.hist_working.is_none() {
+            self.hist_working = Some(self.to_working.to_working_in(
+                &self.gpu,
+                &self.source,
+                &doc.color.pipeline().input,
+                HIST_SIZE.0,
+                HIST_SIZE.1,
+                Region::FULL,
+            ));
+            self.histogram = None;
+        }
+        let working = self.hist_working.as_ref().expect("built above");
+
+        self.hist_renderer.set_region(Region::FULL);
+        let graded = self.hist_renderer.render(&self.gpu, working, doc, 1);
+        let graded_view = graded.view.clone();
+        let changed = self.hist_renderer.last_pass_count() > 0;
+        if !changed && self.histogram.is_some() {
+            return;
+        }
+
+        let mut encoder = self
+            .gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("histogram"),
+            });
+        self.to_display.encode(
+            &self.gpu,
+            &mut encoder,
+            &graded_view,
+            &self.hist_display.view,
+            &space::ACESCG,
+            &doc.color.pipeline().output,
+        );
+        self.gpu.queue.submit([encoder.finish()]);
+
+        if let Ok(pixels) = pe_render::read_rgba8(&self.gpu, &self.hist_display) {
+            self.histogram = Some(Histogram::from_display(&pixels));
         }
     }
 
@@ -144,6 +226,9 @@ impl Preview {
         )?;
         self.size = (0, 0);
         self.renderer.invalidate();
+        self.hist_renderer.invalidate();
+        self.hist_working = None;
+        self.histogram = None;
         Ok(())
     }
 
@@ -184,6 +269,8 @@ impl Preview {
             &doc.color.pipeline().output,
         );
         self.gpu.queue.submit([encoder.finish()]);
+
+        self.update_histogram(doc);
 
         Ok(Framing {
             texture: self.texture_id.expect("registered on rebuild"),

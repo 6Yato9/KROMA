@@ -465,8 +465,13 @@ fn editing_the_deepest_row_costs_one_pass() {
         doc
     };
 
+    // Nine rows, but six of them sit at their neutral values and are skipped
+    // entirely — only the three look effects (vignette, halation, grain) ship
+    // visible and therefore cost a pass. That skipping is what keeps a freshly
+    // opened photo at zero passes now that every document carries nine pinned
+    // panels.
     h.render(&build(0.1));
-    assert_eq!(h.passes(), 9, "a cold cache should run the whole stack");
+    assert_eq!(h.passes(), 3, "only the non-neutral rows should run");
 
     for i in 1..20 {
         h.render(&build(0.1 + i as f32 * 0.01));
@@ -487,7 +492,36 @@ fn editing_an_early_row_reruns_the_rest() {
     };
     h.render(&build(0.0));
     h.render(&build(0.5));
-    assert_eq!(h.passes(), 3, "changing row 0 must re-run rows 0..2");
+    // Rows 0..2 are all invalidated, but Contrast is at its neutral value and
+    // costs nothing, so only Exposure and Grain actually execute.
+    assert_eq!(
+        h.passes(),
+        2,
+        "changing row 0 must re-run everything below it"
+    );
+}
+
+/// The property the pinned panels depend on.
+///
+/// Opening a photo creates nine fixed panels. If each burned a full-screen
+/// pass to reproduce its input, a brand new document would cost nine passes a
+/// frame before the user touched anything, and the pass counter would stop
+/// meaning "the work your edit costs".
+#[test]
+fn a_fresh_document_costs_no_passes_at_all() {
+    let src = chart();
+    let Some(mut h) = Harness::new(&src) else {
+        return;
+    };
+    let doc = pe_effects::new_document("photo.jpg");
+    let out = h.render(&doc);
+
+    assert_eq!(doc.stack.len(), pe_effects::PINNED_ROWS.len());
+    assert_eq!(h.passes(), 0, "a new document should be free to render");
+    assert!(
+        out.max_channel_delta(&src).unwrap() <= TOLERANCE,
+        "and should leave the photograph alone"
+    );
 }
 
 #[test]

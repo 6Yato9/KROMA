@@ -1749,6 +1749,7 @@ dependencies = [
  "pe-effects",
  "pe-io",
  "pe-render",
+ "pe-scopes",
  "rfd",
  "wgpu",
 ]

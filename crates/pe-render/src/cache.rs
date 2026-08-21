@@ -116,7 +116,18 @@ impl StageCache {
     }
 
     /// Work out the minimum work needed to render `stack` in `context`.
-    pub fn plan(&mut self, stack: &Stack, context: RenderContext) -> RenderPlan {
+    ///
+    /// `inert` decides which rows can be skipped entirely. It is a parameter
+    /// rather than a method on the row because that policy needs the effect
+    /// registry — whether the parameters sit at their neutral values — and
+    /// invalidation logic has no business knowing about effects. Keeping the
+    /// two apart is also what lets these tests use synthetic effect names.
+    pub fn plan(
+        &mut self,
+        stack: &Stack,
+        context: RenderContext,
+        inert: impl Fn(&StackRow) -> bool,
+    ) -> RenderPlan {
         if self.context != Some(context) {
             self.clear();
             self.context = Some(context);
@@ -135,7 +146,7 @@ impl StageCache {
         self.invalidate_from(first_dirty);
 
         let execute = (first_dirty..stack.len())
-            .filter(|i| !stack.rows[*i].is_noop())
+            .filter(|i| !inert(&stack.rows[*i]))
             .collect();
 
         RenderPlan {
@@ -199,7 +210,7 @@ mod tests {
     /// Render once so the cache is warm, then return it.
     fn warmed(stack: &Stack) -> StageCache {
         let mut c = StageCache::new();
-        let plan = c.plan(stack, CTX);
+        let plan = c.plan(stack, CTX, StackRow::is_noop);
         c.store_plan(stack, &plan);
         c
     }
@@ -216,7 +227,7 @@ mod tests {
     fn a_cold_cache_renders_everything_from_the_source() {
         let stack = stack_of(5);
         let mut c = StageCache::new();
-        let plan = c.plan(&stack, CTX);
+        let plan = c.plan(&stack, CTX, StackRow::is_noop);
         assert_eq!(plan.first_dirty, 0);
         assert_eq!(plan.reuse, None);
         assert_eq!(plan.execute, vec![0, 1, 2, 3, 4]);
@@ -226,7 +237,7 @@ mod tests {
     fn an_unchanged_stack_needs_no_work() {
         let stack = stack_of(5);
         let mut c = warmed(&stack);
-        let plan = c.plan(&stack, CTX);
+        let plan = c.plan(&stack, CTX, StackRow::is_noop);
         assert!(plan.execute.is_empty());
         assert_eq!(plan.first_dirty, 5);
         assert!(plan.is_up_to_date());
@@ -239,7 +250,7 @@ mod tests {
         let mut c = warmed(&stack);
 
         set_param(&mut stack, 11, 0.5);
-        let plan = c.plan(&stack, CTX);
+        let plan = c.plan(&stack, CTX, StackRow::is_noop);
 
         assert_eq!(plan.first_dirty, 11);
         assert_eq!(plan.reuse, Some(10), "stage 10 should be reused from VRAM");
@@ -252,7 +263,7 @@ mod tests {
         let mut c = warmed(&stack);
 
         set_param(&mut stack, 8, 0.5);
-        let plan = c.plan(&stack, CTX);
+        let plan = c.plan(&stack, CTX, StackRow::is_noop);
 
         assert_eq!(plan.first_dirty, 8);
         assert_eq!(plan.reuse, Some(7));
@@ -265,7 +276,7 @@ mod tests {
         let mut c = warmed(&stack);
 
         set_param(&mut stack, 0, 0.5);
-        let plan = c.plan(&stack, CTX);
+        let plan = c.plan(&stack, CTX, StackRow::is_noop);
 
         assert_eq!(plan.first_dirty, 0);
         assert_eq!(plan.reuse, None);
@@ -284,7 +295,7 @@ mod tests {
             let mut stack = stack_of(6);
             let mut c = warmed(&stack);
             mutate(&mut stack);
-            assert_eq!(c.plan(&stack, CTX).first_dirty, 3);
+            assert_eq!(c.plan(&stack, CTX, StackRow::is_noop).first_dirty, 3);
         }
     }
 
@@ -294,7 +305,7 @@ mod tests {
         let mut c = warmed(&stack);
 
         stack.get_mut(RowId(2)).unwrap().enabled = false;
-        let plan = c.plan(&stack, CTX);
+        let plan = c.plan(&stack, CTX, StackRow::is_noop);
 
         assert_eq!(plan.first_dirty, 2);
         assert_eq!(plan.execute, vec![3, 4, 5], "row 2 should be skipped");
@@ -305,7 +316,10 @@ mod tests {
         let mut stack = stack_of(4);
         stack.get_mut(RowId(1)).unwrap().opacity = 0.0;
         let mut c = StageCache::new();
-        assert_eq!(c.plan(&stack, CTX).execute, vec![0, 2, 3]);
+        assert_eq!(
+            c.plan(&stack, CTX, StackRow::is_noop).execute,
+            vec![0, 2, 3]
+        );
     }
 
     #[test]
@@ -318,7 +332,7 @@ mod tests {
         let mut c = warmed(&stack);
 
         stack.get_mut(RowId(2)).unwrap().enabled = true;
-        let plan = c.plan(&stack, CTX);
+        let plan = c.plan(&stack, CTX, StackRow::is_noop);
 
         assert_eq!(plan.first_dirty, 2);
         assert_eq!(plan.execute, vec![2, 3, 4, 5]);
@@ -330,7 +344,7 @@ mod tests {
         let mut c = warmed(&stack);
 
         stack.push(StackRow::new(RowId(99), "grain"));
-        let plan = c.plan(&stack, CTX);
+        let plan = c.plan(&stack, CTX, StackRow::is_noop);
 
         assert_eq!(plan.first_dirty, 8);
         assert_eq!(plan.reuse, Some(7));
@@ -343,7 +357,7 @@ mod tests {
         let mut c = warmed(&stack);
 
         stack.remove(RowId(5));
-        let plan = c.plan(&stack, CTX);
+        let plan = c.plan(&stack, CTX, StackRow::is_noop);
 
         assert_eq!(plan.first_dirty, 5);
         assert_eq!(plan.execute, vec![5, 6]);
@@ -355,7 +369,7 @@ mod tests {
         let mut c = warmed(&stack);
 
         stack.reorder(RowId(7), 2);
-        let plan = c.plan(&stack, CTX);
+        let plan = c.plan(&stack, CTX, StackRow::is_noop);
 
         assert_eq!(plan.first_dirty, 2);
         assert_eq!(plan.reuse, Some(1));
@@ -367,7 +381,7 @@ mod tests {
         let mut c = warmed(&stack);
 
         let resized = RenderContext { width: 1280, ..CTX };
-        let plan = c.plan(&stack, resized);
+        let plan = c.plan(&stack, resized, StackRow::is_noop);
 
         assert_eq!(plan.first_dirty, 0, "preview renders at screen resolution");
         assert_eq!(plan.execute.len(), 6);
@@ -377,7 +391,11 @@ mod tests {
     fn a_different_source_image_invalidates_everything() {
         let stack = stack_of(6);
         let mut c = warmed(&stack);
-        let plan = c.plan(&stack, RenderContext { source: 2, ..CTX });
+        let plan = c.plan(
+            &stack,
+            RenderContext { source: 2, ..CTX },
+            StackRow::is_noop,
+        );
         assert_eq!(plan.first_dirty, 0);
     }
 
@@ -387,7 +405,7 @@ mod tests {
         // photograph, so none of them can be reused.
         let stack = stack_of(6);
         let mut c = warmed(&stack);
-        let plan = c.plan(&stack, RenderContext { view: 99, ..CTX });
+        let plan = c.plan(&stack, RenderContext { view: 99, ..CTX }, StackRow::is_noop);
         assert_eq!(plan.first_dirty, 0);
         assert_eq!(plan.execute.len(), 6);
     }
@@ -396,7 +414,7 @@ mod tests {
     fn changing_colour_management_invalidates_everything() {
         let stack = stack_of(6);
         let mut c = warmed(&stack);
-        let plan = c.plan(&stack, RenderContext { color: 8, ..CTX });
+        let plan = c.plan(&stack, RenderContext { color: 8, ..CTX }, StackRow::is_noop);
         assert_eq!(plan.first_dirty, 0);
     }
 
@@ -409,7 +427,7 @@ mod tests {
         for id in 5..10 {
             stack.remove(RowId(id));
         }
-        c.plan(&stack, CTX);
+        c.plan(&stack, CTX, StackRow::is_noop);
         assert_eq!(c.len(), 5, "stale slots beyond the stack must be dropped");
     }
 
@@ -437,7 +455,7 @@ mod tests {
         let mut c = warmed(&stack);
         for i in 0..200 {
             set_param(&mut stack, 11, i as f32 / 200.0);
-            let plan = c.plan(&stack, CTX);
+            let plan = c.plan(&stack, CTX, StackRow::is_noop);
             assert_eq!(plan.execute, vec![11], "iteration {i}");
             c.store_plan(&stack, &plan);
         }

@@ -20,7 +20,9 @@ pub mod pack;
 pub mod registry;
 
 pub use pack::{PARAM_SLOTS, declared_slots, pack, pack_all, slot_of, slots_used};
-pub use registry::{EFFECTS, all, by_key};
+pub use registry::{
+    EFFECTS, EFFECTS_WITH_VISIBLE_DEFAULTS, PINNED_ROWS, all, by_key, new_document,
+};
 
 /// Which panel an effect appears under in the inspector.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -144,6 +146,40 @@ impl EffectDef {
 
     pub fn param(&self, key: &str) -> Option<&'static ParamDef> {
         self.params.iter().find(|p| p.key == key)
+    }
+
+    /// Whether these parameters leave the image untouched.
+    ///
+    /// The pinned panels mean a fresh document already carries nine rows. Each
+    /// would otherwise cost a full-screen pass every frame to do nothing.
+    /// Skipping the inert ones keeps a new document at zero passes and makes
+    /// the pass counter mean what it says: the work your edit actually costs.
+    ///
+    /// Compares against each parameter's `neutral`, not its default — for a
+    /// look effect those differ on purpose.
+    pub fn is_neutral(&self, params: &ParamMap) -> bool {
+        self.params.iter().all(|def| match def.kind {
+            ParamKind::Float { neutral, .. } => {
+                (params.float_or(def.key, neutral) - neutral).abs() < 1e-6
+            }
+            ParamKind::Bool { default } => params.bool_or(def.key, default) == default,
+            ParamKind::Choice { default, .. } => params.choice_or(def.key, default) == default,
+            ParamKind::Rgb { default } => params
+                .get(def.key)
+                .and_then(|v| match v {
+                    ParamValue::Rgb(c) => Some(*c),
+                    _ => None,
+                })
+                .is_none_or(|c| c == default),
+            ParamKind::Wheel => params
+                .get(def.key)
+                .and_then(ParamValue::as_wheel)
+                .is_none_or(|w| w.is_neutral()),
+            ParamKind::Curve => params
+                .get(def.key)
+                .and_then(ParamValue::as_curve)
+                .is_none_or(|c| c.is_identity()),
+        })
     }
 }
 
