@@ -11,8 +11,11 @@
 //! effects list already uses.
 
 mod basic;
+mod curve;
 mod inspector;
+mod mixer;
 mod preview;
+mod wheels;
 
 use std::path::PathBuf;
 
@@ -453,15 +456,19 @@ impl eframe::App for App {
                         });
 
                     egui::CollapsingHeader::new("Tone Curve").show(ui, |ui| {
-                        inspector::pinned_params(ui, &mut self.history, "curves");
+                        curve::editor(ui, &mut self.history);
                     });
 
                     egui::CollapsingHeader::new("Colour Wheels").show(ui, |ui| {
-                        inspector::pinned_params(ui, &mut self.history, "primaries");
+                        wheels::panel(ui, &mut self.history);
                     });
 
                     ui.add_space(6.0);
                     ui.separator();
+                    egui::CollapsingHeader::new("Colour Mixer").show(ui, |ui| {
+                        mixer::panel(ui, &mut self.history);
+                    });
+
                     egui::CollapsingHeader::new("Effects")
                         .default_open(true)
                         .show(ui, |ui| {

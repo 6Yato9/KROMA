@@ -147,6 +147,46 @@ pub static EFFECTS: &[EffectDef] = &[
                 unit: "",
             },
             amount("soft_clip", "Soft Clip"),
+            // The parametric curve. Four regions and three movable boundaries
+            // between them — a shape that cannot be made un-smooth, which is
+            // the whole reason to offer it alongside the point curves.
+            bipolar("param_shadows", "Shadows", 1.0, ""),
+            bipolar("param_darks", "Darks", 1.0, ""),
+            bipolar("param_lights", "Lights", 1.0, ""),
+            bipolar("param_highlights", "Highlights", 1.0, ""),
+            ParamDef {
+                key: "split_low",
+                name: "Shadow Split",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.25,
+                    neutral: 0.25,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "split_mid",
+                name: "Midtone Split",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.5,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "split_high",
+                name: "Highlight Split",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.75,
+                    neutral: 0.75,
+                },
+                unit: "",
+            },
         ],
     },
     EffectDef {
@@ -1137,6 +1177,111 @@ pub static EFFECTS: &[EffectDef] = &[
             bipolar("saturation", "Saturation", 1.0, ""),
         ],
     },
+    EffectDef {
+        key: "log_wheels",
+        name: "Log Wheels",
+        group: Group::Color,
+        space: WorkingSpace::Log,
+        shader: "log_wheels",
+        spatial: false,
+        derived_slots: 0,
+        params: &[
+            ParamDef {
+                key: "shadow",
+                name: "Shadow",
+                kind: ParamKind::Wheel,
+                unit: "",
+            },
+            ParamDef {
+                key: "midtone",
+                name: "Midtone",
+                kind: ParamKind::Wheel,
+                unit: "",
+            },
+            ParamDef {
+                key: "highlight",
+                name: "Highlight",
+                kind: ParamKind::Wheel,
+                unit: "",
+            },
+            ParamDef {
+                key: "offset",
+                name: "Offset",
+                kind: ParamKind::Wheel,
+                unit: "",
+            },
+            // Where "shadow" stops and "highlight" starts. Defaults sit
+            // either side of 18% grey (0.4136 in ACEScct), which is where a
+            // colourist would put them by hand.
+            ParamDef {
+                key: "low_range",
+                name: "Low Range",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.30,
+                    neutral: 0.30,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "high_range",
+                name: "High Range",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.48,
+                    neutral: 0.48,
+                },
+                unit: "",
+            },
+        ],
+    },
+    EffectDef {
+        key: "colour_mixer",
+        name: "Colour Mixer",
+        group: Group::Color,
+        space: WorkingSpace::Log,
+        shader: "colour_mixer",
+        spatial: false,
+        derived_slots: 0,
+        // Three slots per band, in band order — the shader indexes them
+        // arithmetically, so this order is load-bearing.
+        params: &[
+            // Red
+            bipolar("red_hue", "Red Hue", 1.0, ""),
+            bipolar("red_saturation", "Red Saturation", 1.0, ""),
+            bipolar("red_luminance", "Red Luminance", 1.0, ""),
+            // Orange
+            bipolar("orange_hue", "Orange Hue", 1.0, ""),
+            bipolar("orange_saturation", "Orange Saturation", 1.0, ""),
+            bipolar("orange_luminance", "Orange Luminance", 1.0, ""),
+            // Yellow
+            bipolar("yellow_hue", "Yellow Hue", 1.0, ""),
+            bipolar("yellow_saturation", "Yellow Saturation", 1.0, ""),
+            bipolar("yellow_luminance", "Yellow Luminance", 1.0, ""),
+            // Green
+            bipolar("green_hue", "Green Hue", 1.0, ""),
+            bipolar("green_saturation", "Green Saturation", 1.0, ""),
+            bipolar("green_luminance", "Green Luminance", 1.0, ""),
+            // Aqua
+            bipolar("aqua_hue", "Aqua Hue", 1.0, ""),
+            bipolar("aqua_saturation", "Aqua Saturation", 1.0, ""),
+            bipolar("aqua_luminance", "Aqua Luminance", 1.0, ""),
+            // Blue
+            bipolar("blue_hue", "Blue Hue", 1.0, ""),
+            bipolar("blue_saturation", "Blue Saturation", 1.0, ""),
+            bipolar("blue_luminance", "Blue Luminance", 1.0, ""),
+            // Purple
+            bipolar("purple_hue", "Purple Hue", 1.0, ""),
+            bipolar("purple_saturation", "Purple Saturation", 1.0, ""),
+            bipolar("purple_luminance", "Purple Luminance", 1.0, ""),
+            // Magenta
+            bipolar("magenta_hue", "Magenta Hue", 1.0, ""),
+            bipolar("magenta_saturation", "Magenta Saturation", 1.0, ""),
+            bipolar("magenta_luminance", "Magenta Luminance", 1.0, ""),
+        ],
+    },
 ];
 
 /// Effects whose registry defaults deliberately change the image.
@@ -1186,8 +1331,10 @@ pub const PINNED_ROWS: &[&str] = &[
     "presence",
     "dehaze",
     "colour",
+    "colour_mixer",
     "curves",
     "primaries",
+    "log_wheels",
 ];
 
 /// A new document with the fixed panels already in place.
@@ -1219,7 +1366,7 @@ mod tests {
     fn the_registry_is_the_expected_size() {
         // Nine at M1, plus Split Tone once the Resolve parameter research
         // landed. Pinned so an accidental duplicate or deletion is visible.
-        assert_eq!(EFFECTS.len(), 16);
+        assert_eq!(EFFECTS.len(), 18);
     }
 
     #[test]
@@ -1265,6 +1412,9 @@ mod tests {
             // Reshaping how the picture reads, not how much light fell.
             ("tone", WorkingSpace::Log),
             ("colour", WorkingSpace::Log),
+            // Tonal bands of a log-encoded signal, by definition.
+            ("log_wheels", WorkingSpace::Log),
+            ("colour_mixer", WorkingSpace::Log),
             // Perception: pivoting, shaping, drawing.
             ("contrast", WorkingSpace::Log),
             ("curves", WorkingSpace::Log),

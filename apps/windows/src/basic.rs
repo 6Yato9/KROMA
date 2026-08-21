@@ -82,7 +82,18 @@ pub fn histogram(ui: &mut egui::Ui, hist: Option<&Histogram>) {
 
 /// One Lightroom-style slider: label, track, value, all driving a named
 /// parameter of a named effect.
-fn slider(ui: &mut egui::Ui, history: &mut History, effect: &str, key: &'static str, label: &str) {
+/// One float parameter of one pinned row.
+///
+/// Shared with the mixer and curve panels: they all want the same double-
+/// click-to-neutral and the same coalescing key, and a second copy of this
+/// is a second place for those to drift.
+pub fn slider(
+    ui: &mut egui::Ui,
+    history: &mut History,
+    effect: &str,
+    key: &'static str,
+    label: &str,
+) {
     let Some(def) = pe_effects::by_key(effect).and_then(|e| e.param(key)) else {
         return;
     };

@@ -266,10 +266,19 @@ mod tests {
     #[test]
     fn curves_take_no_uniform_slots() {
         let e = by_key("curves").unwrap();
-        assert_eq!(slot_of(e, "luma"), None, "curves go to the LUT texture");
-        // Only soft_clip is packed.
-        assert_eq!(slots_used(e), 1);
+        for key in ["luma", "red", "green", "blue"] {
+            assert_eq!(slot_of(e, key), None, "curves go to the LUT texture");
+        }
+        // Everything else on the effect is packed: soft_clip, then the
+        // parametric curve's four regions and three splits.
+        assert_eq!(slots_used(e), 8);
         assert_eq!(slot_of(e, "soft_clip"), Some(0));
+        assert_eq!(
+            slot_of(e, "param_shadows"),
+            Some(1),
+            "the shader reads the regions from slots 1-4"
+        );
+        assert_eq!(slot_of(e, "split_high"), Some(7));
     }
 
     #[test]

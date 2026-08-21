@@ -14,6 +14,7 @@
 pub mod curve;
 pub mod document;
 pub mod history;
+pub mod parametric;
 pub mod params;
 pub mod stack;
 

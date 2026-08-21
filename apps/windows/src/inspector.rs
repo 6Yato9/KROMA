@@ -100,24 +100,6 @@ fn icon_button(ui: &mut egui::Ui, icon: Icon, hover: &str) -> egui::Response {
     response.on_hover_text(hover)
 }
 
-/// Draw just the parameters of a pinned row, with no frame, header or
-/// controls around them.
-///
-/// Fixed panels own their own presentation — the Tone Curve panel is a curve
-/// editor, not a row with a delete button — so they borrow the parameter
-/// widgets and nothing else.
-pub fn pinned_params(ui: &mut egui::Ui, history: &mut History, effect: &str) {
-    let Some(def) = pe_effects::by_key(effect) else {
-        return;
-    };
-    let Some(id) = history.document().stack.find_by_effect(effect) else {
-        return;
-    };
-    for param in def.params {
-        param_ui(ui, history, id, param);
-    }
-}
-
 pub fn show(ui: &mut egui::Ui, history: &mut History, ids: &mut RowIdGenerator) {
     ui.add_space(6.0);
     add_effect_menu(ui, history, ids);

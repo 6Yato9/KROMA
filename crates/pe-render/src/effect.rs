@@ -541,6 +541,8 @@ fn effect_source(name: &str) -> &'static str {
         "tone" => include_str!("../../../shaders/effects/tone.wgsl"),
         "presence" => include_str!("../../../shaders/effects/presence.wgsl"),
         "colour" => include_str!("../../../shaders/effects/colour.wgsl"),
+        "log_wheels" => include_str!("../../../shaders/effects/log_wheels.wgsl"),
+        "colour_mixer" => include_str!("../../../shaders/effects/colour_mixer.wgsl"),
         other => panic!("no shader source embedded for {other:?}"),
     }
 }
