@@ -139,28 +139,50 @@ pub fn show(ui: &mut egui::Ui, history: &mut History, ids: &mut RowIdGenerator) 
 
 fn add_effect_menu(ui: &mut egui::Ui, history: &mut History, ids: &mut RowIdGenerator) {
     ui.menu_button("+  Add effect", |ui| {
-        for group in [Group::Basic, Group::Color, Group::Film, Group::Optics] {
-            ui.label(egui::RichText::new(group.as_str()).small().weak());
-            // Effects that already exist as fixed panels are not offered
-            // again — adding a second Exposure row is legitimate, but the menu
-            // is not where anyone would look for it.
-            for def in pe_effects::all()
-                .iter()
-                .filter(|e| e.group == group)
-                .filter(|e| !pe_effects::registry::PINNED_ROWS.contains(&e.key))
-            {
-                if ui.button(def.name).clicked() {
-                    let id = ids.allocate();
-                    history.edit(format!("Add {}", def.name), None, |doc| {
-                        let mut row = StackRow::new(id, def.key);
-                        row.params = def.default_params();
-                        doc.stack.push(row);
-                    });
-                    ui.close();
+        ui.set_min_width(180.0);
+        // The menu opens from a button near the bottom of a scrolled panel, so
+        // there is often less room below it than the list needs. Without this
+        // the popup is simply clipped — no scrollbar, no indication that
+        // anything is missing, and half the effects unreachable.
+        egui::ScrollArea::vertical()
+            .max_height(340.0)
+            .show(ui, |ui| {
+                let mut first = true;
+                for group in [Group::Basic, Group::Color, Group::Film, Group::Optics] {
+                    // Effects that already exist as fixed panels are not
+                    // offered again — adding a second Exposure row is
+                    // legitimate, but the menu is not where anyone would look
+                    // for it.
+                    let available: Vec<_> = pe_effects::all()
+                        .iter()
+                        .filter(|e| e.group == group)
+                        .filter(|e| !pe_effects::registry::PINNED_ROWS.contains(&e.key))
+                        .collect();
+                    // Every Basic effect is a pinned panel, so that heading has
+                    // nothing under it. A heading over nothing reads as a list
+                    // that failed to load.
+                    if available.is_empty() {
+                        continue;
+                    }
+                    if !first {
+                        ui.separator();
+                    }
+                    first = false;
+
+                    ui.label(egui::RichText::new(group.as_str()).small().weak());
+                    for def in available {
+                        if ui.button(def.name).clicked() {
+                            let id = ids.allocate();
+                            history.edit(format!("Add {}", def.name), None, |doc| {
+                                let mut row = StackRow::new(id, def.key);
+                                row.params = def.default_params();
+                                doc.stack.push(row);
+                            });
+                            ui.close();
+                        }
+                    }
                 }
-            }
-            ui.separator();
-        }
+            });
     });
 }
 
