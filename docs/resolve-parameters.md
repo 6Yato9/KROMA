@@ -130,8 +130,19 @@ one slider sliding a peak around.
 
 Structurally more interesting than our M1 version: isolation is a **band**
 (Threshold to Normalization) rather than a single threshold, and the glow has
-**two** layers with independent spread. Per-channel spread is what makes the
-red/orange fringe come out naturally rather than being tinted after the fact.
+**two** layers with independent spread.
+
+**Fine Tune Relative Spread** is the one worth having. With it off the glow is
+one radius coloured by a Hue tint — a colour applied after the fact. With it on
+each channel scatters its own distance, and the red fringe emerges from the
+geometry instead: longer wavelengths penetrate the emulsion further and scatter
+wider, so red outlasts green, which outlasts blue. Defaults are ordered
+1.0 / 0.7 / 0.5 so ticking the box immediately gives the characteristic look,
+and the Hue tint stands down to neutral so the two do not double up.
+
+The difference is testable, which is the point: a tint gives a red/blue ratio
+that is *constant* with distance, while real per-channel radii make that ratio
+*grow* as you move away from the source. Only the second is physics.
 
 Film Look Creator's simplified version is just: Highlights Only, Amount,
 Radius, Saturation, Hue.
@@ -146,6 +157,20 @@ controls; no published defaults.
 
 Note Resolve calls it **Anamorphism**, not roundness, and it has a **Color**
 control — a vignette that tints as well as darkens.
+
+Implemented with two deliberate departures, both because the control already
+exists elsewhere in our model:
+
+- **Composite Type** is the row's blend mode. Every effect here has one.
+- **Transparency** is folded into **Amount**. Two controls for "how much
+  vignette" is one too many, and our Amount is bipolar so it can also brighten
+  the corners, which Transparency cannot.
+
+Border Shape is a superellipse exponent: 2 is an ellipse, ~14 approaches a box.
+Worth knowing when testing it — an ellipse and a box give almost the same
+radius at an *edge midpoint*, where one coordinate dominates. They diverge on
+the diagonal, where an ellipse reaches sqrt(2) further. Compare corners, not
+edges.
 
 ---
 

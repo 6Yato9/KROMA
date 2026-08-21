@@ -526,6 +526,51 @@ pub static EFFECTS: &[EffectDef] = &[
                 },
                 unit: "",
             },
+            // Resolve's Fine Tune Relative Spread. With it off the glow is one
+            // radius tinted by Hue; with it on each channel scatters its own
+            // distance and the red fringe emerges from the physics instead.
+            // Defaults are ordered red > green > blue because longer
+            // wavelengths penetrate the emulsion further and scatter wider, so
+            // ticking the box immediately gives the characteristic look.
+            ParamDef {
+                key: "fine_tune_spread",
+                name: "Fine Tune Relative Spread",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+            },
+            ParamDef {
+                key: "relative_red",
+                name: "Relative Spread Red",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "relative_green",
+                name: "Relative Spread Green",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 0.7,
+                    neutral: 0.7,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "relative_blue",
+                name: "Relative Spread Blue",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 0.5,
+                    neutral: 0.5,
+                },
+                unit: "",
+            },
         ],
     },
     EffectDef {
@@ -536,11 +581,66 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "vignette",
         spatial: true,
         derived_slots: 0,
+        // Follows Resolve's Vignette: a Basic set (Size, Anamorphism,
+        // Softness, Color) and an Advanced set (Border Shape, Rotation,
+        // Center). Two of Resolve's controls are deliberately not here —
+        // Composite Type is the row's blend mode, and Transparency is folded
+        // into Amount, which is bipolar and so can brighten the corners too.
         params: &[
             bipolar("amount", "Amount", 1.0, ""),
             ParamDef {
-                key: "midpoint",
-                name: "Midpoint",
+                key: "size",
+                name: "Size",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.5,
+                },
+                unit: "",
+            },
+            // Stretches the shape horizontally. At 0 the vignette follows
+            // the frame; positive values widen it the way an anamorphic lens
+            // would.
+            bipolar("anamorphism", "Anamorphism", 1.0, ""),
+            ParamDef {
+                key: "softness",
+                name: "Softness",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.5,
+                },
+                unit: "",
+            },
+            // 0 is an ellipse, 1 approaches a rectangle, by way of a
+            // superellipse exponent.
+            ParamDef {
+                key: "border_shape",
+                name: "Border Shape",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+            },
+            ParamDef {
+                key: "rotation",
+                name: "Rotation",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 360.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "°",
+            },
+            ParamDef {
+                key: "center_x",
+                name: "Center X",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
@@ -550,8 +650,8 @@ pub static EFFECTS: &[EffectDef] = &[
                 unit: "",
             },
             ParamDef {
-                key: "roundness",
-                name: "Roundness",
+                key: "center_y",
+                name: "Center Y",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
@@ -561,13 +661,12 @@ pub static EFFECTS: &[EffectDef] = &[
                 unit: "",
             },
             ParamDef {
-                key: "feather",
-                name: "Feather",
-                kind: ParamKind::Float {
-                    min: 0.0,
-                    max: 1.0,
-                    default: 0.5,
-                    neutral: 0.5,
+                key: "color",
+                name: "Color",
+                // Black is the classic darkening; any other colour tints the
+                // border instead.
+                kind: ParamKind::Rgb {
+                    default: [0.0, 0.0, 0.0],
                 },
                 unit: "",
             },
