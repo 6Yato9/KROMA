@@ -12,16 +12,35 @@ use pe_color::space;
 use pe_core::{Document, Geometry};
 use pe_io::DecodedImage;
 use pe_render::{EffectRenderer, GpuContext, ImageTexture, Region, RenderError, TransformPass};
-use pe_scopes::Histogram;
+use pe_scopes::{Histogram, Vectorscope, Waveform};
 
-/// Size of the off-screen render the histogram is measured from.
+/// Everything measured from one readback of the graded frame.
 ///
-/// The histogram describes the whole photograph, not the part currently on
-/// screen — that is what a Basic panel is for, and it must not change when you
-/// zoom in. So it gets its own tiny full-frame render rather than reading the
-/// viewport. Thirty thousand pixels through nine passes is nothing, and it has
-/// its own stage cache, so it only re-runs when the edit actually changes.
-const HIST_SIZE: (u32, u32) = (200, 150);
+/// Bundled because they all come from the same pixels and are all invalidated
+/// at the same moment; splitting them would mean three copies of the "has this
+/// changed" question.
+pub struct Scopes {
+    pub histogram: Histogram,
+    pub waveform: Waveform,
+    pub vectorscope: Vectorscope,
+    /// Bumped on every fresh measurement, so the panel knows when to re-upload
+    /// its textures instead of doing it every frame.
+    pub generation: u64,
+}
+
+/// Size of the off-screen render every scope is measured from.
+///
+/// The scopes describe the whole photograph, not the part currently on screen
+/// — that is the point of them, and they must not change when you zoom in. So
+/// they get their own small full-frame render rather than reading the
+/// viewport. It has its own stage cache, so it only re-runs when the edit
+/// actually changes.
+///
+/// 320 columns because that is the one dimension a scope's resolution is
+/// really visible in: a waveform is drawn one column of the picture per column
+/// of the panel, and a panel is about that wide. Seventy-seven thousand pixels
+/// is a 300 KB readback and well under a millisecond to bin.
+const SCOPE_SIZE: (u32, u32) = (320, 240);
 
 /// Upper bound on preview dimensions.
 ///
@@ -85,6 +104,9 @@ pub struct Framing {
     /// The visible rectangle in frame uv. The viewer needs it to turn a drag
     /// or a scroll at the cursor back into a move in image space.
     pub visible: egui::Rect,
+    /// The same frame with the stack switched off, for the comparison views.
+    /// `None` unless one of them asked for it.
+    pub before: Option<egui::TextureId>,
     /// Pixel size of the frame that was drawn. Not the source's size: the crop
     /// decides what the frame is, and while the crop tool is open the frame is
     /// bigger than either.
@@ -107,11 +129,19 @@ pub struct Preview {
     region: Region,
     geometry: Geometry,
 
-    hist_renderer: EffectRenderer,
-    hist_working: Option<ImageTexture>,
-    hist_display: ImageTexture,
-    hist_geometry: Option<Geometry>,
-    histogram: Option<Histogram>,
+    /// The ungraded frame, for the comparison views. Kept beside the graded
+    /// one rather than re-rendered on demand: it is the same working texture
+    /// the stack starts from, so producing it is a single transform pass with
+    /// no effects at all.
+    before: Option<ImageTexture>,
+    before_id: Option<egui::TextureId>,
+
+    scope_renderer: EffectRenderer,
+    scope_working: Option<ImageTexture>,
+    scope_display: ImageTexture,
+    scope_geometry: Option<Geometry>,
+    scopes: Option<Scopes>,
+    generation: u64,
 }
 
 impl Preview {
@@ -133,11 +163,11 @@ impl Preview {
         let to_working = TransformPass::new(&gpu.device, pe_render::WORKING_FORMAT);
         let to_display = TransformPass::new(&gpu.device, pe_render::SOURCE_FORMAT);
         let renderer = EffectRenderer::new(&gpu.device);
-        let hist_renderer = EffectRenderer::new(&gpu.device);
-        let hist_display = ImageTexture::new(
+        let scope_renderer = EffectRenderer::new(&gpu.device);
+        let scope_display = ImageTexture::new(
             &gpu.device,
-            HIST_SIZE.0,
-            HIST_SIZE.1,
+            SCOPE_SIZE.0,
+            SCOPE_SIZE.1,
             pe_render::SOURCE_FORMAT,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             "histogram",
@@ -156,49 +186,58 @@ impl Preview {
             size: (0, 0),
             region: Region::FULL,
             geometry: Geometry::default(),
-            hist_renderer,
-            hist_working: None,
-            hist_display,
-            hist_geometry: None,
-            histogram: None,
+            before: None,
+            before_id: None,
+            scope_renderer,
+            scope_working: None,
+            scope_display,
+            scope_geometry: None,
+            scopes: None,
+            generation: 0,
         }
+    }
+
+    /// Every scope, measured on the whole photograph as currently graded.
+    pub fn scopes(&self) -> Option<&Scopes> {
+        self.scopes.as_ref()
     }
 
     /// The histogram of the whole photograph as currently graded.
     pub fn histogram(&self) -> Option<&Histogram> {
-        self.histogram.as_ref()
+        self.scopes.as_ref().map(|s| &s.histogram)
     }
 
-    /// Re-measure the histogram, but only when the edit has actually moved.
+    /// Re-measure the scopes, but only when the edit has actually moved.
     ///
     /// The dedicated renderer has its own stage cache, so an unchanged
     /// document costs zero passes — and when it does, there is nothing new to
     /// read back and the GPU stall is skipped entirely. During a slider drag
-    /// it is one 120 KB readback a frame, which is affordable.
-    fn update_histogram(&mut self, doc: &Document, source: (u32, u32)) {
+    /// it is one 300 KB readback a frame, which is affordable; on an idle
+    /// frame it is nothing at all.
+    fn update_scopes(&mut self, doc: &Document, source: (u32, u32)) {
         // The histogram describes the photograph the user is making, so it
         // reads through the crop. A rejected corner should stop counting
         // towards the clipping warning the moment it is cropped away.
-        if self.hist_working.is_none() || self.hist_geometry != Some(doc.geometry) {
-            self.hist_working = Some(self.to_working.to_working_mapped(
+        if self.scope_working.is_none() || self.scope_geometry != Some(doc.geometry) {
+            self.scope_working = Some(self.to_working.to_working_mapped(
                 &self.gpu,
                 &self.source,
                 &doc.color.pipeline().input,
-                HIST_SIZE.0,
-                HIST_SIZE.1,
+                SCOPE_SIZE.0,
+                SCOPE_SIZE.1,
                 pe_render::Sampling::of(&doc.geometry, source.0, source.1),
             ));
-            self.hist_geometry = Some(doc.geometry);
-            self.hist_renderer.invalidate();
-            self.histogram = None;
+            self.scope_geometry = Some(doc.geometry);
+            self.scope_renderer.invalidate();
+            self.scopes = None;
         }
-        let working = self.hist_working.as_ref().expect("built above");
+        let working = self.scope_working.as_ref().expect("built above");
 
-        self.hist_renderer.set_region(Region::FULL);
-        let graded = self.hist_renderer.render(&self.gpu, working, doc, 1);
+        self.scope_renderer.set_region(Region::FULL);
+        let graded = self.scope_renderer.render(&self.gpu, working, doc, 1);
         let graded_view = graded.view.clone();
-        let changed = self.hist_renderer.last_pass_count() > 0;
-        if !changed && self.histogram.is_some() {
+        let changed = self.scope_renderer.last_pass_count() > 0;
+        if !changed && self.scopes.is_some() {
             return;
         }
 
@@ -206,20 +245,27 @@ impl Preview {
             .gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("histogram"),
+                label: Some("scopes"),
             });
         self.to_display.encode(
             &self.gpu,
             &mut encoder,
             &graded_view,
-            &self.hist_display.view,
+            &self.scope_display.view,
             &space::ACESCG,
             &doc.color.pipeline().output,
         );
         self.gpu.queue.submit([encoder.finish()]);
 
-        if let Ok(pixels) = pe_render::read_rgba8(&self.gpu, &self.hist_display) {
-            self.histogram = Some(Histogram::from_display(&pixels));
+        if let Ok(pixels) = pe_render::read_rgba8(&self.gpu, &self.scope_display) {
+            let (w, h) = (SCOPE_SIZE.0 as usize, SCOPE_SIZE.1 as usize);
+            self.generation += 1;
+            self.scopes = Some(Scopes {
+                histogram: Histogram::from_display(&pixels),
+                waveform: Waveform::from_display(&pixels, w, h),
+                vectorscope: Vectorscope::from_display(&pixels),
+                generation: self.generation,
+            });
         }
     }
 
@@ -239,10 +285,10 @@ impl Preview {
         )?;
         self.size = (0, 0);
         self.renderer.invalidate();
-        self.hist_renderer.invalidate();
-        self.hist_working = None;
-        self.hist_geometry = None;
-        self.histogram = None;
+        self.scope_renderer.invalidate();
+        self.scope_working = None;
+        self.scope_geometry = None;
+        self.scopes = None;
         Ok(())
     }
 
@@ -259,6 +305,7 @@ impl Preview {
         framing: Geometry,
         view: View,
         viewport: egui::Vec2,
+        compare: bool,
     ) -> Result<Framing, RenderError> {
         let (fw, fh) = framing.output_size(image.width, image.height);
         let plan = frame_plan(fw, fh, view, viewport);
@@ -292,7 +339,30 @@ impl Preview {
         );
         self.gpu.queue.submit([encoder.finish()]);
 
-        self.update_histogram(doc, (image.width, image.height));
+        // The ungraded frame, for a wipe or a side-by-side. It is the working
+        // texture the stack starts from, so this is one transform pass and no
+        // effects — cheap enough not to bother caching, and skipped entirely
+        // when nothing is comparing.
+        if compare {
+            let before = self.before.as_ref().expect("rebuilt above");
+            let mut encoder =
+                self.gpu
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("preview-before"),
+                    });
+            self.to_display.encode(
+                &self.gpu,
+                &mut encoder,
+                &working.view,
+                &before.view,
+                &space::ACESCG,
+                &doc.color.pipeline().output,
+            );
+            self.gpu.queue.submit([encoder.finish()]);
+        }
+
+        self.update_scopes(doc, (image.width, image.height));
 
         Ok(Framing {
             texture: self.texture_id.expect("registered on rebuild"),
@@ -300,6 +370,7 @@ impl Preview {
             size: plan.on_screen,
             scale: plan.scale,
             visible: plan.visible,
+            before: compare.then_some(self.before_id).flatten(),
             frame: (fw, fh),
             passes,
         })
@@ -355,8 +426,32 @@ impl Preview {
                 ));
             }
         }
+        let before = ImageTexture::new(
+            &self.gpu.device,
+            w,
+            h,
+            pe_render::SOURCE_FORMAT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            "preview-before",
+        );
+        match self.before_id {
+            Some(id) => renderer.update_egui_texture_from_wgpu_texture(
+                &self.gpu.device,
+                &before.view,
+                wgpu::FilterMode::Linear,
+                id,
+            ),
+            None => {
+                self.before_id = Some(renderer.register_native_texture(
+                    &self.gpu.device,
+                    &before.view,
+                    wgpu::FilterMode::Linear,
+                ));
+            }
+        }
         drop(renderer);
 
+        self.before = Some(before);
         self.display = Some(display);
         self.size = size;
         self.region = region;

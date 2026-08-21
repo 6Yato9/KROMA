@@ -16,6 +16,7 @@ mod curve;
 mod inspector;
 mod mixer;
 mod preview;
+mod scopes;
 mod wheels;
 
 use std::path::PathBuf;
@@ -78,6 +79,22 @@ pub struct App {
     /// deferred to the first frame rather than done in the constructor.
     titled: bool,
     view: View,
+    /// Which comparison view is running, and where its divider sits.
+    compare: Compare,
+    /// The wipe position, as a fraction across the picture.
+    wipe: f32,
+    /// Where the divider was drawn last frame, and whether the drag in
+    /// progress grabbed it.
+    ///
+    /// The divider and the pan share one drag, so which of them gets it has to
+    /// be decided once, when the drag starts — otherwise dragging the divider
+    /// would slide the photograph out from under it at the same time.
+    wipe_x: Option<f32>,
+    dragging_wipe: bool,
+    /// Whether the scopes panel is open, and which scopes it shows.
+    show_scopes: bool,
+    shown: scopes::Shown,
+    scope_textures: scopes::Textures,
     /// Whether the crop tool is open. It changes what the viewer shows — the
     /// whole straightened frame rather than the cropped result — so it lives
     /// here rather than inside the panel.
@@ -126,6 +143,13 @@ impl App {
             status: String::new(),
             titled: false,
             view: View::default(),
+            compare: Compare::Off,
+            wipe: 0.5,
+            wipe_x: None,
+            dragging_wipe: false,
+            show_scopes: false,
+            shown: scopes::Shown::default(),
+            scope_textures: scopes::Textures::default(),
             cropping: false,
             last: None,
             last_frame: (1, 1),
@@ -347,6 +371,9 @@ impl eframe::App for App {
             ) {
                 self.history.redo();
             }
+            if i.consume_key(egui::Modifiers::NONE, egui::Key::S) {
+                self.show_scopes = !self.show_scopes;
+            }
             if i.consume_key(egui::Modifiers::NONE, egui::Key::C) {
                 self.cropping = !self.cropping;
                 self.view.fit();
@@ -416,6 +443,20 @@ impl eframe::App for App {
                     self.export();
                 }
                 ui.separator();
+                ui.label(egui::RichText::new("Compare").small().weak());
+                for (label, mode) in [
+                    ("Off", Compare::Off),
+                    ("Wipe", Compare::Wipe),
+                    ("Side", Compare::Side),
+                ] {
+                    if ui.selectable_label(self.compare == mode, label).clicked() {
+                        self.compare = mode;
+                    }
+                }
+                ui.separator();
+                ui.toggle_value(&mut self.show_scopes, "Scopes")
+                    .on_hover_text("S — waveform, parade and vectorscope");
+                ui.separator();
                 if ui
                     .toggle_value(&mut self.cropping, "Crop")
                     .on_hover_text("C")
@@ -459,6 +500,40 @@ impl eframe::App for App {
                 });
             });
         });
+
+        if self.show_scopes {
+            egui::TopBottomPanel::bottom("scopes")
+                .resizable(true)
+                .default_height(210.0)
+                .height_range(120.0..=420.0)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.toggle_value(&mut self.shown.waveform, "Waveform");
+                        ui.add_enabled_ui(self.shown.waveform, |ui| {
+                            ui.toggle_value(&mut self.shown.waveform_rgb, "RGB")
+                                .on_hover_text("Overlay the three channels instead of luma");
+                        });
+                        ui.toggle_value(&mut self.shown.parade, "Parade");
+                        ui.toggle_value(&mut self.shown.vectorscope, "Vectorscope");
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                egui::RichText::new(
+                                    "measured on the whole photograph, not the visible part",
+                                )
+                                .small()
+                                .weak(),
+                            );
+                        });
+                    });
+                    ui.add_space(2.0);
+                    scopes::panel(
+                        ui,
+                        &mut self.scope_textures,
+                        self.preview.as_ref().and_then(|p| p.scopes()),
+                        &self.shown,
+                    );
+                });
+        }
 
         if !self.status.is_empty() {
             egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
@@ -535,7 +610,17 @@ impl eframe::App for App {
                 // are handled against the same rectangle the image is drawn in.
                 let (rect, response) =
                     ui.allocate_exact_size(viewport, egui::Sense::click_and_drag());
-                if !self.cropping {
+                if response.drag_started() {
+                    self.dragging_wipe = self.compare == Compare::Wipe
+                        && self
+                            .wipe_x
+                            .zip(response.interact_pointer_pos())
+                            .is_some_and(|(x, p)| (p.x - x).abs() <= 24.0);
+                }
+                if response.drag_stopped() {
+                    self.dragging_wipe = false;
+                }
+                if !self.cropping && !self.dragging_wipe {
                     self.handle_view_input(ui, &response, rect);
                 }
 
@@ -567,12 +652,21 @@ impl eframe::App for App {
                     self.view
                 };
                 let preview = self.preview.as_mut().expect("checked above");
-                match preview.render(image, &doc, framing_geometry, view, viewport) {
+                let compare = self.compare;
+                match preview.render(image, &doc, framing_geometry, view, viewport, compare.on()) {
                     Ok(framing) => {
                         self.last_passes = framing.passes;
                         self.last = Some((framing.scale, framing.visible));
                         self.last_frame = framing.frame;
                         let target = draw(ui, rect, &framing);
+                        self.wipe_x = draw_compare(ui, rect, &framing, compare, self.wipe);
+                        if self.dragging_wipe
+                            && response.dragged()
+                            && let Some(pos) = response.interact_pointer_pos()
+                        {
+                            self.wipe =
+                                ((pos.x - target.min.x) / target.width().max(1e-4)).clamp(0.0, 1.0);
+                        }
                         if self.cropping
                             && let Some(next) = crop::overlay(
                                 ui,
@@ -601,6 +695,131 @@ impl eframe::App for App {
                 }
             });
     }
+}
+
+/// How the graded picture is being held up against the ungraded one.
+///
+/// Both modes exist because they answer different questions. A wipe is for
+/// "did that move go too far" — the eye reads a discontinuity across a seam far
+/// more finely than it reads two pictures a hand's width apart. Side by side is
+/// for "which of these do I prefer", where a seam would fuse the two into one
+/// image and stop you seeing either.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Compare {
+    Off,
+    Wipe,
+    Side,
+}
+
+impl Compare {
+    fn on(self) -> bool {
+        self != Compare::Off
+    }
+}
+
+/// Draw the before image against the after one.
+///
+/// Returns the screen rectangle the divider sits in, so the caller can drag it.
+fn draw_compare(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    framing: &Framing,
+    mode: Compare,
+    wipe: f32,
+) -> Option<f32> {
+    let before = framing.before?;
+    let whole = egui::Rect::from_center_size(rect.center(), framing.size);
+
+    match mode {
+        Compare::Off => None,
+        Compare::Wipe => {
+            // The after image is already drawn underneath; the before is laid
+            // over the left of it and clipped, so the two meet on one seam
+            // with no gap and no scaling difference between them.
+            let x = whole.min.x + wipe.clamp(0.0, 1.0) * whole.width();
+            let left = egui::Rect::from_min_max(whole.min, egui::pos2(x, whole.max.y));
+            let uv = egui::Rect::from_min_max(
+                framing.uv.min,
+                egui::pos2(
+                    framing.uv.min.x + framing.uv.width() * wipe.clamp(0.0, 1.0),
+                    framing.uv.max.y,
+                ),
+            );
+            ui.painter()
+                .add(egui::Shape::image(before, left, uv, egui::Color32::WHITE));
+
+            ui.painter().line_segment(
+                [egui::pos2(x, whole.min.y), egui::pos2(x, whole.max.y)],
+                egui::Stroke::new(1.5_f32, egui::Color32::from_white_alpha(210)),
+            );
+            label(
+                ui,
+                egui::pos2(whole.min.x + 8.0, whole.min.y + 8.0),
+                "Before",
+                egui::Align2::LEFT_TOP,
+            );
+            label(
+                ui,
+                egui::pos2(whole.max.x - 8.0, whole.min.y + 8.0),
+                "After",
+                egui::Align2::RIGHT_TOP,
+            );
+            Some(x)
+        }
+        Compare::Side => {
+            // Half size each, so both fit where one did.
+            let half = framing.size * 0.5;
+            let gap = 6.0;
+            let left = egui::Rect::from_min_size(
+                egui::pos2(
+                    rect.center().x - half.x - gap * 0.5,
+                    rect.center().y - half.y * 0.5,
+                ),
+                half,
+            );
+            let right = egui::Rect::from_min_size(
+                egui::pos2(rect.center().x + gap * 0.5, rect.center().y - half.y * 0.5),
+                half,
+            );
+            // Repaint the background over the full-size after image first, or
+            // it would still be showing behind the two halves.
+            ui.painter()
+                .rect_filled(rect, 0.0, egui::Color32::from_gray(24));
+            for (target, texture) in [(left, before), (right, framing.texture)] {
+                ui.painter().add(egui::Shape::image(
+                    texture,
+                    target,
+                    framing.uv,
+                    egui::Color32::WHITE,
+                ));
+            }
+            label(
+                ui,
+                left.left_top() + egui::vec2(6.0, 6.0),
+                "Before",
+                egui::Align2::LEFT_TOP,
+            );
+            label(
+                ui,
+                right.left_top() + egui::vec2(6.0, 6.0),
+                "After",
+                egui::Align2::LEFT_TOP,
+            );
+            None
+        }
+    }
+}
+
+fn label(ui: &egui::Ui, at: egui::Pos2, text: &str, align: egui::Align2) {
+    let font = egui::FontId::proportional(11.0);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_string(), font.clone(), egui::Color32::WHITE);
+    let rect = align.anchor_size(at, galley.size()).expand(3.0);
+    ui.painter()
+        .rect_filled(rect, 2.0, egui::Color32::from_black_alpha(150));
+    ui.painter()
+        .text(at, align, text, font, egui::Color32::from_white_alpha(230));
 }
 
 /// Draw the graded texture centred in the viewport.

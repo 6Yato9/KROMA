@@ -10,6 +10,10 @@
 //! histogram; a parade is three waveforms. None of it is hard — it is just
 //! rarely done properly outside grading tools.
 
+pub mod waveform;
+
+pub use waveform::{Channel, LEVELS, SKIN, TARGETS, VECTOR_SIZE, Vectorscope, Waveform};
+
 /// Number of bins. 256 matches an 8-bit display and is what every grading tool
 /// uses; finer bins do not survive being drawn at panel width.
 pub const BINS: usize = 256;
