@@ -549,6 +549,178 @@ fn the_temperature_shift_warms_the_picture_and_the_tint_shift_does_not() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Film Grain
+// ---------------------------------------------------------------------------
+
+/// How much a channel varies across a row — the size of the grain's swing.
+fn spread_of(img: &DecodedImage, y: u32, channel: usize) -> f32 {
+    let values: Vec<f32> = (0..img.width)
+        .map(|x| img.pixel(x, y)[channel] as f32)
+        .collect();
+    let mean = values.iter().sum::<f32>() / values.len() as f32;
+    (values.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / values.len() as f32).sqrt()
+}
+
+/// How often a row crosses its own average — a stand-in for how fine the grain
+/// is. Coarse grain crosses rarely because each grain covers many pixels.
+fn crossings(img: &DecodedImage, y: u32) -> usize {
+    let values: Vec<f32> = (0..img.width).map(|x| img.pixel(x, y)[0] as f32).collect();
+    let mean = values.iter().sum::<f32>() / values.len() as f32;
+    values
+        .windows(2)
+        .filter(|w| (w[0] - mean).is_sign_positive() != (w[1] - mean).is_sign_positive())
+        .count()
+}
+
+fn grain(params: &[(&str, ParamValue)]) -> Document {
+    look("grain", params)
+}
+
+/// The reason a format preset is a real control and not a label: the same
+/// emulsion on a 16mm frame is magnified nearly three times as much by the
+/// time it reaches the same print, so its grain is that much coarser.
+#[test]
+fn a_format_preset_changes_how_coarse_the_grain_is() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = flat(512, 32);
+    let of = |preset: &str| {
+        render(
+            gpu,
+            &src,
+            &grain(&[
+                ("preset", ParamValue::Choice(preset.into())),
+                ("strength", ParamValue::Float(1.0)),
+                ("size", ParamValue::Float(400.0)),
+            ]),
+        )
+    };
+    let small = crossings(&of("16mm"), 16);
+    let large = crossings(&of("65mm"), 16);
+    assert!(
+        large > small * 2,
+        "65mm should be much finer than 16mm ({large} crossings against {small})"
+    );
+}
+
+/// Film's three dye layers are not equally grainy — the blue-sensitive layer
+/// is the worst of them — so this is not a trim, it is most of what separates
+/// one stock from another.
+#[test]
+fn a_channel_gain_puts_the_grain_in_that_channel() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = flat(256, 32);
+    let out = render(
+        gpu,
+        &src,
+        &grain(&[
+            ("strength", ParamValue::Float(1.0)),
+            ("saturation", ParamValue::Float(1.0)),
+            ("red", ParamValue::Float(2.0)),
+            ("green", ParamValue::Float(0.0)),
+            ("blue", ParamValue::Float(0.0)),
+        ]),
+    );
+    let red = spread_of(&out, 16, 0);
+    let green = spread_of(&out, 16, 1);
+    assert!(
+        red > green * 2.0,
+        "the grain did not follow the channel gains ({red:.2} red against {green:.2} green)"
+    );
+}
+
+#[test]
+fn grain_only_shows_the_grain_without_the_picture() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let doc = grain(&[
+        ("strength", ParamValue::Float(1.0)),
+        ("grain_only", ParamValue::Bool(true)),
+    ]);
+    // Two very different pictures have to give the same grain, or it is not
+    // the grain on its own.
+    let dark = render(gpu, &flat(128, 32), &doc);
+    let bright: Vec<u8> = std::iter::repeat_n([230u8, 210, 190, 255], 128 * 32)
+        .flatten()
+        .collect();
+    let bright = render(gpu, &DecodedImage::new(128, 32, bright).unwrap(), &doc);
+
+    let mut worst = 0i32;
+    for y in 0..32 {
+        for x in 0..128 {
+            for c in 0..3 {
+                worst =
+                    worst.max((dark.pixel(x, y)[c] as i32 - bright.pixel(x, y)[c] as i32).abs());
+            }
+        }
+    }
+    assert!(
+        worst <= 6,
+        "the picture showed through Grain Only by {worst} levels"
+    );
+    assert!(
+        spread_of(&dark, 16, 0) > 1.0,
+        "Grain Only showed no grain at all"
+    );
+}
+
+/// Overlay leaves the ends of the range alone and puts the grain in the
+/// midtones, which is where film puts it. Add does not, which is the whole
+/// reason there is a choice.
+#[test]
+fn the_composite_type_decides_where_the_grain_lands() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    // Near black, where the two composites disagree most.
+    let px: Vec<u8> = std::iter::repeat_n([6u8, 6, 6, 255], 256 * 32)
+        .flatten()
+        .collect();
+    let src = DecodedImage::new(256, 32, px).unwrap();
+    let with = |mode: &str| {
+        render(
+            gpu,
+            &src,
+            &grain(&[
+                ("strength", ParamValue::Float(1.0)),
+                ("opacity", ParamValue::Float(1.0)),
+                ("composite", ParamValue::Choice(mode.into())),
+            ]),
+        )
+    };
+    let overlay = spread_of(&with("Overlay"), 16, 0);
+    let add = spread_of(&with("Add"), 16, 0);
+    assert!(
+        add > overlay,
+        "Add should put more grain in the blacks than Overlay ({add:.2} against {overlay:.2})"
+    );
+}
+
+#[test]
+fn an_opacity_of_zero_leaves_the_picture_alone() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = flat(128, 32);
+    let out = render(
+        gpu,
+        &src,
+        &grain(&[
+            ("strength", ParamValue::Float(1.0)),
+            ("opacity", ParamValue::Float(0.0)),
+        ]),
+    );
+    assert!(
+        spread_of(&out, 16, 0) < 0.6,
+        "grain got through at zero opacity"
+    );
+}
+
 #[test]
 fn dehaze_reference() {
     let Some(gpu) = pe_golden::shared_gpu() else {

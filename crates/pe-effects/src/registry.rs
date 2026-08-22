@@ -450,17 +450,63 @@ pub static EFFECTS: &[EffectDef] = &[
         // one that slides a peak around, and it is how a colourist expects to
         // put grain in the midtones only.
         params: &[
+            // Declaration order is the order the panel draws them, and it
+            // follows Resolve's Film Grain: the format and how the grain
+            // layer composites first, then the grain itself, then the
+            // per-channel and per-tone trims.
+            //
+            // Slots follow this order too, so `grain.wgsl` has to move
+            // with it.
             ParamDef {
-                key: "strength",
-                name: "Grain Strength",
-                kind: ParamKind::Float {
-                    min: 0.0,
-                    max: 1.0,
-                    default: 0.35,
-                    neutral: 0.0,
+                key: "preset",
+                name: "Film Grain Presets",
+                kind: ParamKind::Choice {
+                    options: &["16mm", "35mm", "65mm", "Custom"],
+                    default: "35mm",
                 },
                 unit: "",
                 section: "",
+            },
+            ParamDef {
+                key: "composite",
+                name: "Composite Type",
+                kind: ParamKind::Choice {
+                    options: &["Overlay", "Soft Light", "Add", "Screen"],
+                    default: "Overlay",
+                },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "opacity",
+                name: "Opacity",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.5,
+                },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "grain_only",
+                name: "Grain Only",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "texture",
+                name: "Texture",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.704,
+                    neutral: 0.704,
+                },
+                unit: "",
+                section: "Grain Params",
             },
             ParamDef {
                 key: "size",
@@ -474,7 +520,44 @@ pub static EFFECTS: &[EffectDef] = &[
                 // Microns on a 35mm frame, not pixels. This is what makes the
                 // 1200px preview and the 6000px export agree.
                 unit: "µm",
-                section: "",
+                section: "Grain Params",
+            },
+            ParamDef {
+                key: "aspect",
+                name: "Grain Aspect Ratio",
+                kind: ParamKind::Float {
+                    min: 0.25,
+                    max: 4.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Grain Params",
+            },
+            ParamDef {
+                key: "strength",
+                name: "Grain Strength",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.35,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Grain Params",
+            },
+            bipolar("offset", "Offset", 1.0, "").in_section("Grain Params"),
+            ParamDef {
+                key: "symmetry",
+                name: "Symmetry",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.5,
+                },
+                unit: "",
+                section: "Grain Params",
             },
             ParamDef {
                 key: "softness",
@@ -486,10 +569,8 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "",
-                section: "",
+                section: "Grain Params",
             },
-            // Resolve: "At a value of 0, grain is monochrome." A continuous
-            // control, not the boolean we had.
             ParamDef {
                 key: "saturation",
                 name: "Saturation",
@@ -500,14 +581,47 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 1.0,
                 },
                 unit: "",
-                section: "",
+                section: "Grain Params",
             },
-            // "Lower values emphasize lighter grains, higher values emphasize
-            // darker grains."
-            bipolar("offset", "Offset", 1.0, ""),
+            ParamDef {
+                key: "red",
+                name: "Red",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Advanced Controls",
+            },
+            ParamDef {
+                key: "green",
+                name: "Green",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Advanced Controls",
+            },
+            ParamDef {
+                key: "blue",
+                name: "Blue",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Advanced Controls",
+            },
             ParamDef {
                 key: "shadow_gain",
-                name: "Shadow Gain",
+                name: "Shadows",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 2.0,
@@ -519,7 +633,7 @@ pub static EFFECTS: &[EffectDef] = &[
             },
             ParamDef {
                 key: "midtone_gain",
-                name: "Midtone Gain",
+                name: "Midtones",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 2.0,
@@ -531,7 +645,7 @@ pub static EFFECTS: &[EffectDef] = &[
             },
             ParamDef {
                 key: "highlight_gain",
-                name: "Highlight Gain",
+                name: "Highlights",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 2.0,
