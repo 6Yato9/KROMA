@@ -378,21 +378,41 @@ fn read_pins(history: &History, id: RowId) -> Pins {
         .unwrap_or_default()
 }
 
-/// Plot coordinates are CIE xy, which the plot draws directly: x across,
-/// y up, both over 0..0.8 — the range the spectral locus actually occupies.
-const PLOT_SPAN: f32 = 0.8;
+/// Plot coordinates are CIE xy, which the plot draws directly: x across and
+/// y up, over 0..[`PLOT_SPAN`].
+///
+/// The locus reaches 0.7347 in x and **0.8338** in y — that second number is
+/// the one that matters, because a span of 0.8 quietly cut the top off the
+/// curve, and the part it cut was the greenest colour there is. 0.88 clears it
+/// with a little air, which is also how Resolve draws it: the shape sits in
+/// the plot rather than running out of it.
+const PLOT_SPAN: f32 = 0.88;
+
+/// And where it starts. A hair below zero, so the locus has air around it
+/// rather than sitting hard against the frame — at exactly zero the curve
+/// touches the left edge at 500 nm and reads as though it had been cut off.
+const PLOT_MIN: f32 = -0.03;
+
+/// A chromaticity as a fraction across the plot, and back.
+fn plot_fraction(v: f32) -> f32 {
+    ((v - PLOT_MIN) / (PLOT_SPAN - PLOT_MIN)).clamp(0.0, 1.0)
+}
+
+fn plot_value(t: f32) -> f32 {
+    PLOT_MIN + t.clamp(0.0, 1.0) * (PLOT_SPAN - PLOT_MIN)
+}
 
 fn plot_to_screen(rect: egui::Rect, at: [f32; 2]) -> egui::Pos2 {
     egui::pos2(
-        rect.min.x + (at[0] / PLOT_SPAN).clamp(0.0, 1.0) * rect.width(),
-        rect.max.y - (at[1] / PLOT_SPAN).clamp(0.0, 1.0) * rect.height(),
+        rect.min.x + plot_fraction(at[0]) * rect.width(),
+        rect.max.y - plot_fraction(at[1]) * rect.height(),
     )
 }
 
 fn plot_from_screen(rect: egui::Rect, p: egui::Pos2) -> [f32; 2] {
     [
-        ((p.x - rect.min.x) / rect.width().max(1e-4)).clamp(0.0, 1.0) * PLOT_SPAN,
-        ((rect.max.y - p.y) / rect.height().max(1e-4)).clamp(0.0, 1.0) * PLOT_SPAN,
+        plot_value((p.x - rect.min.x) / rect.width().max(1e-4)),
+        plot_value((rect.max.y - p.y) / rect.height().max(1e-4)),
     ]
 }
 
@@ -416,7 +436,7 @@ fn draw_pins(painter: &egui::Painter, rect: egui::Rect, pins: &Pins, chosen: Opt
 
         // How far the pin reaches, which is the control people forget is
         // there until they can see it.
-        let reach = pin.chroma_range / PLOT_SPAN * rect.width();
+        let reach = pin.chroma_range / (PLOT_SPAN - PLOT_MIN) * rect.width();
         painter.circle_stroke(
             from,
             reach.max(2.0),
@@ -576,12 +596,22 @@ const PLOT_TEXELS: usize = 384;
 fn plot_image(plot: Plot, seen: Option<&Distribution>) -> egui::ColorImage {
     let n = PLOT_TEXELS;
     let mut pixels = vec![egui::Color32::BLACK; n * n];
-    let (grid, peak) = match (plot, seen) {
-        (Plot::Chromaticity, Some(d)) => (Some(&d.chromaticity), d.peaks[0]),
-        (Plot::HueSat, Some(d)) => (Some(&d.hue_sat), d.peaks[1]),
-        (Plot::ChromaLuma, Some(d)) => (Some(&d.chroma_luma), d.peaks[2]),
-        (_, None) => (None, 0),
+    let raw = match (plot, seen) {
+        (Plot::Chromaticity, Some(d)) => Some(&d.chromaticity),
+        (Plot::HueSat, Some(d)) => Some(&d.hue_sat),
+        (Plot::ChromaLuma, Some(d)) => Some(&d.chroma_luma),
+        (_, None) => None,
     };
+    // Smoothed before it is drawn. A frame's colours are a *sample* of a
+    // continuous distribution, and at this grid most cells hold nothing or
+    // one: reading between them bilinearly still shows the lattice, because
+    // the lattice is genuinely what the counts look like. Spreading each
+    // sample over its neighbours is the density it was measured from, and it
+    // is the same argument the waveform makes for smoothing its levels.
+    let smoothed = raw.map(|g| blur(g));
+    let peak = smoothed
+        .as_ref()
+        .map_or(0.0, |g| g.iter().cloned().fold(0.0f32, f32::max));
 
     for row in 0..n {
         for col in 0..n {
@@ -590,8 +620,13 @@ fn plot_image(plot: Plot, seen: Option<&Distribution>) -> egui::ColorImage {
             let v = 1.0 - (row as f32 + 0.5) / n as f32;
 
             let base = match plot {
-                Plot::Chromaticity => crate::locus::colour_at(u * PLOT_SPAN, v * PLOT_SPAN)
-                    .map(|c| [c[0] * 0.82, c[1] * 0.82, c[2] * 0.82]),
+                // Dimmer than it could be, on purpose. The plot is a *map*
+                // and the photograph's colours are what you came to look at —
+                // at full brightness the map wins, and Resolve's is noticeably
+                // darker than a chromaticity diagram usually gets drawn for
+                // exactly this reason.
+                Plot::Chromaticity => crate::locus::colour_at(plot_value(u), plot_value(v))
+                    .map(|c| [c[0] * 0.5, c[1] * 0.5, c[2] * 0.5]),
                 Plot::HueSat => {
                     // The square the hue/saturation grid is stored in: the disc
                     // of radius one, and nothing outside it.
@@ -620,16 +655,22 @@ fn plot_image(plot: Plot, seen: Option<&Distribution>) -> egui::ColorImage {
                 }
             };
 
+            // Outside the plot's own shape there is nothing to describe, and
+            // the blur above happily spreads counts past the boundary — which
+            // drew a grey smear along the outside of the horseshoe, a haze
+            // over a region that has no colours in it by definition.
+            let inside = base.is_some();
             let mut rgb = base.unwrap_or([0.03, 0.03, 0.035]);
 
             // The photograph's colours, added rather than mixed: the haze
             // brightens whatever it lands on instead of tinting it, so a dense
             // cloud over a green still reads as a green with a lot of pixels
             // in it.
-            if let Some(grid) = grid
-                && peak > 0
+            if inside
+                && let Some(grid) = smoothed.as_ref()
+                && peak > 0.0
             {
-                let t = sample_grid(grid, u, v) / peak as f32;
+                let t = sample_grid(grid, u, v) / peak;
                 // A fourth root, because a photograph's colours are wildly
                 // unevenly distributed: a sky is thousands of pixels in a
                 // handful of cells and a red jacket is a hundred over dozens.
@@ -654,13 +695,46 @@ fn plot_image(plot: Plot, seen: Option<&Distribution>) -> egui::ColorImage {
     }
 }
 
+/// Spread each cell's count over its neighbours.
+///
+/// Two separable passes with a [1, 4, 6, 4, 1] kernel, which is a five-wide
+/// binomial — near enough a Gaussian for anything drawn at this size, and it
+/// costs two multiply-adds a cell instead of twenty-five.
+fn blur(grid: &[u32]) -> Vec<f32> {
+    const K: [f32; 5] = [1.0, 4.0, 6.0, 4.0, 1.0];
+    const SUM: f32 = 16.0;
+    let mut across = vec![0.0f32; GRID * GRID];
+    for row in 0..GRID {
+        for col in 0..GRID {
+            let mut total = 0.0;
+            for (i, k) in K.iter().enumerate() {
+                let x = (col as isize + i as isize - 2).clamp(0, GRID as isize - 1) as usize;
+                total += grid[row * GRID + x] as f32 * k;
+            }
+            across[row * GRID + col] = total / SUM;
+        }
+    }
+    let mut out = vec![0.0f32; GRID * GRID];
+    for row in 0..GRID {
+        for col in 0..GRID {
+            let mut total = 0.0;
+            for (i, k) in K.iter().enumerate() {
+                let y = (row as isize + i as isize - 2).clamp(0, GRID as isize - 1) as usize;
+                total += across[y * GRID + col] * k;
+            }
+            out[row * GRID + col] = total / SUM;
+        }
+    }
+    out
+}
+
 /// A count grid read at a point, bilinearly.
 ///
 /// Bilinear because the grid is coarser than the image it is being drawn into,
 /// and the whole complaint about the old drawing was that you could see the
 /// cells. Reading between them is what turns a lattice of counts back into the
 /// cloud it was measured from.
-fn sample_grid(grid: &[u32], u: f32, v: f32) -> f32 {
+fn sample_grid(grid: &[f32], u: f32, v: f32) -> f32 {
     let n = GRID as f32;
     // The grid stores v downwards; the plot reads it upwards.
     let fx = (u * n - 0.5).clamp(0.0, n - 1.0);
@@ -668,7 +742,7 @@ fn sample_grid(grid: &[u32], u: f32, v: f32) -> f32 {
     let (x0, y0) = (fx.floor() as usize, fy.floor() as usize);
     let (x1, y1) = ((x0 + 1).min(GRID - 1), (y0 + 1).min(GRID - 1));
     let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
-    let at = |x: usize, y: usize| grid[y * GRID + x] as f32;
+    let at = |x: usize, y: usize| grid[y * GRID + x];
     let top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * tx;
     let bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * tx;
     top + (bottom - top) * ty
@@ -705,6 +779,21 @@ fn draw_plot(ui: &mut egui::Ui, rect: egui::Rect, plot: Plot, seen: Option<&Dist
         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
         egui::Color32::WHITE,
     ));
+
+    // The boundary of colour, traced. It is the one line on this plot that
+    // means something on its own, and without it the shape's edge is only
+    // wherever the colour happens to stop.
+    if plot == Plot::Chromaticity {
+        let points: Vec<egui::Pos2> = crate::locus::LOCUS
+            .iter()
+            .chain(crate::locus::LOCUS.first())
+            .map(|p| plot_to_screen(rect, *p))
+            .collect();
+        ui.painter().add(egui::Shape::line(
+            points,
+            egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(60)),
+        ));
+    }
 
     // A faint grid, so a position can be read rather than only seen.
     let grid = egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(18));
@@ -833,12 +922,16 @@ mod tests {
     #[ignore = "writes files; run by hand when the plots change"]
     fn write_the_plots_out() {
         let dir = std::env::temp_dir();
+        // With a real distribution over it, because an empty plot is the one
+        // state that cannot show whether the haze reads.
+        let chart = pe_io::test_chart(640, 480);
+        let seen = Distribution::from_display(&chart.pixels);
         for (plot, name) in [
             (Plot::Chromaticity, "chromaticity"),
             (Plot::HueSat, "hue_sat"),
             (Plot::ChromaLuma, "chroma_luma"),
         ] {
-            let img = plot_image(plot, None);
+            let img = plot_image(plot, Some(&seen));
             let bytes: Vec<u8> = img
                 .pixels
                 .iter()
