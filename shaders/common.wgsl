@@ -451,6 +451,8 @@ fn film_vignette_t(
     uv: vec2<f32>,
     size: f32,
     softness: f32,
+    /// The shape of the frame the vignette is cut for, as a ratio: 1.0 is a
+    /// circle and 1.78 is 16:9. Resolve's Anamorphism, in Resolve's units.
     anamorphism: f32,
     border_shape: f32,
     rotation: f32,
@@ -466,9 +468,8 @@ fn film_vignette_t(
         d = vec2<f32>(d.x * ca - d.y * sa, d.x * sa + d.y * ca);
     }
 
-    // Anamorphism stretches the shape horizontally. At 0 the vignette follows
-    // the frame; positive values widen it the way an anamorphic lens would.
-    d.x = d.x / max(1.0 + anamorphism, 0.05);
+    // Anamorphism widens the shape the way an anamorphic lens would.
+    d.x = d.x / max(anamorphism, 0.05);
 
     // Border Shape moves between an ellipse and a rectangle by raising the
     // superellipse exponent. p = 2 is an ellipse; large p approaches a box.

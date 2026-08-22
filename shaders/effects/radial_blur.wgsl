@@ -1,7 +1,10 @@
-// Linear. Slots:
-//   0 strength   1 blur_type   2 symmetry   3 quality
-//   4 border     5 centre_x    6 centre_y
-//   7 red        8 green       9 blue
+// Linear. Slots follow the registry's declaration order, which is Resolve's
+// panel order, so that order is load-bearing and this list moves with it:
+//
+//   0 strength   1 blur_type   2 symmetry
+//   3 red        4 green       5 blue
+//   6 centre_x   7 centre_y
+//   8 quality    9 border     10 move_with_sizing
 //
 // Slots follow the order the parameters are declared in the registry, so that
 // order is load-bearing and this comment has to move with it.
@@ -87,19 +90,22 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let strength = slot(0u);
     let blur_type = slot(1u);
     let symmetry = slot(2u);
-    let quality = slot(3u);
-    let border = slot(4u);
-    let centre = vec2<f32>(slot(5u), slot(6u));
-    let channels = vec3<f32>(slot(7u), slot(8u), slot(9u));
+    let channels = vec3<f32>(slot(3u), slot(4u), slot(5u));
+    let centre = vec2<f32>(slot(6u), slot(7u));
+    let quality = slot(8u);
+    let border = slot(9u);
+    let anchored = slot(10u) > 0.5;
 
     if strength <= 0.0 {
         return c;
     }
 
-    // The centre belongs to the photograph, not to the viewport, so it stays
-    // put when the view is panned or zoomed.
+    // Move With Sizing: the centre belongs to the photograph, so it stays put
+    // when the picture is cropped, panned or zoomed. Off, it belongs to the
+    // *output* instead — the blur stays where it is on screen while the
+    // picture moves under it.
     let aspect = frame_aspect();
-    let here = frame_uv(uv);
+    let here = select(uv, frame_uv(uv), anchored);
     // Rotate in square coordinates or a spin on a wide frame comes out as a
     // shear.
     let offset = vec2<f32>((here.x - centre.x) * aspect, here.y - centre.y);
@@ -127,7 +133,8 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
             total = total + w;
             continue;
         }
-        let sample_uv = uv_from_frame(border_uv(frame_point, border));
+        let bounded = border_uv(frame_point, border);
+        let sample_uv = select(bounded, uv_from_frame(bounded), anchored);
         sum = sum + textureSampleLevel(src_texture, src_sampler, sample_uv, 0.0).rgb * w;
         total = total + w;
     }
@@ -135,6 +142,11 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let blurred = sum / max(total, 1e-4);
     // Channel Adjustment mixes each channel between sharp and blurred, so one
     // channel can be smeared while the others stay put — which is how this
-    // effect is used for chromatic streaks rather than plain motion.
-    return mix(c, blurred, clamp(channels, vec3<f32>(0.0), vec3<f32>(1.0)));
+    // effect makes a chromatic streak rather than plain motion.
+    //
+    // The mix is not clamped at one. Resolve's sliders run to two, and past
+    // one the mix extrapolates: the channel is pushed further from the
+    // original than the blur itself went, which is a stronger streak rather
+    // than a dead half of the control.
+    return mix(c, blurred, clamp(channels, vec3<f32>(0.0), vec3<f32>(2.0)));
 }

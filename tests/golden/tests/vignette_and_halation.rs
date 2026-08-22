@@ -81,7 +81,8 @@ fn border_shape_moves_between_an_ellipse_and_a_rectangle() {
             &look(
                 "vignette",
                 &[
-                    ("amount", ParamValue::Float(1.0)),
+                    // Resolve hides these behind Operating Mode.
+                    ("operating_mode", ParamValue::Choice("Advanced".into())),
                     // Size and softness chosen so neither corner saturates to
                     // black — a clipped corner hides the very difference this
                     // test exists to measure.
@@ -122,7 +123,8 @@ fn the_centre_control_moves_the_vignette() {
         &look(
             "vignette",
             &[
-                ("amount", ParamValue::Float(1.0)),
+                // Resolve hides these behind Operating Mode.
+                ("operating_mode", ParamValue::Choice("Advanced".into())),
                 ("size", ParamValue::Float(0.6)),
                 ("center_x", ParamValue::Float(0.2)),
             ],
@@ -152,7 +154,6 @@ fn anamorphism_stretches_the_shape_horizontally() {
             &look(
                 "vignette",
                 &[
-                    ("amount", ParamValue::Float(1.0)),
                     ("size", ParamValue::Float(0.55)),
                     ("anamorphism", ParamValue::Float(anamorphism)),
                 ],
@@ -161,9 +162,10 @@ fn anamorphism_stretches_the_shape_horizontally() {
         out.pixel(193, 100)[0]
     };
     // Widening the shape pulls the darkening away from the horizontal edges.
+    // 1.0 is the circle, as Resolve counts it, not 0.0.
     assert!(
-        sample(0.8) > sample(0.0),
-        "positive anamorphism should lighten the side of the frame"
+        sample(1.8) > sample(1.0),
+        "a wider shape should lighten the side of the frame"
     );
 }
 
@@ -179,7 +181,6 @@ fn the_colour_control_tints_rather_than_only_darkening() {
         &look(
             "vignette",
             &[
-                ("amount", ParamValue::Float(1.0)),
                 ("size", ParamValue::Float(0.6)),
                 ("color", ParamValue::Rgb([0.6, 0.0, 0.0])),
             ],
@@ -205,11 +206,10 @@ fn rotation_turns_a_non_circular_vignette() {
             &look(
                 "vignette",
                 &[
-                    ("amount", ParamValue::Float(1.0)),
                     ("size", ParamValue::Float(0.55)),
                     // A stretched shape has an orientation to rotate; a circle
                     // would look identical at every angle and prove nothing.
-                    ("anamorphism", ParamValue::Float(0.9)),
+                    ("anamorphism", ParamValue::Float(1.9)),
                 ],
             ),
         );
@@ -224,9 +224,10 @@ fn rotation_turns_a_non_circular_vignette() {
         &look(
             "vignette",
             &[
-                ("amount", ParamValue::Float(1.0)),
+                // Resolve hides these behind Operating Mode.
+                ("operating_mode", ParamValue::Choice("Advanced".into())),
                 ("size", ParamValue::Float(0.55)),
-                ("anamorphism", ParamValue::Float(0.9)),
+                ("anamorphism", ParamValue::Float(1.9)),
                 ("rotation", ParamValue::Float(90.0)),
             ],
         ),
@@ -253,11 +254,12 @@ fn vignette_reference() {
         &look(
             "vignette",
             &[
-                ("amount", ParamValue::Float(0.85)),
+                // Resolve hides these behind Operating Mode.
+                ("operating_mode", ParamValue::Choice("Advanced".into())),
                 ("size", ParamValue::Float(0.55)),
                 ("softness", ParamValue::Float(0.4)),
                 ("border_shape", ParamValue::Float(0.35)),
-                ("anamorphism", ParamValue::Float(0.2)),
+                ("anamorphism", ParamValue::Float(1.2)),
             ],
         ),
     );

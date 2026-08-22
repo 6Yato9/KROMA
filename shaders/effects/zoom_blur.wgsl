@@ -1,10 +1,9 @@
-// Linear. Slots:
-//   0 strength   1 blur_type   2 symmetry   3 quality
-//   4 border     5 centre_x    6 centre_y
-//   7 red        8 green       9 blue
+// Linear. Slots follow the registry's declaration order, which is Resolve's
+// panel order, so that order is load-bearing and this list moves with it:
 //
-// Slots follow the order the parameters are declared in the registry, so that
-// order is load-bearing and this comment has to move with it.
+//   0 strength   1 blur_type   2 center_exclusion
+//   3 red        4 green       5 blue
+//   6 centre_x   7 centre_y    8 quality   9 move_with_sizing
 //
 // Radial Blur smears along the arc; this smears along the radius. Everything
 // else about the two is the same, which is why the helpers below are named and
@@ -47,14 +46,9 @@ fn zoom_outside(uv: vec2<f32>) -> bool {
 
 /// Symmetric streaks both inward and outward, which reads as a lens pulling
 /// focus. Asymmetric streaks one way only, which reads as a push.
-fn zoom_position(i: i32, count: i32, symmetry: f32) -> f32 {
-    let t = f32(i) / f32(max(count - 1, 1));
-    if i32(round(symmetry)) == 1 {
-        return t;
-    }
-    return t * 2.0 - 1.0;
-}
-
+/// Realistic falls off toward the ends of the sweep, so the streak fades the
+/// way a real exposure does. Even weights every sample the same, which is
+/// harsher and occasionally what you want.
 fn zoom_weight(t: f32, blur_type: f32) -> f32 {
     if i32(round(blur_type)) == 1 {
         return 1.0;
@@ -65,28 +59,44 @@ fn zoom_weight(t: f32, blur_type: f32) -> f32 {
 fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let strength = slot(0u);
     let blur_type = slot(1u);
-    let symmetry = slot(2u);
-    let quality = slot(3u);
-    let border = slot(4u);
-    let centre = vec2<f32>(slot(5u), slot(6u));
-    let channels = vec3<f32>(slot(7u), slot(8u), slot(9u));
+    let exclusion = clamp(slot(2u), 0.0, 1.0);
+    let channels = vec3<f32>(slot(3u), slot(4u), slot(5u));
+    let centre = vec2<f32>(slot(6u), slot(7u));
+    let quality = slot(8u);
+    let anchored = slot(9u) > 0.5;
 
     if strength <= 0.0 {
         return c;
     }
 
-    // The centre belongs to the photograph, so it stays put when the view is
-    // panned or zoomed.
-    let here = frame_uv(uv);
+    // Move With Sizing: the centre belongs to the photograph, so it stays put
+    // when the picture is cropped, panned or zoomed. Off, it belongs to the
+    // *output* instead — the blur stays where it is on screen while the
+    // picture moves under it.
+    let here = select(uv, frame_uv(uv), anchored);
     let offset = here - centre;
 
     let count = zoom_samples(quality);
-    let reach = strength * ZOOM_MAX_SCALE;
+    // Center Exclusion holds a disc around the centre sharp. The classic use
+    // of a zoom blur is speed behind a subject that is still readable, and
+    // without this the subject sits at the one point where the blur is
+    // weakest rather than at a point where it is absent.
+    var reach = strength * ZOOM_MAX_SCALE;
+    if exclusion > 0.0 {
+        let d = length(offset) * 2.0;
+        reach = reach * smoothstep(exclusion, exclusion + 0.15, d);
+        if reach <= 0.0 {
+            return c;
+        }
+    }
     var sum = vec3<f32>(0.0);
     var total = 0.0;
 
     for (var i = 0; i < count; i = i + 1) {
-        let t = zoom_position(i, count, symmetry);
+        // Spread either side of the pixel: a zoom blur has no Symmetry
+        // control in Resolve, and a one-sided zoom reads as a scale change
+        // rather than as motion.
+        let t = f32(i) / f32(max(count - 1, 1)) * 2.0 - 1.0;
         let w = zoom_weight(t, blur_type);
         // The one line that is not Radial Blur: scale the offset instead of
         // turning it. A pixel far from the centre travels further for the same
@@ -94,15 +104,23 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
         // out from the middle.
         let frame_point = centre + offset * (1.0 + t * reach);
 
-        if zoom_outside(frame_point) && i32(round(border)) == 3 {
-            total = total + w;
-            continue;
-        }
-        let sample_uv = uv_from_frame(zoom_border_uv(frame_point, border));
+        // Border Type is greyed out in Resolve's Zoom Blur — permanently,
+        // not conditionally — so there is no control here and the edge is
+        // simply held, which is what its Replicate would have done anyway.
+        let bounded = clamp(frame_point, vec2<f32>(0.0), vec2<f32>(1.0));
+        let sample_uv = select(bounded, uv_from_frame(bounded), anchored);
         sum = sum + textureSampleLevel(src_texture, src_sampler, sample_uv, 0.0).rgb * w;
         total = total + w;
     }
 
     let blurred = sum / max(total, 1e-4);
-    return mix(c, blurred, clamp(channels, vec3<f32>(0.0), vec3<f32>(1.0)));
+    // Channel Adjustment mixes each channel between sharp and blurred, so one
+    // channel can be smeared while the others stay put — which is how this
+    // effect makes a chromatic streak rather than plain motion.
+    //
+    // The mix is not clamped at one. Resolve's sliders run to two, and past
+    // one the mix extrapolates: the channel is pushed further from the
+    // original than the blur itself went, which is a stronger streak rather
+    // than a dead half of the control.
+    return mix(c, blurred, clamp(channels, vec3<f32>(0.0), vec3<f32>(2.0)));
 }

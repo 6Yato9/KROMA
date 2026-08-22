@@ -305,3 +305,89 @@ a slider, see no change, and conclude the slider is broken rather than switched
 off. `EffectDef::gates` carries these, and the inspector draws a gated row
 dimmed and dead rather than hiding it, because a control that vanishes takes
 the knowledge that it exists with it.
+
+---
+
+## Vignette
+
+| Group | Parameter | Default | Range | Status |
+|---|---|---|---|---|
+| Main | Operating Mode | Basic | Basic / Advanced | confirmed |
+| Shape | Size | 0.500 | 0…1 | confirmed |
+| Shape | Anamorphism | 1.780 | 0…3 | confirmed |
+| Appearance | Softness | 0.500 | 0…1 | confirmed |
+| Appearance | Color | black | — | confirmed |
+| Advanced | Border Shape, Rotation, Center X/Y | — | — | inferred (membership) |
+
+**Anamorphism is a frame ratio**, not an offset — 1.0 is a circle and 1.78 is
+16:9, which is why Resolve starts there. Ours ran −1…1 around zero; that was
+the same control in different clothes and the numbers did not match.
+
+**There is no Amount.** Resolve's Basic set has none: a subtle vignette is a
+lower Global Blend, which is this row's own Blend. Ours also went negative to
+*brighten* the corners, which Resolve cannot do — a real capability, given up
+for the panel matching.
+
+Which controls sit under Advanced is inferred: the screenshot shows Basic, so
+it can only prove what Basic contains. Border Shape, Rotation and Center are
+the plausible remainder, and they are dimmed until the mode is switched.
+
+## Noise Reduction
+
+Only the spatial half. Temporal NR — Frames Either Side, Mo. Est. Type, Motion
+Range, and the entire Temporal Threshold group — compares a frame against its
+neighbours, and a photograph has none.
+
+| Group | Parameter | Default | Range | Status |
+|---|---|---|---|---|
+| Spatial NR | Mode | Faster | Faster / Better / Enhanced | confirmed |
+| Spatial NR | Radius | Small | Small / Medium / Large | confirmed |
+| Spatial Threshold | Split Luma Chroma | off | — | confirmed |
+| Spatial Threshold | Threshold | 0.0 | 0…100 | confirmed |
+| Spatial Threshold | Blend | 0.0 | 0…100 | confirmed |
+
+Radius is a **dropdown**, not a slider — ours was a float. And Split Luma
+Chroma is a real switch: unticked there is one Threshold, ticked there are two.
+Ours always showed both, which meant every user of this effect was looking at a
+control Resolve would have hidden from them.
+
+Blend is how much of the *original* is blended back over the cleaned picture,
+so zero is the full effect. That is why zero is the default: the control that
+decides whether anything happens at all is the Threshold above it.
+
+## Radial Blur and Zoom Blur
+
+| Parameter | Radial | Zoom | Status |
+|---|---|---|---|
+| Smooth Strength / Zoom Amount | 0.400 | 0.400 | confirmed |
+| Blur Type | Realistic | Realistic | confirmed |
+| Blur Symmetry | Symmetric | — | confirmed |
+| Center Exclusion | — | 0.000 | confirmed |
+| Channel Adjustment R/G/B | 1.000, 0…2 | 1.000, 0…2 | confirmed |
+| Center Position X/Y | 0.500 | 0.500 | confirmed |
+| Quality | Better | Better | confirmed |
+| Border Type | Replicate | greyed out | confirmed |
+| Move With Sizing | on | on | confirmed |
+
+The two are nearly the same effect and Resolve gives them nearly the same
+panel, with two differences that are worth honouring rather than smoothing
+over. **Zoom Blur has no Blur Symmetry** — a one-sided zoom reads as a scale
+change rather than as motion. And **its Border Type is greyed out
+permanently**, not conditionally, so there is no such control here; the edge is
+simply held, which is what its Replicate would have done anyway.
+
+**Center Exclusion** was missing from ours and is the control that makes a zoom
+blur usable: it holds a disc around the centre sharp, so the subject sits
+somewhere the blur is *absent* rather than merely weakest.
+
+**Move With Sizing** was also missing. On, the centre belongs to the
+photograph and stays put when the picture is cropped, panned or zoomed; off, it
+belongs to the output and the blur stays where it is on screen while the
+picture moves under it.
+
+Channel Adjustment runs to two, not one. Past one the mix extrapolates — the
+channel is pushed further from the original than the blur itself went — which
+is a stronger streak rather than a dead half of a control.
+
+The Alpha entry in Channel Adjustment and Use Alpha at the bottom are absent
+from both: there is no alpha channel here.

@@ -215,21 +215,30 @@ fn a_zoom_blur_leaves_its_own_centre_alone() {
 /// Asymmetric puts every sample on one side, which reads as a trail rather
 /// than as motion with no direction. If it did not, the two settings would be
 /// the same control.
+///
+/// Radial Blur, not Zoom Blur: Resolve gives Blur Symmetry to the first and
+/// not the second, and a one-sided zoom reads as a scale change rather than as
+/// motion, which is presumably why.
 #[test]
 fn asymmetric_streaks_one_way_and_symmetric_streaks_both() {
     let Some(gpu) = pe_golden::shared_gpu() else {
         return;
     };
-    let src = dot(128, 30);
+    // Off-centre, and the pivot off in a corner. A rotational blur about a
+    // disc's own centre does nothing at all — the disc rotates onto itself —
+    // so a centred dot cannot tell the two settings apart, or anything else.
+    let src = dot(128, 20);
     let with = |mode: &str| {
         render(
             gpu,
             &src,
             &look(
-                "zoom_blur",
+                "radial_blur",
                 &[
                     ("strength", ParamValue::Float(1.0)),
                     ("symmetry", ParamValue::Choice(mode.into())),
+                    ("center_x", ParamValue::Float(0.1)),
+                    ("center_y", ParamValue::Float(0.1)),
                 ],
             ),
         )
@@ -237,18 +246,73 @@ fn asymmetric_streaks_one_way_and_symmetric_streaks_both() {
     let symmetric = with("Symmetric");
     let asymmetric = with("Asymmetric");
 
-    // Outward of the dot, away from the centre.
-    //
-    // Both settings reach *inward* by the same amount: a sample taken further
-    // out pulls that content towards the centre either way. What tells them
-    // apart is the far side — symmetric also samples inward, which throws the
-    // streak outward, and asymmetric never does.
-    let outward = |img: &DecodedImage| (98..124u32).filter(|x| img.pixel(*x, 64)[0] > 20).count();
+    // Where the light ended up, as one number. Symmetric sweeps either side of
+    // each pixel, so the smear is balanced and the centroid stays put;
+    // asymmetric sweeps one way only, so the whole thing shifts along the arc.
+    // Measured rather than sampled along a line, because the arc's direction
+    // depends on where the pivot is and a fixed row would be testing the
+    // geometry of the fixture instead of the control.
+    let centroid = |img: &DecodedImage| -> (f64, f64) {
+        let (mut sx, mut sy, mut total) = (0.0, 0.0, 0.0);
+        for y in 0..img.height {
+            for x in 0..img.width {
+                let v = img.pixel(x, y)[0] as f64;
+                sx += x as f64 * v;
+                sy += y as f64 * v;
+                total += v;
+            }
+        }
+        (sx / total.max(1.0), sy / total.max(1.0))
+    };
+    let (ox, oy) = centroid(&src);
+    let (sx, sy) = centroid(&symmetric);
+    let (ax, ay) = centroid(&asymmetric);
+    let moved = |(x, y): (f64, f64)| ((x - ox).powi(2) + (y - oy).powi(2)).sqrt();
+
+    // Compared rather than checked against zero: a rotational sweep follows an
+    // arc, so even a balanced one pulls the centroid very slightly towards the
+    // chord. That is geometry, not asymmetry. What separates the two settings
+    // is that one trails and the other does not.
     assert!(
-        outward(&symmetric) > outward(&asymmetric) + 2,
-        "symmetric should streak outward and asymmetric should not ({} against {})",
-        outward(&symmetric),
-        outward(&asymmetric)
+        moved((ax, ay)) > moved((sx, sy)) * 3.0,
+        "an asymmetric sweep should trail much further than a symmetric one          ({:.2} against {:.2})",
+        moved((ax, ay)),
+        moved((sx, sy))
+    );
+}
+
+/// Center Exclusion holds a disc around the centre sharp — the point of a zoom
+/// blur is usually speed behind a subject that is still readable.
+#[test]
+fn center_exclusion_keeps_the_middle_sharp() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    // A dot at the centre, which is exactly what the exclusion should protect.
+    let src = dot(128, 30);
+    let with = |exclusion: f32| {
+        render(
+            gpu,
+            &src,
+            &look(
+                "zoom_blur",
+                &[
+                    ("strength", ParamValue::Float(1.0)),
+                    ("center_exclusion", ParamValue::Float(exclusion)),
+                ],
+            ),
+        )
+    };
+    let smeared = with(0.0);
+    let protected = with(0.8);
+
+    // How far the dot's edge has been dragged outward.
+    let reach = |img: &DecodedImage| (79..110u32).filter(|x| img.pixel(*x, 64)[0] > 20).count();
+    assert!(
+        reach(&protected) < reach(&smeared),
+        "the exclusion did not protect the centre ({} against {})",
+        reach(&protected),
+        reach(&smeared)
     );
 }
 
@@ -460,8 +524,11 @@ fn noise_reduction_smooths_the_noise_and_keeps_the_edge() {
         &look(
             "noise_reduction",
             &[
-                ("luma_threshold", ParamValue::Float(0.5)),
-                ("radius", ParamValue::Float(2.0)),
+                // The thresholds read 0 to 100, as Resolve's do, and asking
+                // for the luma one on its own means splitting them.
+                ("split_luma_chroma", ParamValue::Bool(true)),
+                ("luma_threshold", ParamValue::Float(50.0)),
+                ("radius", ParamValue::Choice("Medium".into())),
             ],
         ),
     );
@@ -528,9 +595,10 @@ fn the_two_thresholds_act_on_different_noise() {
         &look(
             "noise_reduction",
             &[
-                ("chroma_threshold", ParamValue::Float(1.0)),
+                ("split_luma_chroma", ParamValue::Bool(true)),
+                ("chroma_threshold", ParamValue::Float(100.0)),
                 ("mode", ParamValue::Choice("Enhanced".into())),
-                ("radius", ParamValue::Float(3.0)),
+                ("radius", ParamValue::Choice("Large".into())),
             ],
         ),
     );
@@ -540,9 +608,10 @@ fn the_two_thresholds_act_on_different_noise() {
         &look(
             "noise_reduction",
             &[
-                ("luma_threshold", ParamValue::Float(1.0)),
+                ("split_luma_chroma", ParamValue::Bool(true)),
+                ("luma_threshold", ParamValue::Float(100.0)),
                 ("mode", ParamValue::Choice("Enhanced".into())),
-                ("radius", ParamValue::Float(3.0)),
+                ("radius", ParamValue::Choice("Large".into())),
             ],
         ),
     );

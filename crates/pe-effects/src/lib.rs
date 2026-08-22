@@ -163,6 +163,10 @@ pub struct Gate {
 pub enum When {
     /// A checkbox that has to be ticked.
     True,
+    /// And one that has to be clear. Resolve's Split Luma Chroma is the case:
+    /// ticking it replaces one Threshold with two, so each set of controls
+    /// gates on the opposite state of the same box.
+    False,
     /// A slider that has to be off zero — an amount of nothing gates the
     /// controls that shape it.
     Positive,
@@ -232,6 +236,7 @@ impl EffectDef {
             .or_else(|| self.param(gate.by).map(|p| p.default_value()));
         match (gate.when, current) {
             (When::True, Some(ParamValue::Bool(v))) => v,
+            (When::False, Some(ParamValue::Bool(v))) => !v,
             (When::Positive, Some(ParamValue::Float(v))) => v.abs() > 1e-6,
             (When::Is(option), Some(ParamValue::Choice(v))) => v == option,
             // A gate naming a parameter that is not there, or one of the wrong

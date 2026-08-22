@@ -342,7 +342,7 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
 
     // Vignette. Light falloff, so it multiplies light rather than levels.
     if slot(21u) > 0.5 && slot(22u) > 0.0 {
-        let t_v = film_vignette_t(uv, slot(23u), 0.45, 0.0, 0.0, 0.0, vec2<f32>(0.5));
+        let t_v = film_vignette_t(uv, slot(23u), 0.45, 1.0, 0.0, 0.0, vec2<f32>(0.5));
         let lin = cct_decode(out) * (1.0 - clamp(t_v * slot(22u), 0.0, 1.0));
         out = cct_encode(max(lin, vec3<f32>(0.0)));
     }

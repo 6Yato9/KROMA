@@ -1,14 +1,13 @@
-// Linear. Slots:
-//   0 mode      1 radius     2 luma_threshold   3 chroma_threshold
-//   4 blend
+// Linear. Slots follow the registry's declaration order, which is Resolve's
+// panel order, so that order is load-bearing and this list moves with it:
 //
-// Slots follow the order the parameters are declared in the registry, so that
-// order is load-bearing and this comment has to move with it.
+//   0 mode  1 radius  2 split_luma_chroma  3 threshold
+//   4 luma_threshold  5 chroma_threshold   6 blend
 //
 // Resolve's Noise Reduction has a temporal half and a spatial half. The
-// temporal half compares a frame against its neighbours, and there is no next
-// frame here, so this is the spatial half — which is the one that works on a
-// photograph anyway.
+// temporal half compares a frame against its neighbours, and a photograph has
+// no neighbours, so this is the spatial half — which is the one that works on
+// a still anyway.
 //
 // It is an edge-preserving average: each sample is weighted both by how far
 // away it is and by how different it is, so a neighbour on the other side of
@@ -16,42 +15,56 @@
 // from blur. A plain average removes the noise *and* the picture; this removes
 // what does not agree with its surroundings and leaves what does.
 //
-// Luma and chroma get separate thresholds because they carry different noise.
-// Chroma noise is coarse, ugly, and almost free to remove — the eye has little
-// colour acuity, so it can be smoothed hard before anything is lost. Luma
-// noise is fine and sits on top of real detail, so the same treatment would
-// take the detail with it. One threshold for both would mean choosing which of
-// those two mistakes to make.
-
-const NR_SAMPLES: i32 = 16;
+// Luma and chroma get separate thresholds when Split Luma Chroma is on,
+// because they carry different noise. Chroma noise is coarse, ugly, and almost
+// free to remove — the eye has little colour acuity, so it can be smoothed
+// hard before anything is lost. Luma noise is fine and sits on top of real
+// detail, so the same treatment would take the detail with it. One threshold
+// for both means choosing which of those two mistakes to make.
 
 /// Radius as a fraction of the frame, per setting.
 ///
 /// A fraction rather than pixels, for the same reason grain is measured in
 /// microns: a 1200px preview and a 6000px export have to smooth the same real
 /// detail, or what you approve is not what you get.
-fn nr_radius(mode: f32) -> f32 {
+fn nr_radius(radius: f32) -> f32 {
+    let i = i32(round(radius));
+    switch i {
+        case 1: { return 0.0030; }  // Medium
+        case 2: { return 0.0055; }  // Large
+        default: { return 0.0016; } // Small
+    }
+}
+
+/// Samples per Mode. The cost of this effect is entirely here.
+fn nr_samples(mode: f32) -> i32 {
     let i = i32(round(mode));
     switch i {
-        case 0: { return 0.0016; }  // Faster
-        case 2: { return 0.0055; }  // Enhanced
-        default: { return 0.0030; } // Better
+        case 1: { return 16; }  // Better
+        case 2: { return 28; }  // Enhanced
+        default: { return 8; }  // Faster
     }
 }
 
 fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let mode = slot(0u);
-    let radius_scale = max(slot(1u), 0.0);
-    let luma_threshold = slot(2u);
-    let chroma_threshold = slot(3u);
-    let blend = slot(4u);
+    let radius = slot(1u);
+    let split = slot(2u) > 0.5;
+    // The controls read 0 to 100, as Resolve's do; the maths wants 0 to 1.
+    let single = slot(3u) * 0.01;
+    let luma_threshold = select(single, slot(4u) * 0.01, split);
+    let chroma_threshold = select(single, slot(5u) * 0.01, split);
+    // How much of the original comes back over the cleaned picture. Zero is
+    // the full effect, which is why zero is Resolve's default.
+    let restore = clamp(slot(6u) * 0.01, 0.0, 1.0);
 
-    if blend <= 0.0 || (luma_threshold <= 0.0 && chroma_threshold <= 0.0) {
+    if restore >= 1.0 || (luma_threshold <= 0.0 && chroma_threshold <= 0.0) {
         return c;
     }
 
     let aspect = frame_aspect();
-    let r_uv = frame_to_uv(nr_radius(mode) * radius_scale);
+    let r_uv = frame_to_uv(nr_radius(radius));
+    let count = nr_samples(mode);
     let here_luma = luma(c);
 
     // Two separate averages. They share the sampling — reading the texture
@@ -62,11 +75,11 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     var chroma_sum = vec3<f32>(0.0);
     var chroma_weight = 0.0;
 
-    for (var i = 0; i < NR_SAMPLES; i = i + 1) {
+    for (var i = 0; i < count; i = i + 1) {
         let fi = f32(i);
         // Golden angle, radius by sqrt: even coverage at any sample count.
         let angle = fi * 2.39996323;
-        let rad = sqrt((fi + 0.5) / f32(NR_SAMPLES)) * r_uv;
+        let rad = sqrt((fi + 0.5) / f32(count)) * r_uv;
         let offset = vec2<f32>(cos(angle) * rad / max(aspect, 1e-4), sin(angle) * rad);
         let s = textureSampleLevel(src_texture, src_sampler, uv + offset, 0.0).rgb;
 
@@ -102,5 +115,5 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     }
 
     let cleaned = vec3<f32>(out_luma) + out_chroma;
-    return mix(c, cleaned, clamp(blend, 0.0, 1.0));
+    return mix(cleaned, c, restore);
 }

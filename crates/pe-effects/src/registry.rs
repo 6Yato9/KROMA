@@ -1074,25 +1074,34 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "vignette",
         spatial: true,
         derived_slots: 0,
-        gates: &[],
-        // Follows Resolve's Vignette: a Basic set (Size, Anamorphism,
-        // Softness, Color) and an Advanced set (Border Shape, Rotation,
-        // Center). Two of Resolve's controls are deliberately not here —
-        // Composite Type is the row's blend mode, and Transparency is folded
-        // into Amount, which is bipolar and so can brighten the corners too.
+        gates: &[Gate {
+            by: "operating_mode",
+            when: When::Is("Advanced"),
+            params: &["border_shape", "rotation", "center_x", "center_y"],
+        }],
         params: &[
+            // Resolve's panel, group for group. Two of its controls are absent on
+            // purpose: Composite Type is the row's blend mode, which every effect
+            // here already carries, and Use Alpha needs an alpha channel we do not.
+            //
+            // Amount is gone. Resolve's Basic set has no such control — the Global
+            // Blend at the bottom of its panel is how you get a subtle vignette,
+            // and that is this row's own Blend. Ours could also go *negative* to
+            // brighten the corners, which is a real capability and not one Resolve
+            // has; it is the price of the panel matching.
             ParamDef {
-                key: "amount",
-                name: "Amount",
-                kind: ParamKind::Float {
-                    min: -1.0,
-                    max: 1.0,
-                    default: 0.4,
-                    neutral: 0.0,
+                key: "operating_mode",
+                name: "Operating Mode",
+                kind: ParamKind::Choice {
+                    options: &["Basic", "Advanced"],
+                    default: "Basic",
                 },
                 unit: "",
                 section: "",
             },
+            // Neutral is zero, not the default. A vignette of no size does nothing,
+            // which is what makes an all-neutral row skippable — without that the
+            // renderer would have to run a pass to draw a vignette nobody asked for.
             ParamDef {
                 key: "size",
                 name: "Size",
@@ -1100,15 +1109,25 @@ pub static EFFECTS: &[EffectDef] = &[
                     min: 0.0,
                     max: 1.0,
                     default: 0.5,
-                    neutral: 0.5,
+                    neutral: 0.0,
                 },
                 unit: "",
-                section: "",
+                section: "Shape",
             },
-            // Stretches the shape horizontally. At 0 the vignette follows
-            // the frame; positive values widen it the way an anamorphic lens
-            // would.
-            bipolar("anamorphism", "Anamorphism", 1.0, ""),
+            // The shape of the frame the vignette is cut for, as a ratio: 1.0 is a
+            // circle and 1.78 is 16:9, which is why that is where Resolve starts.
+            ParamDef {
+                key: "anamorphism",
+                name: "Anamorphism",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 3.0,
+                    default: 1.78,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Shape",
+            },
             ParamDef {
                 key: "softness",
                 name: "Softness",
@@ -1119,10 +1138,20 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.5,
                 },
                 unit: "",
-                section: "",
+                section: "Appearance",
             },
-            // 0 is an ellipse, 1 approaches a rectangle, by way of a
-            // superellipse exponent.
+            ParamDef {
+                key: "color",
+                name: "Color",
+                kind: ParamKind::Rgb {
+                    default: [0.0, 0.0, 0.0],
+                },
+                unit: "",
+                section: "Appearance",
+            },
+            // Resolve's Advanced set. Dimmed in Basic, as they are there — kept
+            // visible rather than hidden, so switching mode is a discovery rather
+            // than a surprise.
             ParamDef {
                 key: "border_shape",
                 name: "Border Shape",
@@ -1133,7 +1162,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "",
-                section: "Shape",
+                section: "Advanced",
             },
             ParamDef {
                 key: "rotation",
@@ -1145,7 +1174,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "°",
-                section: "Shape",
+                section: "Advanced",
             },
             ParamDef {
                 key: "center_x",
@@ -1157,7 +1186,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.5,
                 },
                 unit: "",
-                section: "Center Position",
+                section: "Advanced",
             },
             ParamDef {
                 key: "center_y",
@@ -1169,18 +1198,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.5,
                 },
                 unit: "",
-                section: "Center Position",
-            },
-            ParamDef {
-                key: "color",
-                name: "Color",
-                // Black is the classic darkening; any other colour tints the
-                // border instead.
-                kind: ParamKind::Rgb {
-                    default: [0.0, 0.0, 0.0],
-                },
-                unit: "",
-                section: "",
+                section: "Advanced",
             },
         ],
     },
@@ -2116,6 +2134,9 @@ pub static EFFECTS: &[EffectDef] = &[
         derived_slots: 0,
         gates: &[],
         params: &[
+            // Resolve's panel. Alpha is absent from Channel Adjustment and Use
+            // Alpha from the bottom, because there is no alpha channel here;
+            // Global Blend is the row's own Blend.
             ParamDef {
                 key: "strength",
                 name: "Smooth Strength",
@@ -2148,25 +2169,46 @@ pub static EFFECTS: &[EffectDef] = &[
                 unit: "",
                 section: "",
             },
+            // Each channel mixes between sharp and blurred on its own, which is how
+            // this effect makes a chromatic streak rather than plain motion. The
+            // range runs past one on purpose, as Resolve's does: above it the mix
+            // extrapolates, pushing the channel further from the original than the
+            // blur itself went.
             ParamDef {
-                key: "quality",
-                name: "Quality",
-                kind: ParamKind::Choice {
-                    options: &["Faster", "Better", "Best"],
-                    default: "Better",
+                key: "red",
+                name: "Red",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 1.0,
+                    neutral: 1.0,
                 },
                 unit: "",
-                section: "Advanced Controls",
+                section: "Channel Adjustment",
             },
             ParamDef {
-                key: "border",
-                name: "Border Type",
-                kind: ParamKind::Choice {
-                    options: &["Replicate", "Mirror", "Wrap", "Black"],
-                    default: "Replicate",
+                key: "green",
+                name: "Green",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 1.0,
+                    neutral: 1.0,
                 },
                 unit: "",
-                section: "Advanced Controls",
+                section: "Channel Adjustment",
+            },
+            ParamDef {
+                key: "blue",
+                name: "Blue",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Channel Adjustment",
             },
             ParamDef {
                 key: "center_x",
@@ -2193,40 +2235,38 @@ pub static EFFECTS: &[EffectDef] = &[
                 section: "Center Position",
             },
             ParamDef {
-                key: "red",
-                name: "Red",
-                kind: ParamKind::Float {
-                    min: 0.0,
-                    max: 1.0,
-                    default: 1.0,
-                    neutral: 1.0,
+                key: "quality",
+                name: "Quality",
+                kind: ParamKind::Choice {
+                    options: &["Faster", "Better", "Best"],
+                    default: "Better",
                 },
                 unit: "",
-                section: "Channel Adjustment",
+                section: "Advanced Controls",
             },
+            // What to read where a sample lands outside the picture. It matters
+            // more than it looks: a rotational blur near a corner reaches past the
+            // edge on every sample, so this is most of what the corner becomes.
             ParamDef {
-                key: "green",
-                name: "Green",
-                kind: ParamKind::Float {
-                    min: 0.0,
-                    max: 1.0,
-                    default: 1.0,
-                    neutral: 1.0,
+                key: "border",
+                name: "Border Type",
+                kind: ParamKind::Choice {
+                    options: &["Replicate", "Mirror", "Wrap", "Black"],
+                    default: "Replicate",
                 },
                 unit: "",
-                section: "Channel Adjustment",
+                section: "Advanced Controls",
             },
+            // The centre belongs to the photograph, so it stays put when the picture
+            // is cropped, panned or zoomed. Turn it off and the centre belongs to the
+            // *output* instead: the blur stays where it is on screen while the picture
+            // moves under it.
             ParamDef {
-                key: "blue",
-                name: "Blue",
-                kind: ParamKind::Float {
-                    min: 0.0,
-                    max: 1.0,
-                    default: 1.0,
-                    neutral: 1.0,
-                },
+                key: "move_with_sizing",
+                name: "Move With Sizing",
+                kind: ParamKind::Bool { default: true },
                 unit: "",
-                section: "Channel Adjustment",
+                section: "Advanced Controls",
             },
         ],
     },
@@ -2241,9 +2281,13 @@ pub static EFFECTS: &[EffectDef] = &[
         derived_slots: 0,
         gates: &[],
         params: &[
+            // Resolve's panel. Two of Radial Blur's controls are absent because
+            // they are absent there too: Zoom Blur has no Blur Symmetry, and its
+            // Border Type is greyed out — permanently, not conditionally — so
+            // carrying it would be carrying a control that cannot do anything.
             ParamDef {
                 key: "strength",
-                name: "Smooth Strength",
+                name: "Zoom Amount",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
@@ -2263,35 +2307,62 @@ pub static EFFECTS: &[EffectDef] = &[
                 unit: "",
                 section: "",
             },
+            // A disc around the centre that stays sharp. The classic use of a zoom
+            // blur is speed behind a subject that is still readable, and without
+            // this the subject sits at the one point where the blur is weakest
+            // rather than at a point where it is absent.
             ParamDef {
-                key: "symmetry",
-                name: "Blur Symmetry",
-                kind: ParamKind::Choice {
-                    options: &["Symmetric", "Asymmetric"],
-                    default: "Symmetric",
+                key: "center_exclusion",
+                name: "Center Exclusion",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
                 },
                 unit: "",
                 section: "",
             },
+            // Each channel mixes between sharp and blurred on its own, which is how
+            // this effect makes a chromatic streak rather than plain motion. The
+            // range runs past one on purpose, as Resolve's does: above it the mix
+            // extrapolates, pushing the channel further from the original than the
+            // blur itself went.
             ParamDef {
-                key: "quality",
-                name: "Quality",
-                kind: ParamKind::Choice {
-                    options: &["Faster", "Better", "Best"],
-                    default: "Better",
+                key: "red",
+                name: "Red",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 1.0,
+                    neutral: 1.0,
                 },
                 unit: "",
-                section: "Advanced Controls",
+                section: "Channel Adjustment",
             },
             ParamDef {
-                key: "border",
-                name: "Border Type",
-                kind: ParamKind::Choice {
-                    options: &["Replicate", "Mirror", "Wrap", "Black"],
-                    default: "Replicate",
+                key: "green",
+                name: "Green",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 1.0,
+                    neutral: 1.0,
                 },
                 unit: "",
-                section: "Advanced Controls",
+                section: "Channel Adjustment",
+            },
+            ParamDef {
+                key: "blue",
+                name: "Blue",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Channel Adjustment",
             },
             ParamDef {
                 key: "center_x",
@@ -2318,40 +2389,25 @@ pub static EFFECTS: &[EffectDef] = &[
                 section: "Center Position",
             },
             ParamDef {
-                key: "red",
-                name: "Red",
-                kind: ParamKind::Float {
-                    min: 0.0,
-                    max: 1.0,
-                    default: 1.0,
-                    neutral: 1.0,
+                key: "quality",
+                name: "Quality",
+                kind: ParamKind::Choice {
+                    options: &["Faster", "Better", "Best"],
+                    default: "Better",
                 },
                 unit: "",
-                section: "Channel Adjustment",
+                section: "Advanced Controls",
             },
+            // The centre belongs to the photograph, so it stays put when the picture
+            // is cropped, panned or zoomed. Turn it off and the centre belongs to the
+            // *output* instead: the blur stays where it is on screen while the picture
+            // moves under it.
             ParamDef {
-                key: "green",
-                name: "Green",
-                kind: ParamKind::Float {
-                    min: 0.0,
-                    max: 1.0,
-                    default: 1.0,
-                    neutral: 1.0,
-                },
+                key: "move_with_sizing",
+                name: "Move With Sizing",
+                kind: ParamKind::Bool { default: true },
                 unit: "",
-                section: "Channel Adjustment",
-            },
-            ParamDef {
-                key: "blue",
-                name: "Blue",
-                kind: ParamKind::Float {
-                    min: 0.0,
-                    max: 1.0,
-                    default: 1.0,
-                    neutral: 1.0,
-                },
-                unit: "",
-                section: "Channel Adjustment",
+                section: "Advanced Controls",
             },
         ],
     },
@@ -2367,42 +2423,79 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "noise_reduction",
         spatial: true,
         derived_slots: 0,
-        gates: &[],
+        gates: &[
+            Gate {
+                by: "split_luma_chroma",
+                when: When::True,
+                params: &["luma_threshold", "chroma_threshold"],
+            },
+            Gate {
+                by: "split_luma_chroma",
+                when: When::False,
+                params: &["threshold"],
+            },
+        ],
         params: &[
+            // Resolve's spatial half. The temporal half — Frames Either Side, Mo.
+            // Est. Type, Motion Range, and the whole Temporal Threshold group —
+            // compares a frame against its neighbours, and a photograph has no
+            // neighbours. Same reasoning that dropped Film Damage's Changing Dirt
+            // and Film Look Creator's Gate Weave.
             ParamDef {
                 key: "mode",
                 name: "Mode",
                 kind: ParamKind::Choice {
                     options: &["Faster", "Better", "Enhanced"],
-                    default: "Better",
+                    default: "Faster",
                 },
                 unit: "",
-                section: "",
+                section: "Spatial NR",
             },
+            // A dropdown in Resolve, not a slider, and the sizes are fractions of
+            // the frame rather than pixels — a 1200px preview and a 6000px export
+            // have to smooth the same real detail or what you approve is not what
+            // you get.
             ParamDef {
                 key: "radius",
                 name: "Radius",
-                kind: ParamKind::Float {
-                    min: 0.0,
-                    max: 3.0,
-                    default: 1.0,
-                    neutral: 1.0,
+                kind: ParamKind::Choice {
+                    options: &["Small", "Medium", "Large"],
+                    default: "Small",
                 },
                 unit: "",
-                section: "",
+                section: "Spatial NR",
             },
-            // Two thresholds, because luma and chroma carry different
-            // noise. Chroma noise is coarse and almost free to remove — the
-            // eye has little colour acuity — while luma noise is fine and
-            // sits on top of real detail, so the same treatment would take
-            // the detail with it. One threshold for both would mean choosing
-            // which of those two mistakes to make.
+            // Luma and chroma carry different noise. Chroma noise is coarse, ugly
+            // and almost free to remove — the eye has little colour acuity, so it
+            // can be smoothed hard before anything is lost. Luma noise is fine and
+            // sits on top of real detail, so the same treatment takes the detail
+            // with it. One threshold for both means choosing which of those two
+            // mistakes to make, which is exactly why this box exists.
+            ParamDef {
+                key: "split_luma_chroma",
+                name: "Split Luma Chroma",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+                section: "Spatial Threshold",
+            },
+            ParamDef {
+                key: "threshold",
+                name: "Threshold",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 100.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Spatial Threshold",
+            },
             ParamDef {
                 key: "luma_threshold",
                 name: "Luma Threshold",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 1.0,
+                    max: 100.0,
                     default: 0.0,
                     neutral: 0.0,
                 },
@@ -2414,24 +2507,27 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Chroma Threshold",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 1.0,
+                    max: 100.0,
                     default: 0.0,
                     neutral: 0.0,
                 },
                 unit: "",
                 section: "Spatial Threshold",
             },
+            // How much of the original is blended back over the cleaned picture.
+            // Zero is the full effect, which is why zero is the default: the
+            // control that decides whether anything happens is the threshold above.
             ParamDef {
                 key: "blend",
                 name: "Blend",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 1.0,
-                    default: 1.0,
+                    max: 100.0,
+                    default: 0.0,
                     neutral: 0.0,
                 },
                 unit: "",
-                section: "",
+                section: "Spatial Threshold",
             },
         ],
     },
@@ -3192,7 +3288,7 @@ mod tests {
             for gate in e.gates {
                 let kind = e.param(gate.by).unwrap().kind;
                 let ok = match gate.when {
-                    When::True => matches!(kind, ParamKind::Bool { .. }),
+                    When::True | When::False => matches!(kind, ParamKind::Bool { .. }),
                     When::Positive => matches!(kind, ParamKind::Float { .. }),
                     When::Is(option) => match kind {
                         ParamKind::Choice { options, .. } => options.contains(&option),
