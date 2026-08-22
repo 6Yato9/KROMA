@@ -508,7 +508,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Film Grain Presets",
                 kind: ParamKind::Choice {
                     options: &["16mm", "35mm", "65mm", "Custom"],
-                    default: "35mm",
+                    default: "16mm",
                 },
                 unit: "",
                 section: "",
@@ -558,10 +558,10 @@ pub static EFFECTS: &[EffectDef] = &[
                 key: "size",
                 name: "Grain Size",
                 kind: ParamKind::Float {
-                    min: 0.5,
-                    max: 8.0,
-                    default: 2.0,
-                    neutral: 2.0,
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.66,
+                    neutral: 0.66,
                 },
                 // Microns on a 35mm frame, not pixels. This is what makes the
                 // 1200px preview and the 6000px export agree.
@@ -586,13 +586,24 @@ pub static EFFECTS: &[EffectDef] = &[
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
-                    default: 0.35,
+                    default: 0.149,
                     neutral: 0.0,
                 },
                 unit: "",
                 section: "Grain Params",
             },
-            bipolar("offset", "Offset", 1.0, "").in_section("Grain Params"),
+            ParamDef {
+                key: "offset",
+                name: "Offset",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.482,
+                    neutral: 0.5,
+                },
+                unit: "",
+                section: "Grain Params",
+            },
             ParamDef {
                 key: "symmetry",
                 name: "Symmetry",
@@ -611,7 +622,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
-                    default: 0.0,
+                    default: 0.298,
                     neutral: 0.0,
                 },
                 unit: "",
@@ -622,9 +633,9 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Saturation",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 2.0,
-                    default: 1.0,
-                    neutral: 1.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
                 },
                 unit: "",
                 section: "Grain Params",
@@ -670,9 +681,9 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Shadows",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 2.0,
-                    default: 1.0,
-                    neutral: 1.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.5,
                 },
                 unit: "",
                 section: "Advanced Controls",
@@ -682,9 +693,9 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Midtones",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 2.0,
-                    default: 1.0,
-                    neutral: 1.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.5,
                 },
                 unit: "",
                 section: "Advanced Controls",
@@ -694,9 +705,9 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Highlights",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 2.0,
-                    default: 1.0,
-                    neutral: 1.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.5,
                 },
                 unit: "",
                 section: "Advanced Controls",
@@ -1006,7 +1017,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 kind: ParamKind::Float {
                     min: -1.0,
                     max: 1.0,
-                    default: 0.8,
+                    default: 0.209,
                     neutral: 0.0,
                 },
                 unit: "",
@@ -1015,10 +1026,12 @@ pub static EFFECTS: &[EffectDef] = &[
             ParamDef {
                 key: "haze_color",
                 name: "Haze Color",
-                // Slightly blue-grey: the usual colour of atmospheric
-                // scattering, and a sane start before sampling the image.
+                // White, as Resolve ships it. Atmospheric scattering is
+                // usually a little blue-grey, but starting neutral means the
+                // control removes whatever haze the picture has rather than
+                // the haze the default assumed it had.
                 kind: ParamKind::Rgb {
-                    default: [0.78, 0.82, 0.90],
+                    default: [1.0, 1.0, 1.0],
                 },
                 unit: "",
                 section: "",
@@ -1101,7 +1114,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
-                    default: 0.25,
+                    default: 0.0,
                     neutral: 0.0,
                 },
                 unit: "",
@@ -1109,15 +1122,37 @@ pub static EFFECTS: &[EffectDef] = &[
             },
             // Positive warms, simulating a projector bulb running hot;
             // positive tint yellows, simulating dye failure.
-            bipolar("temp_shift", "Temp. Shift", 1.0, ""),
-            bipolar("tint_shift", "Tint Shift", 1.0, ""),
+            ParamDef {
+                key: "temp_shift",
+                name: "Temp. Shift",
+                kind: ParamKind::Float {
+                    min: -1.0,
+                    max: 1.0,
+                    default: 0.25,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "tint_shift",
+                name: "Tint Shift",
+                kind: ParamKind::Float {
+                    min: -1.0,
+                    max: 1.0,
+                    default: -0.1,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "",
+            },
             ParamDef {
                 key: "focal_factor",
                 name: "Focal Factor",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
-                    default: 0.0,
+                    default: 0.1,
                     neutral: 0.0,
                 },
                 unit: "",
@@ -1129,7 +1164,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
-                    default: 0.5,
+                    default: 0.25,
                     neutral: 0.5,
                 },
                 unit: "",
@@ -1139,7 +1174,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 key: "tilt_amount",
                 name: "Tilt Amount",
                 kind: ParamKind::Float {
-                    min: 0.0,
+                    min: -1.0,
                     max: 1.0,
                     default: 0.0,
                     neutral: 0.0,
@@ -1151,10 +1186,10 @@ pub static EFFECTS: &[EffectDef] = &[
                 key: "tilt_angle",
                 name: "Tilt Angle",
                 kind: ParamKind::Float {
-                    min: 0.0,
-                    max: 360.0,
-                    default: 90.0,
-                    neutral: 90.0,
+                    min: -180.0,
+                    max: 180.0,
+                    default: 0.0,
+                    neutral: 0.0,
                 },
                 unit: "°",
                 section: "Add Vignetting",
@@ -1164,8 +1199,8 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Dirt Density",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 1.0,
-                    default: 0.15,
+                    max: 10.0,
+                    default: 2.0,
                     neutral: 0.0,
                 },
                 unit: "",
@@ -1175,10 +1210,10 @@ pub static EFFECTS: &[EffectDef] = &[
                 key: "dirt_size",
                 name: "Dirt Size",
                 kind: ParamKind::Float {
-                    min: 0.05,
-                    max: 4.0,
-                    default: 1.0,
-                    neutral: 1.0,
+                    min: 0.0,
+                    max: 8.0,
+                    default: 1.758,
+                    neutral: 1.758,
                 },
                 unit: "",
                 section: "Add Dirt",
@@ -1188,9 +1223,9 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Dirt Blur",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 2.0,
-                    default: 0.4,
-                    neutral: 0.4,
+                    max: 1.0,
+                    default: 0.245,
+                    neutral: 0.245,
                 },
                 unit: "",
                 section: "Add Dirt",
@@ -1200,9 +1235,9 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Dirt Seed",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 999.0,
-                    default: 7.0,
-                    neutral: 7.0,
+                    max: 10.0,
+                    default: 5.0,
+                    neutral: 5.0,
                 },
                 unit: "",
                 section: "Add Dirt",
@@ -1247,7 +1282,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 // scratch on the negative. Per scratch, because a real strip
                 // of film has both.
                 kind: ParamKind::Rgb {
-                    default: [1.0, 1.0, 1.0],
+                    default: [0.0, 0.0, 0.0],
                 },
                 unit: "",
                 section: "Add Scratch 1",
@@ -1258,8 +1293,8 @@ pub static EFFECTS: &[EffectDef] = &[
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
-                    default: 0.2,
-                    neutral: 0.2,
+                    default: 0.159,
+                    neutral: 0.159,
                 },
                 unit: "",
                 section: "Add Scratch 1",
@@ -1269,9 +1304,9 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Scratch Width",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 0.05,
-                    default: 0.002,
-                    neutral: 0.002,
+                    max: 0.5,
+                    default: 0.044,
+                    neutral: 0.044,
                 },
                 unit: "",
                 section: "Add Scratch 1",
@@ -1293,9 +1328,9 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Scratch Blur",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 2.0,
-                    default: 0.3,
-                    neutral: 0.3,
+                    max: 1.0,
+                    default: 0.35,
+                    neutral: 0.35,
                 },
                 unit: "",
                 section: "Add Scratch 1",
@@ -1314,7 +1349,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 // scratch on the negative. Per scratch, because a real strip
                 // of film has both.
                 kind: ParamKind::Rgb {
-                    default: [1.0, 1.0, 1.0],
+                    default: [0.0, 0.0, 0.0],
                 },
                 unit: "",
                 section: "Add Scratch 2",
@@ -1336,9 +1371,9 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Scratch Width",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 0.05,
-                    default: 0.002,
-                    neutral: 0.002,
+                    max: 0.5,
+                    default: 0.044,
+                    neutral: 0.044,
                 },
                 unit: "",
                 section: "Add Scratch 2",
@@ -1360,9 +1395,9 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Scratch Blur",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 2.0,
-                    default: 0.3,
-                    neutral: 0.3,
+                    max: 1.0,
+                    default: 0.35,
+                    neutral: 0.35,
                 },
                 unit: "",
                 section: "Add Scratch 2",
@@ -1381,7 +1416,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 // scratch on the negative. Per scratch, because a real strip
                 // of film has both.
                 kind: ParamKind::Rgb {
-                    default: [1.0, 1.0, 1.0],
+                    default: [0.0, 0.0, 0.0],
                 },
                 unit: "",
                 section: "Add Scratch 3",
@@ -1403,9 +1438,9 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Scratch Width",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 0.05,
-                    default: 0.002,
-                    neutral: 0.002,
+                    max: 0.5,
+                    default: 0.044,
+                    neutral: 0.044,
                 },
                 unit: "",
                 section: "Add Scratch 3",
@@ -1427,9 +1462,9 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Scratch Blur",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 2.0,
-                    default: 0.3,
-                    neutral: 0.3,
+                    max: 1.0,
+                    default: 0.35,
+                    neutral: 0.35,
                 },
                 unit: "",
                 section: "Add Scratch 3",
@@ -1448,7 +1483,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 // scratch on the negative. Per scratch, because a real strip
                 // of film has both.
                 kind: ParamKind::Rgb {
-                    default: [1.0, 1.0, 1.0],
+                    default: [0.0, 0.0, 0.0],
                 },
                 unit: "",
                 section: "Add Scratch 4",
@@ -1470,9 +1505,9 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Scratch Width",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 0.05,
-                    default: 0.002,
-                    neutral: 0.002,
+                    max: 0.5,
+                    default: 0.044,
+                    neutral: 0.044,
                 },
                 unit: "",
                 section: "Add Scratch 4",
@@ -1494,9 +1529,9 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Scratch Blur",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 2.0,
-                    default: 0.3,
-                    neutral: 0.3,
+                    max: 1.0,
+                    default: 0.35,
+                    neutral: 0.35,
                 },
                 unit: "",
                 section: "Add Scratch 4",
@@ -1515,7 +1550,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 // scratch on the negative. Per scratch, because a real strip
                 // of film has both.
                 kind: ParamKind::Rgb {
-                    default: [1.0, 1.0, 1.0],
+                    default: [0.0, 0.0, 0.0],
                 },
                 unit: "",
                 section: "Add Scratch 5",
@@ -1537,9 +1572,9 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Scratch Width",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 0.05,
-                    default: 0.002,
-                    neutral: 0.002,
+                    max: 0.5,
+                    default: 0.044,
+                    neutral: 0.044,
                 },
                 unit: "",
                 section: "Add Scratch 5",
@@ -1561,9 +1596,9 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Scratch Blur",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 2.0,
-                    default: 0.3,
-                    neutral: 0.3,
+                    max: 1.0,
+                    default: 0.35,
+                    neutral: 0.35,
                 },
                 unit: "",
                 section: "Add Scratch 5",
@@ -1770,7 +1805,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Region Of Analysis",
                 kind: ParamKind::Choice {
                     options: &["Selected Area", "Entire Frame"],
-                    default: "Entire Frame",
+                    default: "Selected Area",
                 },
                 unit: "",
                 section: "",
@@ -1823,17 +1858,17 @@ pub static EFFECTS: &[EffectDef] = &[
                 unit: "",
                 section: "Analysis Region",
             },
+            // Resolve's Mode, which is the control. The two checkboxes
+            // beside it there — Stabilize White Balance and Stabilize
+            // Brightness — are greyed out and read back what Mode has chosen,
+            // so they are a readout rather than a second way to set it.
             ParamDef {
-                key: "stabilize_wb",
-                name: "Stabilize White Balance",
-                kind: ParamKind::Bool { default: true },
-                unit: "",
-                section: "Stabilization",
-            },
-            ParamDef {
-                key: "stabilize_brightness",
-                name: "Stabilize Brightness",
-                kind: ParamKind::Bool { default: false },
+                key: "mode",
+                name: "Mode",
+                kind: ParamKind::Choice {
+                    options: &["Balance, Brightness", "Balance", "Brightness"],
+                    default: "Balance, Brightness",
+                },
                 unit: "",
                 section: "Stabilization",
             },
@@ -1842,7 +1877,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Stabilize",
                 kind: ParamKind::Choice {
                     options: &["Levels", "Levels and Contrast"],
-                    default: "Levels",
+                    default: "Levels and Contrast",
                 },
                 unit: "",
                 section: "Stabilization",

@@ -284,8 +284,11 @@ fn stabilizing_white_balance_neutralises_a_cast() {
     );
 }
 
-/// White balance and brightness are two controls, and doing both when only one
-/// was asked for would make the other impossible to turn off.
+/// White balance and brightness are two corrections, and doing both when Mode
+/// asked for one would make the other impossible to turn off.
+///
+/// Resolve's default is both, so this has to say which one it means — that is
+/// what Mode is for.
 #[test]
 fn stabilizing_white_balance_does_not_change_the_exposure() {
     let Some(gpu) = pe_golden::shared_gpu() else {
@@ -295,7 +298,13 @@ fn stabilizing_white_balance_does_not_change_the_exposure() {
     let out = render(
         gpu,
         &src,
-        &look("color_stabilizer", &[("strength", ParamValue::Float(1.0))]),
+        &look(
+            "color_stabilizer",
+            &[
+                ("strength", ParamValue::Float(1.0)),
+                ("mode", ParamValue::Choice("Balance".into())),
+            ],
+        ),
     );
     let before = 0.2126 * 190.0 + 0.7152 * 150.0 + 0.0722 * 110.0;
     let p = out.pixel(32, 32);
@@ -319,8 +328,7 @@ fn stabilizing_brightness_pulls_the_region_towards_mid_grey() {
             "color_stabilizer",
             &[
                 ("strength", ParamValue::Float(1.0)),
-                ("stabilize_wb", ParamValue::Bool(false)),
-                ("stabilize_brightness", ParamValue::Bool(true)),
+                ("mode", ParamValue::Choice("Brightness".into())),
             ],
         ),
     );

@@ -1,6 +1,6 @@
 // Linear. Slots:
 //   0 region      1 source_x    2 source_y   3 source_width  4 source_height
-//   5 stabilize_wb  6 stabilize_brightness   7 stabilize     8 strength
+//   5 mode         6 stabilize   7 strength
 //
 // Slots follow the order the parameters are declared in the registry, so that
 // order is load-bearing and this comment has to move with it.
@@ -68,10 +68,14 @@ fn measure(centre: vec2<f32>, size: vec2<f32>) -> RegionStats {
 
 fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let region = slot(0u);
-    let stabilize_wb = slot(5u) > 0.5;
-    let stabilize_brightness = slot(6u) > 0.5;
-    let with_contrast = i32(round(slot(7u))) == 1;
-    let strength = slot(8u);
+    // Mode says which of the two corrections to make. Resolve shows a pair of
+    // checkboxes beside it, greyed out — they read back what Mode has chosen
+    // rather than offering a second way to set it, so Mode is the control.
+    let mode = i32(round(slot(5u)));
+    let stabilize_wb = mode != 2;
+    let stabilize_brightness = mode != 1;
+    let with_contrast = i32(round(slot(6u))) == 1;
+    let strength = slot(7u);
 
     if strength <= 0.0 || (!stabilize_wb && !stabilize_brightness) {
         return c;

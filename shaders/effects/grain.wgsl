@@ -12,11 +12,17 @@
 // negative, not a light phenomenon. Applied in linear it vanishes from the
 // shadows, which is exactly backwards from how film behaves.
 //
-// Size is in microns on the negative, never pixels. That is what makes a
-// 1200px preview and a 6000px export show the same grain rather than
-// invisible fizz — and it is why the format preset is a real control and not
-// a label: the same emulsion on a 16mm frame is magnified nearly three times
-// as much by the time it reaches the same print.
+// Size is a 0..1 control, as Resolve's is, but what it sets is a size in
+// *microns on the negative* — never pixels. That is what makes a 1200px
+// preview and a 6000px export show the same grain rather than invisible fizz,
+// and it is why the format preset is a real control and not a label: the same
+// emulsion on a 16mm frame is magnified nearly three times as much by the time
+// it reaches the same print.
+//
+// The mapping is exponential because grain size is. Halfway along the slider
+// should be halfway between fine and coarse to the eye, and the eye reads
+// size logarithmically — a linear map spends most of its travel in sizes too
+// small to tell apart.
 //
 // Parameter set follows Resolve's Film Grain, less the two temporal controls.
 // Freeze and Animate On Every Refresh both describe what the grain does
@@ -76,7 +82,8 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let opacity = slot(2u);
     let grain_only = slot(3u) > 0.5;
     let texture = clamp(slot(4u), 0.0, 1.0);
-    let size_um = max(slot(5u), 0.01);
+    // 0 is coarse and 1 is fine, over six stops of grain size.
+    let size_um = 4.0 * exp2((1.0 - clamp(slot(5u), 0.0, 1.0)) * 6.0);
     let aspect_ratio = max(slot(6u), 0.05);
     let strength = slot(7u);
     let offset = slot(8u);
@@ -151,8 +158,9 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     }
 
     // Offset lightens or darkens the whole grain layer, so lower values
-    // emphasise the light grains and higher values the dark ones.
-    n = n + vec3<f32>(offset * 0.25);
+    // emphasise the light grains and higher values the dark ones. Neutral is
+    // the middle of the control, not zero.
+    n = n + vec3<f32>((offset - 0.5) * 0.5);
 
     // Per-channel gain. Film's three dye layers are not equally grainy — the
     // blue-sensitive layer is the worst of them — so this is not a trim, it is
@@ -168,7 +176,10 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let shadow_w = clamp((CCT_GREY - l) / max(CCT_GREY - CCT_BLACK, 1e-4), 0.0, 1.0);
     let highlight_w = clamp((l - CCT_GREY) / max(CCT_WHITE - CCT_GREY, 1e-4), 0.0, 1.0);
     let midtone_w = clamp(1.0 - shadow_w - highlight_w, 0.0, 1.0);
-    let gain = shadow_w * shadow_gain + midtone_w * midtone_gain + highlight_w * highlight_gain;
+    // The three run 0 to 1 with 0.5 neutral, as Resolve's do, so they are
+    // doubled to become a gain.
+    let gain = 2.0
+        * (shadow_w * shadow_gain + midtone_w * midtone_gain + highlight_w * highlight_gain);
 
     let layer = n * strength * 0.36 * gain;
     if grain_only {

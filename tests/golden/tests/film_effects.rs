@@ -30,6 +30,21 @@ fn look(effect: &str, params: &[(&str, ParamValue)]) -> Document {
     doc
 }
 
+/// Film Damage with its colour shifts silenced.
+///
+/// Resolve ships it with Temp. Shift at 0.25 and Tint Shift at -0.1, so a
+/// freshly added row already moves the colour of the whole frame. A test about
+/// the vignette, the dirt or one scratch is not a test about that, and leaving
+/// them on would have every one of them measuring two things at once.
+fn damage(params: &[(&str, ParamValue)]) -> Document {
+    let mut all = vec![
+        ("temp_shift", ParamValue::Float(0.0)),
+        ("tint_shift", ParamValue::Float(0.0)),
+    ];
+    all.extend(params.iter().cloned());
+    look("film_damage", &all)
+}
+
 fn chart() -> DecodedImage {
     pe_io::test_chart(256, 192)
 }
@@ -290,17 +305,14 @@ fn each_scratch_lands_where_it_is_placed() {
     let out = render(
         gpu,
         &src,
-        &look(
-            "film_damage",
-            &[
-                ("scratch1_position", ParamValue::Float(0.25)),
-                ("scratch1_width", ParamValue::Float(0.012)),
-                ("scratch1_strength", ParamValue::Float(1.0)),
-                ("scratch2_position", ParamValue::Float(0.75)),
-                ("scratch2_width", ParamValue::Float(0.012)),
-                ("scratch2_strength", ParamValue::Float(1.0)),
-            ],
-        ),
+        &damage(&[
+            ("scratch1_position", ParamValue::Float(0.25)),
+            ("scratch1_width", ParamValue::Float(0.012)),
+            ("scratch1_strength", ParamValue::Float(1.0)),
+            ("scratch2_position", ParamValue::Float(0.75)),
+            ("scratch2_width", ParamValue::Float(0.012)),
+            ("scratch2_strength", ParamValue::Float(1.0)),
+        ]),
     );
 
     let changed = |x: u32| -> i64 {
@@ -330,13 +342,10 @@ fn dirt_density_controls_how_much_dirt_appears() {
         let out = render(
             gpu,
             &src,
-            &look(
-                "film_damage",
-                &[
-                    ("dirt_density", ParamValue::Float(density)),
-                    ("dirt_size", ParamValue::Float(1.0)),
-                ],
-            ),
+            &damage(&[
+                ("dirt_density", ParamValue::Float(density)),
+                ("dirt_size", ParamValue::Float(1.0)),
+            ]),
         );
         src.pixels
             .iter()
@@ -345,9 +354,9 @@ fn dirt_density_controls_how_much_dirt_appears() {
             .count()
     };
 
-    let sparse = count(0.05);
-    let dense = count(0.6);
-    assert!(sparse > 0, "no dirt at all at density 0.05");
+    let sparse = count(0.5);
+    let dense = count(6.0);
+    assert!(sparse > 0, "no dirt at all at density 0.5");
     assert!(
         dense > sparse * 2,
         "density barely changed the amount of dirt ({sparse} -> {dense})"
@@ -363,13 +372,10 @@ fn film_damage_vignetting_darkens_the_corners() {
     let out = render(
         gpu,
         &src,
-        &look(
-            "film_damage",
-            &[
-                ("focal_factor", ParamValue::Float(0.8)),
-                ("geometry_factor", ParamValue::Float(0.9)),
-            ],
-        ),
+        &damage(&[
+            ("focal_factor", ParamValue::Float(0.8)),
+            ("geometry_factor", ParamValue::Float(0.9)),
+        ]),
     );
 
     let corner_before = src.pixel(2, 190)[0];
@@ -494,15 +500,13 @@ fn disabling_a_scratch_removes_it_without_touching_its_settings() {
     };
     let src = flat(256, 64);
     let settings = |enabled: bool| {
-        look(
-            "film_damage",
-            &[
-                ("scratch1_position", ParamValue::Float(0.5)),
-                ("scratch1_width", ParamValue::Float(0.04)),
-                ("scratch1_strength", ParamValue::Float(1.0)),
-                ("scratch1_enable", ParamValue::Bool(enabled)),
-            ],
-        )
+        damage(&[
+            ("scratch1_position", ParamValue::Float(0.5)),
+            ("scratch1_width", ParamValue::Float(0.04)),
+            ("scratch1_strength", ParamValue::Float(1.0)),
+            ("scratch1_color", ParamValue::Rgb([1.0, 1.0, 1.0])),
+            ("scratch1_enable", ParamValue::Bool(enabled)),
+        ])
     };
     let on = render(gpu, &src, &settings(true));
     let off = render(gpu, &src, &settings(false));
@@ -529,7 +533,7 @@ fn the_temperature_shift_warms_the_picture_and_the_tint_shift_does_not() {
     let warm = render(
         gpu,
         &src,
-        &look("film_damage", &[("temp_shift", ParamValue::Float(1.0))]),
+        &damage(&[("temp_shift", ParamValue::Float(1.0))]),
     );
     let p = warm.pixel(32, 32);
     assert!(
@@ -540,7 +544,7 @@ fn the_temperature_shift_warms_the_picture_and_the_tint_shift_does_not() {
     let tinted = render(
         gpu,
         &src,
-        &look("film_damage", &[("tint_shift", ParamValue::Float(1.0))]),
+        &damage(&[("tint_shift", ParamValue::Float(1.0))]),
     );
     let q = tinted.pixel(32, 32);
     assert!(
@@ -593,7 +597,8 @@ fn a_format_preset_changes_how_coarse_the_grain_is() {
             &grain(&[
                 ("preset", ParamValue::Choice(preset.into())),
                 ("strength", ParamValue::Float(1.0)),
-                ("size", ParamValue::Float(400.0)),
+                // Coarse, in the 0..1 the control now runs in.
+                ("size", ParamValue::Float(0.2)),
             ]),
         )
     };
@@ -726,11 +731,28 @@ fn dehaze_reference() {
     let Some(gpu) = pe_golden::shared_gpu() else {
         return;
     };
-    let veiled = hazy(&chart(), [0.62, 0.66, 0.72]);
+    const HAZE: [f64; 3] = [0.62, 0.66, 0.72];
+    let veiled = hazy(&chart(), HAZE);
+    // Told what colour the haze is, rather than leaning on the default.
+    //
+    // Resolve ships Haze Color white, which is the honest starting point — it
+    // removes whatever haze is there rather than the haze the default assumed.
+    // But this fixture built a blue-grey veil on purpose, and a test that did
+    // not say so would be measuring how close the default happened to be
+    // instead of whether the model inverts what it was given.
     let out = render(
         gpu,
         &veiled,
-        &look("dehaze", &[("strength", ParamValue::Float(0.9))]),
+        &look(
+            "dehaze",
+            &[
+                ("strength", ParamValue::Float(0.9)),
+                (
+                    "haze_color",
+                    ParamValue::Rgb([HAZE[0] as f32, HAZE[1] as f32, HAZE[2] as f32]),
+                ),
+            ],
+        ),
     );
     pe_golden::assert_matches("dehaze_recovered", &out, TOLERANCE);
 }

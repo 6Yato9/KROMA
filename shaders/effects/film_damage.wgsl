@@ -30,8 +30,9 @@ fn scratch_mask(uv: vec2<f32>, position: f32, width: f32, blur: f32) -> f32 {
     let half_width = width * 0.5;
     let d = abs(uv.x - position);
     // Blur widens the falloff without widening the core, so a defocused
-    // scratch stays in the same place.
-    let feather = max(blur * 0.02, 1e-4);
+    // scratch stays in the same place. The control runs 0 to 1, so the factor
+    // is twice what it was when it ran to 2 — same reach, half the numbers.
+    let feather = max(blur * 0.04, 1e-4);
     return 1.0 - smoothstep(half_width, half_width + feather, d);
 }
 
@@ -109,7 +110,9 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
         let grid = fuv * vec2<f32>(cells, cells / max(aspect, 1e-4));
         let cell = floor(grid);
         let present = hash21(cell + vec2<f32>(dirt_seed));
-        if present < dirt_density {
+        // Density runs 0 to 10, as Resolve's does, and a tenth of it is the
+        // fraction of cells that get a speck.
+        if present < dirt_density * 0.1 {
             // Jitter within the cell so the specks are not on a lattice.
             let jitter = vec2<f32>(
                 hash21(cell + vec2<f32>(7.0, dirt_seed)),
