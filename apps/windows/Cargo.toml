@@ -18,3 +18,5 @@ eframe = { version = "0.33", default-features = false, features = ["wgpu", "defa
 pe-effects = { version = "0.0.1", path = "../../crates/pe-effects" }
 rfd = "0.17.2"
 pe-scopes = { version = "0.0.1", path = "../../crates/pe-scopes" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -20,6 +20,7 @@ mod mixer;
 mod preview;
 mod resolve;
 mod scopes;
+mod settings;
 mod wheels;
 
 use std::path::{Path, PathBuf};
@@ -109,6 +110,9 @@ pub struct App {
     scope_textures: scopes::Textures,
     /// Which inspector page is showing.
     tab: Tab,
+    /// What the application remembers between runs: starred effects, and
+    /// whatever joins that list later.
+    settings: settings::Settings,
     /// The effect under the pointer in the browser, previewed on the picture
     /// for as long as the pointer is there.
     preview_effect: Option<&'static str>,
@@ -180,6 +184,7 @@ impl App {
             shown: scopes::Shown::default(),
             scope_textures: scopes::Textures::default(),
             tab: Tab::Colour,
+            settings: settings::Settings::load(),
             preview_effect: None,
             dragging_effect: None,
             cropping: false,
@@ -924,11 +929,46 @@ impl eframe::App for App {
                 });
         }
 
+        if !self.status.is_empty() {
+            egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(self.status.clone());
+                    if ui.small_button("dismiss").clicked() {
+                        self.status.clear();
+                    }
+                });
+            });
+        }
+
+        if let Some(batch) = self.batch.as_ref() {
+            let total = batch.targets.len();
+            let left = batch.remaining();
+            egui::TopBottomPanel::bottom("batch").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::ProgressBar::new((total - left) as f32 / total.max(1) as f32)
+                            .desired_width(220.0)
+                            .text(format!("exporting {} of {total}", total - left)),
+                    );
+                    if ui.small_button("Stop").clicked() {
+                        stop_batch = true;
+                    }
+                });
+            });
+        }
+
+        // Declared last of the three, which puts it closest to the picture.
+        // egui stacks bottom panels in the order they are added, outermost
+        // first — so a status bar declared after the scopes would sit between
+        // them and the photograph, and the scopes' resize handle would be
+        // under it.
         if self.show_scopes {
             egui::TopBottomPanel::bottom("scopes")
                 .resizable(true)
-                .default_height(210.0)
-                .height_range(120.0..=420.0)
+                // Three scopes side by side need real height to be worth
+                // reading. A waveform two hundred points tall is a smear.
+                .default_height(300.0)
+                .height_range(160.0..=680.0)
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
                         ui.toggle_value(&mut self.shown.waveform, "Waveform");
@@ -956,34 +996,6 @@ impl eframe::App for App {
                         &self.shown,
                     );
                 });
-        }
-
-        if let Some(batch) = self.batch.as_ref() {
-            let total = batch.targets.len();
-            let left = batch.remaining();
-            egui::TopBottomPanel::bottom("batch").show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::ProgressBar::new((total - left) as f32 / total.max(1) as f32)
-                            .desired_width(220.0)
-                            .text(format!("exporting {} of {total}", total - left)),
-                    );
-                    if ui.small_button("Stop").clicked() {
-                        stop_batch = true;
-                    }
-                });
-            });
-        }
-
-        if !self.status.is_empty() {
-            egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(self.status.clone());
-                    if ui.small_button("dismiss").clicked() {
-                        self.status.clear();
-                    }
-                });
-            });
         }
 
         egui::SidePanel::right("inspector")
@@ -1037,6 +1049,7 @@ impl eframe::App for App {
                             &mut self.history,
                             &mut self.ids,
                             &mut self.dragging_effect,
+                            &mut self.settings,
                         );
                     }
                     Tab::Image => {

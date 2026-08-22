@@ -25,15 +25,24 @@ use pe_core::{BlendMode, Curve, History, ParamValue, RowId, RowIdGenerator, Stac
 use pe_effects::{EffectDef, Group, ParamDef, ParamKind};
 
 use crate::resolve::{self, Edit};
+use crate::settings::Settings;
+
+/// One shelf tile. Near enough square to read as a swatch rather than a row,
+/// and small enough that three or four fit across a docked panel.
+const TILE: egui::Vec2 = egui::vec2(98.0, 66.0);
+
+/// How much of the tab the shelf gets before it starts scrolling.
+const BROWSER_HEIGHT: f32 = 250.0;
 
 pub fn show(
     ui: &mut egui::Ui,
     history: &mut History,
     ids: &mut RowIdGenerator,
     dragging: &mut Option<&'static str>,
+    settings: &mut Settings,
 ) -> Option<&'static str> {
     ui.add_space(4.0);
-    let preview = browser(ui, history, ids, dragging);
+    let preview = browser(ui, history, ids, dragging, settings);
     ui.add_space(8.0);
     ui.separator();
     ui.label(
@@ -136,88 +145,205 @@ fn browser(
     history: &mut History,
     ids: &mut RowIdGenerator,
     dragging: &mut Option<&'static str>,
+    settings: &mut Settings,
 ) -> Option<&'static str> {
     let mut preview = None;
     egui::ScrollArea::vertical()
         .id_salt("effect_browser")
-        .max_height(190.0)
+        .max_height(BROWSER_HEIGHT)
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            // Starred first, and only there. Listing a favourite twice would
+            // mean two tiles that do the same thing and one of them wrong
+            // whenever the star is clicked on the other.
+            let starred: Vec<_> = pe_effects::all()
+                .iter()
+                .filter(|e| !pe_effects::registry::PINNED_ROWS.contains(&e.key))
+                .filter(|e| settings.is_favourite(e.key))
+                .collect();
+            if !starred.is_empty() {
+                heading(ui, "Favourites");
+                if let Some(hovered) = tiles(ui, history, ids, &starred, dragging, settings) {
+                    preview = Some(hovered);
+                }
+            }
+
             for group in [Group::Basic, Group::Color, Group::Film, Group::Optics] {
                 let available: Vec<_> = pe_effects::all()
                     .iter()
                     .filter(|e| e.group == group)
                     .filter(|e| !pe_effects::registry::PINNED_ROWS.contains(&e.key))
+                    .filter(|e| !settings.is_favourite(e.key))
                     .collect();
                 // Every Basic effect is a pinned panel, so that heading has
                 // nothing under it. A heading over nothing reads as a list
-                // that failed to load.
+                // that failed to load — and so does one whose entries have all
+                // been starred away into the group above.
                 if available.is_empty() {
                     continue;
                 }
-                ui.add_space(2.0);
-                ui.label(
-                    egui::RichText::new(group.as_str())
-                        .small()
-                        .color(resolve::colour::LABEL),
-                );
-                for def in available {
-                    if let Some(hovered) = browser_row(ui, history, ids, def, dragging) {
-                        preview = Some(hovered);
-                    }
+                heading(ui, group.as_str());
+                if let Some(hovered) = tiles(ui, history, ids, &available, dragging, settings) {
+                    preview = Some(hovered);
                 }
             }
         });
     preview
 }
 
-/// One shelf entry. Hover to preview, click or drag to add.
-fn browser_row(
+fn heading(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(4.0);
+    ui.label(
+        egui::RichText::new(text)
+            .small()
+            .color(resolve::colour::LABEL),
+    );
+    ui.add_space(2.0);
+}
+
+/// A row of tiles, wrapping to as many as fit.
+fn tiles(
+    ui: &mut egui::Ui,
+    history: &mut History,
+    ids: &mut RowIdGenerator,
+    defs: &[&'static EffectDef],
+    dragging: &mut Option<&'static str>,
+    settings: &mut Settings,
+) -> Option<&'static str> {
+    let mut preview = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+        for def in defs {
+            if let Some(hovered) = tile(ui, history, ids, def, dragging, settings) {
+                preview = Some(hovered);
+            }
+        }
+    });
+    preview
+}
+
+/// A five-pointed star, filled when the effect is starred.
+fn star(painter: &egui::Painter, at: egui::Pos2, filled: bool, hot: bool) {
+    let r = 6.0_f32;
+    let mut points = Vec::with_capacity(10);
+    for i in 0..10 {
+        // Alternating outer and inner radius, starting at the top.
+        let a = -std::f32::consts::FRAC_PI_2 + i as f32 * std::f32::consts::PI / 5.0;
+        let radius = if i % 2 == 0 { r } else { r * 0.44 };
+        points.push(egui::pos2(at.x + radius * a.cos(), at.y + radius * a.sin()));
+    }
+    let gold = egui::Color32::from_rgb(238, 190, 84);
+    if filled {
+        // Not a convex polygon, so it is drawn as a fan from the middle.
+        let mut mesh = egui::Mesh::default();
+        for i in 0..10 {
+            let base = mesh.vertices.len() as u32;
+            mesh.colored_vertex(at, gold);
+            mesh.colored_vertex(points[i], gold);
+            mesh.colored_vertex(points[(i + 1) % 10], gold);
+            mesh.add_triangle(base, base + 1, base + 2);
+        }
+        painter.add(egui::Shape::mesh(mesh));
+    } else {
+        painter.add(egui::Shape::closed_line(
+            points,
+            egui::Stroke::new(
+                1.2_f32,
+                if hot {
+                    gold
+                } else {
+                    egui::Color32::from_gray(110)
+                },
+            ),
+        ));
+    }
+}
+
+/// One shelf tile. Hover to preview, click or drag to add, star to keep.
+fn tile(
     ui: &mut egui::Ui,
     history: &mut History,
     ids: &mut RowIdGenerator,
     def: &'static EffectDef,
     dragging: &mut Option<&'static str>,
+    settings: &mut Settings,
 ) -> Option<&'static str> {
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), 22.0),
-        egui::Sense::click_and_drag(),
-    );
+    let (rect, response) = ui.allocate_exact_size(TILE, egui::Sense::click_and_drag());
 
-    if response.drag_started() {
+    // The star owns its own corner. Checked before the tile's own click, or
+    // starring an effect would also add it.
+    let star_at = egui::pos2(rect.max.x - 11.0, rect.min.y + 11.0);
+    let star_rect = egui::Rect::from_center_size(star_at, egui::Vec2::splat(20.0));
+    let star_response = ui.interact(
+        star_rect,
+        ui.id().with((def.key, "star")),
+        egui::Sense::click(),
+    );
+    if star_response.clicked() {
+        settings.toggle_favourite(def.key);
+    }
+    let over_star = star_response.hovered();
+
+    if response.drag_started() && !over_star {
         *dragging = Some(def.key);
     }
-    if response.clicked() {
+    if response.clicked() && !over_star {
         add(ui, history, ids, def);
     }
 
     let held = *dragging == Some(def.key);
+    let hot = (response.hovered() && !over_star) || held;
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
-        if response.hovered() || held {
-            painter.rect_filled(rect, 3.0, egui::Color32::from_gray(44));
-        }
-        painter.text(
-            egui::pos2(rect.min.x + 10.0, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            def.name,
-            egui::FontId::proportional(12.0),
-            if response.hovered() || held {
+        painter.rect_filled(
+            rect,
+            4.0,
+            if hot {
+                egui::Color32::from_gray(52)
+            } else {
+                egui::Color32::from_gray(32)
+            },
+        );
+        painter.rect_stroke(
+            rect,
+            4.0,
+            egui::Stroke::new(
+                1.0_f32,
+                if hot {
+                    resolve::colour::ACCENT
+                } else {
+                    egui::Color32::from_gray(58)
+                },
+            ),
+            egui::StrokeKind::Inside,
+        );
+        star(painter, star_at, settings.is_favourite(def.key), over_star);
+        // Wrapped and centred in the lower part of the tile, so a two-word
+        // name does not run under the star.
+        let galley = painter.layout(
+            def.name.to_string(),
+            egui::FontId::proportional(11.5),
+            if hot {
                 resolve::colour::TITLE
             } else {
                 egui::Color32::from_gray(198)
             },
+            rect.width() - 10.0,
         );
-        if response.hovered() {
-            painter.text(
-                egui::pos2(rect.max.x - 8.0, rect.center().y),
-                egui::Align2::RIGHT_CENTER,
-                "drag or click",
-                egui::FontId::proportional(10.0),
-                egui::Color32::from_gray(120),
-            );
-        }
+        painter.galley(
+            egui::pos2(
+                rect.center().x - galley.size().x * 0.5,
+                rect.max.y - 8.0 - galley.size().y,
+            ),
+            galley,
+            egui::Color32::WHITE,
+        );
     }
+    let response = response.on_hover_text(if settings.is_favourite(def.key) {
+        format!("{} — starred", def.name)
+    } else {
+        def.name.to_string()
+    });
 
     // The chip under the pointer, so a drag looks like it is carrying
     // something rather than like nothing is happening.
@@ -248,8 +374,9 @@ fn browser_row(
     }
 
     // Previewing while dragging as well: the picture under the chip is what
-    // you are deciding about.
-    (response.hovered() || held).then_some(def.key)
+    // you are deciding about. Not while the pointer is on the star, though —
+    // that gesture is about the shelf, not about the picture.
+    ((response.hovered() && !over_star) || held).then_some(def.key)
 }
 
 fn unknown_row(ui: &mut egui::Ui, history: &mut History, id: RowId, key: &str) {

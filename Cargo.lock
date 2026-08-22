@@ -1751,6 +1751,8 @@ dependencies = [
  "pe-render",
  "pe-scopes",
  "rfd",
+ "serde",
+ "serde_json",
  "wgpu",
 ]
 

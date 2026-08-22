@@ -100,7 +100,10 @@ pub fn panel(ui: &mut egui::Ui, textures: &mut Textures, scopes: Option<&Scopes>
     let count = shown.count().max(1);
     let gap = 6.0;
     let width = ((ui.available_width() - gap * (count as f32 - 1.0)) / count as f32).max(60.0);
-    let height = ui.available_height().max(60.0);
+    // All of it, less the room the title inside each frame takes. Asking for
+    // less would leave a strip of empty panel under the scopes and make the
+    // resize handle feel like it was not doing anything.
+    let height = (ui.available_height() - 4.0).max(60.0);
 
     ui.horizontal(|ui| {
         if shown.waveform {
