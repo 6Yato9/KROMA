@@ -100,10 +100,10 @@ pub fn panel(ui: &mut egui::Ui, textures: &mut Textures, scopes: Option<&Scopes>
     let count = shown.count().max(1);
     let gap = 6.0;
     let width = ((ui.available_width() - gap * (count as f32 - 1.0)) / count as f32).max(60.0);
-    // All of it, less the room the title inside each frame takes. Asking for
-    // less would leave a strip of empty panel under the scopes and make the
-    // resize handle feel like it was not doing anything.
-    let height = (ui.available_height() - 4.0).max(60.0);
+    // All of it. The panel claims any remainder itself, so there is no reason
+    // to leave a margin here — and leaving one is what used to walk the panel
+    // down to its minimum a few points per frame.
+    let height = ui.available_height().max(60.0);
 
     ui.horizontal(|ui| {
         if shown.waveform {
@@ -434,6 +434,103 @@ fn add(base: egui::Color32, tint: [f32; 3], amount: f32) -> egui::Color32 {
 
 #[cfg(test)]
 mod tests {
+
+    /// egui stores a resizable panel's *content* rect, not the rect it was
+    /// dragged to. A panel whose content is shorter than the drag therefore
+    /// springs back to the content's height on the very next frame, and the
+    /// resize handle looks broken.
+    ///
+    /// This pins the mechanism, because the fix lives on our side — the
+    /// content has to fill the panel — and a reader who does not know that
+    /// would reasonably go looking in egui.
+    #[test]
+    fn a_bottom_panel_keeps_the_height_its_content_asks_for() {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0));
+        let input = || egui::RawInput {
+            screen_rect: Some(screen),
+            ..Default::default()
+        };
+
+        // A panel whose content asks for only a little.
+        let mut short = 0.0;
+        for _ in 0..3 {
+            let _ = ctx.run(input(), |ctx| {
+                let r = egui::TopBottomPanel::bottom("short")
+                    .resizable(true)
+                    .default_height(300.0)
+                    .height_range(20.0..=500.0)
+                    .show(ctx, |ui| {
+                        ui.allocate_exact_size(egui::vec2(10.0, 40.0), egui::Sense::hover());
+                    });
+                short = r.response.rect.height();
+            });
+        }
+
+        // And one whose content fills whatever it is given.
+        let ctx2 = egui::Context::default();
+        let mut full = 0.0;
+        for _ in 0..3 {
+            let _ = ctx2.run(input(), |ctx| {
+                let r = egui::TopBottomPanel::bottom("full")
+                    .resizable(true)
+                    .default_height(300.0)
+                    .height_range(20.0..=500.0)
+                    .show(ctx, |ui| {
+                        let h = ui.available_height();
+                        ui.allocate_exact_size(egui::vec2(10.0, h), egui::Sense::hover());
+                    });
+                full = r.response.rect.height();
+            });
+        }
+
+        assert!(
+            full > short + 100.0,
+            "a panel holds the height its content asks for: short {short}, full {full}"
+        );
+        assert!(
+            full > 250.0,
+            "the filling panel should have kept its default height, got {full}"
+        );
+    }
+
+    /// And the failure is a *creep*, not a one-off.
+    ///
+    /// Content a few points shorter than its panel makes the panel a few
+    /// points shorter next frame, which makes the content shorter again. Over
+    /// a second of frames it walks the whole thing down to its minimum — which
+    /// is what "the scopes are crushed at the bottom and spring back when I
+    /// drag them up" is, seen from the inside.
+    #[test]
+    fn content_a_little_short_of_its_panel_walks_the_panel_down() {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0));
+        let mut height = 0.0;
+        for _ in 0..30 {
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ctx| {
+                    let r = egui::TopBottomPanel::bottom("creep")
+                        .resizable(true)
+                        .default_height(300.0)
+                        .height_range(60.0..=500.0)
+                        .show(ctx, |ui| {
+                            // Four points shy, which is all it takes.
+                            let h = (ui.available_height() - 4.0).max(10.0);
+                            ui.allocate_exact_size(egui::vec2(10.0, h), egui::Sense::hover());
+                        });
+                    height = r.response.rect.height();
+                },
+            );
+        }
+        assert!(
+            height < 200.0,
+            "the panel should have collapsed, but held {height} — if this now              passes, egui changed and the fix in main.rs can be revisited"
+        );
+    }
     use super::*;
 
     /// The curve exists so that a spread-out trace is still visible next to a

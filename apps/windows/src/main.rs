@@ -1045,6 +1045,25 @@ impl eframe::App for App {
                         self.preview.as_ref().and_then(|p| p.scopes()),
                         &self.shown,
                     );
+                    // Claim whatever is left, so the panel's content is exactly
+                    // the panel.
+                    //
+                    // egui stores a resizable panel's *content* rect, not the
+                    // rect it was dragged to. Content a few points shy of its
+                    // panel therefore makes the panel a few points shorter next
+                    // frame, which makes the content shorter again — and over a
+                    // second of frames the whole thing walks down to its
+                    // minimum. That is what "the scopes are crushed at the
+                    // bottom and spring back when I drag them up" was.
+                    //
+                    // Claiming the remainder rather than getting the arithmetic
+                    // exact everywhere: the slack came from a label here and a
+                    // margin there, and one line that cannot be off by a point
+                    // beats four that must each be right.
+                    let left = ui.available_height();
+                    if left > 0.0 {
+                        ui.allocate_space(egui::vec2(ui.available_width(), left));
+                    }
                 });
         }
 

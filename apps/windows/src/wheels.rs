@@ -193,7 +193,12 @@ fn disc(ui: &mut egui::Ui, size: f32, wheel: Wheel, home: f32, range: (f32, f32)
             outer,
             egui::Stroke::new(3.0_f32, egui::Color32::from_gray(42)),
         );
-        let sweep = (wheel.master / 0.5).clamp(-1.0, 1.0);
+        // Measured from this wheel's own home over its own range, like the
+        // puck. It used to divide by a hardcoded 0.5, which was every wheel's
+        // range when every wheel had the same one — so Gain sat at 1.00 and
+        // Offset at 25.00 and both pinned the arc at full travel, frozen.
+        let span = (range.1 - home).max(home - range.0).max(1e-4);
+        let sweep = ((wheel.master - home) / span).clamp(-1.0, 1.0);
         if sweep.abs() > 1e-3 {
             let start = -std::f32::consts::FRAC_PI_2;
             let steps = 40;
