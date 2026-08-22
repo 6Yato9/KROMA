@@ -1,112 +1,27 @@
-//! The stacked inspector.
+//! The Open FX list.
 //!
-//! Resolve's Cut-page inspector rather than its node graph: an ordered list of
-//! rows, each with its own enable, opacity, blend mode and parameters, and
-//! reorderable.
+//! Resolve's inspector rather than its node graph: an ordered list of effects,
+//! each with an enable toggle, a title bar that expands it, reorder arrows, a
+//! bin, and a reset. The rows themselves are drawn by [`crate::resolve`], so
+//! every parameter in the application lines up in the same columns.
 //!
-//! Reordering is up/down buttons at M1, not drag-and-drop. Drag-to-reorder is
-//! the single fiddliest interaction in the whole application — it wants hit
-//! testing, an insertion indicator, autoscroll, and a touch story for the
-//! tablet later — and building it against a UI that is being thrown away at M2
-//! would be building it twice.
+//! Reordering is arrows, not drag-and-drop. Drag-to-reorder is the fiddliest
+//! interaction in the whole application — hit testing, an insertion indicator,
+//! autoscroll, a touch story for the tablet later — and it is not what makes
+//! the panel usable.
 
 use pe_core::{BlendMode, Curve, History, ParamValue, RowId, RowIdGenerator, StackRow, Wheel};
-use pe_effects::{EffectDef, Group, ParamKind};
+use pe_effects::{EffectDef, Group, ParamDef, ParamKind};
 
-/// Icons are drawn, not typed.
-///
-/// egui 0.33 bundles only Hack and NotoEmoji. Neither covers the geometric
-/// shapes and dingbats an inspector wants — ▲ ▼ ✕ ☰ all render as tofu boxes.
-/// Rather than ship a font for four glyphs, or settle for word buttons, these
-/// are a handful of lines from the painter: guaranteed to render, and they
-/// pick up the hover and disabled styling for free.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Icon {
-    Up,
-    Down,
-    Trash,
-}
-
-fn icon_button(ui: &mut egui::Ui, icon: Icon, hover: &str) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
-
-    if ui.is_rect_visible(rect) {
-        let visuals = *ui.style().interact(&response);
-        let painter = ui.painter();
-        painter.rect_filled(rect, 3.0, visuals.bg_fill);
-
-        let c = rect.center();
-        let r = 4.5;
-        let colour = visuals.fg_stroke.color;
-        let stroke = egui::Stroke::new(1.4_f32, colour);
-
-        match icon {
-            Icon::Up => {
-                painter.add(egui::Shape::convex_polygon(
-                    vec![
-                        c + egui::vec2(0.0, -r),
-                        c + egui::vec2(-r, r * 0.7),
-                        c + egui::vec2(r, r * 0.7),
-                    ],
-                    colour,
-                    egui::Stroke::NONE,
-                ));
-            }
-            Icon::Down => {
-                painter.add(egui::Shape::convex_polygon(
-                    vec![
-                        c + egui::vec2(0.0, r),
-                        c + egui::vec2(-r, -r * 0.7),
-                        c + egui::vec2(r, -r * 0.7),
-                    ],
-                    colour,
-                    egui::Stroke::NONE,
-                ));
-            }
-            Icon::Trash => {
-                // A tapered bin: handle, lid, then three sides. Line segments
-                // only, so there is no dependency on which rect-stroke
-                // signature this egui version happens to have.
-                painter.line_segment(
-                    [c + egui::vec2(-r * 0.35, -r), c + egui::vec2(r * 0.35, -r)],
-                    stroke,
-                );
-                painter.line_segment(
-                    [c + egui::vec2(-r, -r * 0.55), c + egui::vec2(r, -r * 0.55)],
-                    stroke,
-                );
-                painter.line_segment(
-                    [
-                        c + egui::vec2(-r * 0.75, -r * 0.55),
-                        c + egui::vec2(-r * 0.55, r),
-                    ],
-                    stroke,
-                );
-                painter.line_segment(
-                    [
-                        c + egui::vec2(r * 0.75, -r * 0.55),
-                        c + egui::vec2(r * 0.55, r),
-                    ],
-                    stroke,
-                );
-                painter.line_segment(
-                    [c + egui::vec2(-r * 0.55, r), c + egui::vec2(r * 0.55, r)],
-                    stroke,
-                );
-            }
-        }
-    }
-
-    response.on_hover_text(hover)
-}
+use crate::resolve::{self, Edit};
 
 pub fn show(ui: &mut egui::Ui, history: &mut History, ids: &mut RowIdGenerator) {
-    ui.add_space(6.0);
+    ui.add_space(4.0);
     add_effect_menu(ui, history, ids);
-    ui.separator();
+    ui.add_space(6.0);
 
-    // Only the rows the user added. The pinned panels are drawn above by
-    // whichever panel owns them.
+    // Only the rows the user added. The pinned panels are drawn by whichever
+    // panel owns them.
     let rows: Vec<(RowId, String)> = history
         .document()
         .stack
@@ -123,8 +38,8 @@ pub fn show(ui: &mut egui::Ui, history: &mut History, ids: &mut RowIdGenerator) 
         return;
     }
 
-    // Indices here are positions among the *user* rows, so the move buttons
-    // read naturally; `reorder` maps them back past the pinned floor.
+    // Indices here are positions among the *user* rows, so the arrows read
+    // naturally; `reorder` maps them back past the pinned floor.
     let floor = history.document().stack.pinned_count();
     let count = rows.len();
     for (index, (id, effect_key)) in rows.into_iter().enumerate() {
@@ -133,7 +48,6 @@ pub fn show(ui: &mut egui::Ui, history: &mut History, ids: &mut RowIdGenerator) 
             continue;
         };
         row_ui(ui, history, id, def, index, count, floor);
-        ui.add_space(4.0);
     }
 }
 
@@ -187,21 +101,19 @@ fn add_effect_menu(ui: &mut egui::Ui, history: &mut History, ids: &mut RowIdGene
 }
 
 fn unknown_row(ui: &mut egui::Ui, history: &mut History, id: RowId, key: &str) {
-    egui::Frame::group(ui.style()).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(format!("unknown: {key}")).weak());
-            if icon_button(ui, Icon::Trash, "Delete").clicked() {
-                history.edit("Delete row", None, |doc| {
-                    doc.stack.remove(id);
-                });
-            }
-        });
-        ui.label(
-            egui::RichText::new("Unknown to this build — kept so the file round-trips.")
-                .small()
-                .weak(),
-        );
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(format!("unknown: {key}")).weak());
+        if ui.small_button("Remove").clicked() {
+            history.edit("Delete row", None, |doc| {
+                doc.stack.remove(id);
+            });
+        }
     });
+    ui.label(
+        egui::RichText::new("Unknown to this build — kept so the file round-trips.")
+            .small()
+            .weak(),
+    );
 }
 
 fn row_ui(
@@ -216,116 +128,171 @@ fn row_ui(
     let Some(row) = history.document().stack.get(id) else {
         return;
     };
-    let mut enabled = row.enabled;
+    let enabled = row.enabled;
+    let row_id = ui.make_persistent_id(("fx", id.0));
+    let open_id = row_id.with("open");
+    let mut open: bool = ui.data_mut(|d| *d.get_temp_mut_or(open_id, false));
+
+    let action = resolve::effect_header(
+        ui,
+        row_id,
+        def.name,
+        enabled,
+        open,
+        (index > 0, index + 1 < count),
+    );
+
+    if action.expand {
+        open = !open;
+        ui.data_mut(|d| d.insert_temp(open_id, open));
+    }
+    if action.toggled {
+        history.edit(
+            if enabled { "Disable row" } else { "Enable row" },
+            None,
+            |doc| {
+                if let Some(r) = doc.stack.get_mut(id) {
+                    r.enabled = !enabled;
+                }
+            },
+        );
+    }
+    if action.delete {
+        history.edit(format!("Delete {}", def.name), None, |doc| {
+            doc.stack.remove(id);
+        });
+        return;
+    }
+    if action.up {
+        history.edit("Reorder", None, |doc| {
+            doc.stack.reorder(id, floor + index.saturating_sub(1));
+        });
+    }
+    if action.down {
+        history.edit("Reorder", None, |doc| {
+            doc.stack.reorder(id, floor + index + 1);
+        });
+    }
+    if action.reset {
+        history.edit(format!("Reset {}", def.name), None, |doc| {
+            if let Some(r) = doc.stack.get_mut(id) {
+                r.params = def.default_params();
+                r.opacity = 1.0;
+                r.blend = BlendMode::Normal;
+            }
+        });
+    }
+
+    if !open {
+        return;
+    }
+
+    ui.add_space(2.0);
+    // Top-level parameters first, in declaration order, then each heading in
+    // the order it first appears. That is the order the effect declared, which
+    // is the order the person who wrote it meant them to be read in.
+    for param in def.params.iter().filter(|p| p.section.is_empty()) {
+        param_ui(ui, history, id, param, row_id);
+    }
+    let mut seen: Vec<&'static str> = Vec::new();
+    for param in def.params.iter().filter(|p| !p.section.is_empty()) {
+        if seen.contains(&param.section) {
+            continue;
+        }
+        seen.push(param.section);
+        let section = param.section;
+        resolve::section(ui, row_id.with(section), section, |ui| {
+            for p in def.params.iter().filter(|p| p.section == section) {
+                param_ui(ui, history, id, p, row_id);
+            }
+        });
+    }
+
+    // Resolve gives every plugin a Global Blend at the bottom. Ours lives on
+    // the row, so every effect gets one for free — and the blend *mode* with
+    // it, which Resolve's OFX plugins do not have at all.
+    resolve::section(ui, row_id.with("blend"), "Global Blend", |ui| {
+        blend_ui(ui, history, id, row_id);
+    });
+    ui.add_space(6.0);
+}
+
+fn blend_ui(ui: &mut egui::Ui, history: &mut History, id: RowId, row_id: egui::Id) {
+    let Some(row) = history.document().stack.get(id) else {
+        return;
+    };
     let mut opacity = row.opacity;
     let mut blend = row.blend;
 
-    egui::Frame::group(ui.style()).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            if ui.checkbox(&mut enabled, "").changed() {
-                history.edit(
-                    if enabled { "Enable row" } else { "Disable row" },
-                    None,
-                    |doc| {
-                        if let Some(r) = doc.stack.get_mut(id) {
-                            r.enabled = enabled;
-                        }
-                    },
-                );
+    let edit = resolve::slider_row(
+        ui,
+        row_id.with("opacity"),
+        "Blend",
+        &mut opacity,
+        0.0..=1.0,
+        3,
+    );
+    if edit.changed {
+        history.edit("Blend", Some(format!("{}.blend", id.0)), |doc| {
+            if let Some(row) = doc.stack.get_mut(id) {
+                row.opacity = opacity;
             }
-            ui.label(egui::RichText::new(def.name).strong());
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if icon_button(ui, Icon::Trash, "Delete").clicked() {
-                    history.edit(format!("Delete {}", def.name), None, |doc| {
-                        doc.stack.remove(id);
-                    });
-                }
-                ui.add_enabled_ui(index + 1 < count, |ui| {
-                    if icon_button(ui, Icon::Down, "Move down").clicked() {
-                        history.edit("Reorder", None, |doc| {
-                            doc.stack.reorder(id, floor + index + 1);
-                        });
-                    }
-                });
-                ui.add_enabled_ui(index > 0, |ui| {
-                    if icon_button(ui, Icon::Up, "Move up").clicked() {
-                        history.edit("Reorder", None, |doc| {
-                            doc.stack.reorder(id, floor + index.saturating_sub(1));
-                        });
-                    }
-                });
-                // The space the effect runs in. Shown because it explains why
-                // a control behaves the way it does, and because seeing it
-                // wrong is the fastest way to catch a registry mistake.
-                ui.label(
-                    egui::RichText::new(def.space.as_str())
-                        .small()
-                        .weak()
-                        .monospace(),
-                );
-            });
         });
-
-        ui.add_space(2.0);
-        ui.horizontal(|ui| {
-            // Resolve calls this Blend and puts it in every plugin title bar:
-            // default 1.0, range 0..1. Ours lives on the row, so every effect
-            // gets one for free.
-            ui.label(egui::RichText::new("blend").small().weak())
-                .on_hover_text("Mixes this effect against its input. Resolve's per-effect Blend.");
-            let r = ui.add(
-                egui::Slider::new(&mut opacity, 0.0..=1.0)
-                    .show_value(false)
-                    .fixed_decimals(2),
-            );
-            if r.changed() {
-                history.edit("Blend", Some(format!("{}.blend", id.0)), |doc| {
-                    if let Some(row) = doc.stack.get_mut(id) {
-                        row.opacity = opacity;
-                    }
-                });
+    }
+    if edit.released {
+        history.break_coalescing();
+    }
+    if edit.reset {
+        history.edit("Blend", None, |doc| {
+            if let Some(row) = doc.stack.get_mut(id) {
+                row.opacity = 1.0;
             }
-            if r.drag_stopped() {
-                history.break_coalescing();
-            }
-            ui.label(
-                egui::RichText::new(format!("{:.0}%", opacity * 100.0))
-                    .small()
-                    .monospace(),
-            );
-
-            egui::ComboBox::from_id_salt(("blend", id.0))
-                .selected_text(blend.as_str())
-                .width(96.0)
-                .show_ui(ui, |ui| {
-                    for mode in BlendMode::ALL {
-                        if ui
-                            .selectable_value(&mut blend, *mode, mode.as_str())
-                            .clicked()
-                        {
-                            history.edit("Blend mode", None, |doc| {
-                                if let Some(row) = doc.stack.get_mut(id) {
-                                    row.blend = blend;
-                                }
-                            });
-                        }
-                    }
-                });
         });
+    }
 
-        ui.add_space(4.0);
-        for param in def.params {
-            param_ui(ui, history, id, param);
-        }
-    });
+    let mut mode = blend.as_str().to_string();
+    let names: Vec<&'static str> = BlendMode::ALL.iter().map(|m| m.as_str()).collect();
+    let edit = resolve::choice_row(ui, row_id.with("mode"), "Composite", &names, &mut mode);
+    if edit.changed
+        && let Some(next) = BlendMode::ALL.iter().find(|m| m.as_str() == mode)
+    {
+        blend = *next;
+        history.edit("Blend mode", None, |doc| {
+            if let Some(row) = doc.stack.get_mut(id) {
+                row.blend = blend;
+            }
+        });
+    }
+    if edit.reset {
+        history.edit("Blend mode", None, |doc| {
+            if let Some(row) = doc.stack.get_mut(id) {
+                row.blend = BlendMode::Normal;
+            }
+        });
+    }
+}
+
+/// How many decimals a range wants.
+///
+/// A slider running to 360 degrees reading "180.000" is noise; one running to
+/// 1.0 reading "0.2" has thrown away the resolution the control has.
+fn decimals(min: f32, max: f32) -> usize {
+    let span = (max - min).abs();
+    if span > 100.0 {
+        1
+    } else if span > 10.0 {
+        2
+    } else {
+        3
+    }
 }
 
 fn param_ui(
     ui: &mut egui::Ui,
     history: &mut History,
     id: RowId,
-    def: &'static pe_effects::ParamDef,
+    def: &'static ParamDef,
+    row_id: egui::Id,
 ) {
     let current = history
         .document()
@@ -334,6 +301,7 @@ fn param_ui(
         .and_then(|r| r.params.get(def.key))
         .cloned();
     let coalesce = Some(format!("{}.{}", id.0, def.key));
+    let param_id = row_id.with(def.key);
 
     match def.kind {
         ParamKind::Float {
@@ -346,47 +314,36 @@ fn param_ui(
                 .as_ref()
                 .and_then(ParamValue::as_float)
                 .unwrap_or(default);
-            ui.horizontal(|ui| {
-                let r = ui.add(
-                    egui::Slider::new(&mut v, min..=max)
-                        .text(def.name)
-                        .suffix(def.unit),
-                );
-                if r.changed() {
-                    set(
-                        history,
-                        id,
-                        def.key,
-                        ParamValue::Float(v),
-                        def.name,
-                        coalesce.clone(),
-                    );
-                }
-                if r.drag_stopped() {
-                    history.break_coalescing();
-                }
-                // Double-click-to-reset is the interaction people expect from
-                // a grading control, and it needs the *neutral* value, which
-                // is not always the default.
-                if r.double_clicked() {
-                    set(
-                        history,
-                        id,
-                        def.key,
-                        ParamValue::Float(neutral),
-                        def.name,
-                        None,
-                    );
-                }
-            });
+            let name = if def.unit.is_empty() {
+                def.name.to_string()
+            } else {
+                format!("{} ({})", def.name, def.unit)
+            };
+            let edit =
+                resolve::slider_row(ui, param_id, &name, &mut v, min..=max, decimals(min, max));
+            if edit.changed {
+                set(history, id, def, ParamValue::Float(v), coalesce.clone());
+            }
+            if edit.released {
+                history.break_coalescing();
+            }
+            // Reset means *neutral*, not default. For a look effect those
+            // differ, and reset should always mean "do nothing".
+            if edit.reset {
+                set(history, id, def, ParamValue::Float(neutral), None);
+            }
         }
         ParamKind::Bool { default } => {
             let mut v = current
                 .as_ref()
                 .and_then(ParamValue::as_bool)
                 .unwrap_or(default);
-            if ui.checkbox(&mut v, def.name).changed() {
-                set(history, id, def.key, ParamValue::Bool(v), def.name, None);
+            let edit = resolve::check_row(ui, param_id, def.name, &mut v);
+            if edit.changed {
+                set(history, id, def, ParamValue::Bool(v), None);
+            }
+            if edit.reset {
+                set(history, id, def, ParamValue::Bool(default), None);
             }
         }
         ParamKind::Choice { options, default } => {
@@ -395,52 +352,32 @@ fn param_ui(
                 .and_then(ParamValue::as_choice)
                 .unwrap_or(default)
                 .to_string();
-            ui.horizontal(|ui| {
-                ui.label(def.name);
-                egui::ComboBox::from_id_salt((id.0, def.key))
-                    .selected_text(&v)
-                    .show_ui(ui, |ui| {
-                        for option in options {
-                            if ui
-                                .selectable_value(&mut v, (*option).to_string(), *option)
-                                .clicked()
-                            {
-                                set(
-                                    history,
-                                    id,
-                                    def.key,
-                                    ParamValue::Choice(v.clone()),
-                                    def.name,
-                                    None,
-                                );
-                            }
-                        }
-                    });
-            });
+            let edit = resolve::choice_row(ui, param_id, def.name, options, &mut v);
+            if edit.changed {
+                set(history, id, def, ParamValue::Choice(v), None);
+            }
+            if edit.reset {
+                set(
+                    history,
+                    id,
+                    def,
+                    ParamValue::Choice(default.to_string()),
+                    None,
+                );
+            }
         }
         ParamKind::Rgb { default } => {
             let mut v = match current {
                 Some(ParamValue::Rgb(v)) => v,
                 _ => default,
             };
-            ui.horizontal(|ui| {
-                ui.label(def.name);
-                // Working-gamut linear values, so the picker is fed the same
-                // numbers the shader sees rather than a display-space guess.
-                if ui.color_edit_button_rgb(&mut v).changed() {
-                    set(history, id, def.key, ParamValue::Rgb(v), def.name, None);
-                }
-                if ui.small_button("Reset").clicked() {
-                    set(
-                        history,
-                        id,
-                        def.key,
-                        ParamValue::Rgb(default),
-                        def.name,
-                        None,
-                    );
-                }
-            });
+            let edit = resolve::colour_row(ui, param_id, def.name, &mut v);
+            if edit.changed {
+                set(history, id, def, ParamValue::Rgb(v), None);
+            }
+            if edit.reset {
+                set(history, id, def, ParamValue::Rgb(default), None);
+            }
         }
         ParamKind::Wheel => {
             let mut w = current
@@ -448,50 +385,41 @@ fn param_ui(
                 .and_then(ParamValue::as_wheel)
                 .copied()
                 .unwrap_or_default();
-            ui.collapsing(def.name, |ui| {
-                // Four drag values at M1. A real colour wheel — a draggable
-                // puck over a hue disc with a luminance ring — is a from-scratch
-                // custom widget and belongs with the rest of M2's palette work.
-                let mut changed = false;
-                for (i, label) in ["R", "G", "B"].iter().enumerate() {
-                    let r = ui.add(
-                        egui::Slider::new(&mut w.rgb[i], -0.5..=0.5)
-                            .text(*label)
-                            .fixed_decimals(3),
+            resolve::section(ui, param_id, def.name, |ui| {
+                let mut edit = Edit::default();
+                for (i, label) in ["Red", "Green", "Blue"].iter().enumerate() {
+                    let e = resolve::slider_row(
+                        ui,
+                        param_id.with(i),
+                        label,
+                        &mut w.rgb[i],
+                        -0.5..=0.5,
+                        3,
                     );
-                    changed |= r.changed();
-                    if r.drag_stopped() {
-                        history.break_coalescing();
-                    }
+                    edit.changed |= e.changed;
+                    edit.released |= e.released;
+                    edit.reset |= e.reset;
                 }
-                let r = ui.add(
-                    egui::Slider::new(&mut w.master, -0.5..=0.5)
-                        .text("Master")
-                        .fixed_decimals(3),
+                let e = resolve::slider_row(
+                    ui,
+                    param_id.with("master"),
+                    "Master",
+                    &mut w.master,
+                    -0.5..=0.5,
+                    3,
                 );
-                changed |= r.changed();
-                if r.drag_stopped() {
+                edit.changed |= e.changed;
+                edit.released |= e.released;
+                edit.reset |= e.reset;
+
+                if edit.changed {
+                    set(history, id, def, ParamValue::Wheel(w), coalesce.clone());
+                }
+                if edit.released {
                     history.break_coalescing();
                 }
-                if changed {
-                    set(
-                        history,
-                        id,
-                        def.key,
-                        ParamValue::Wheel(w),
-                        def.name,
-                        coalesce.clone(),
-                    );
-                }
-                if ui.small_button("Reset").clicked() {
-                    set(
-                        history,
-                        id,
-                        def.key,
-                        ParamValue::Wheel(Wheel::default()),
-                        def.name,
-                        None,
-                    );
+                if edit.reset {
+                    set(history, id, def, ParamValue::Wheel(Wheel::default()), None);
                 }
             });
         }
@@ -502,6 +430,7 @@ fn param_ui(
                 .cloned()
                 .unwrap_or_default();
             ui.horizontal(|ui| {
+                ui.add_space(resolve::LABEL_WIDTH - 60.0);
                 ui.label(egui::RichText::new(def.name).small().weak());
                 ui.label(
                     egui::RichText::new(if curve.is_identity() {
@@ -512,29 +441,21 @@ fn param_ui(
                     .small()
                     .monospace(),
                 );
-                // A draggable spline editor is M2. Two presets are enough to
-                // prove the LUT path end to end without pretending otherwise.
+                // The real editor is the Tone Curve panel; a stacked Curves
+                // row is rare enough that two presets are enough here.
                 if ui.small_button("S-curve").clicked() {
                     set(
                         history,
                         id,
-                        def.key,
+                        def,
                         ParamValue::Curve(Curve {
                             points: vec![[0.0, 0.0], [0.25, 0.18], [0.75, 0.82], [1.0, 1.0]],
                         }),
-                        def.name,
                         None,
                     );
                 }
                 if ui.small_button("Reset").clicked() {
-                    set(
-                        history,
-                        id,
-                        def.key,
-                        ParamValue::Curve(Curve::default()),
-                        def.name,
-                        None,
-                    );
+                    set(history, id, def, ParamValue::Curve(Curve::default()), None);
                 }
             });
         }
@@ -544,14 +465,71 @@ fn param_ui(
 fn set(
     history: &mut History,
     id: RowId,
-    key: &'static str,
+    def: &'static ParamDef,
     value: ParamValue,
-    label: &'static str,
     coalesce: Option<String>,
 ) {
-    history.edit(label, coalesce, |doc| {
+    history.edit(def.name, coalesce, |doc| {
         if let Some(row) = doc.stack.get_mut(id) {
-            row.params.set(key, value);
+            row.params.set(def.key, value);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_wide_range_reads_in_fewer_decimals_than_a_narrow_one() {
+        assert_eq!(decimals(0.0, 360.0), 1);
+        assert_eq!(decimals(0.0, 100.0), 2);
+        assert_eq!(decimals(-1.0, 1.0), 3);
+    }
+
+    /// Every parameter of every effect has to be reachable. A heading is only
+    /// drawn when something declares it, so a typo in a section name would
+    /// hide a control rather than misfile it — and nothing would say so.
+    #[test]
+    fn every_parameter_lands_under_a_heading_or_at_the_top() {
+        for effect in pe_effects::all() {
+            let top = effect
+                .params
+                .iter()
+                .filter(|p| p.section.is_empty())
+                .count();
+            let mut seen: Vec<&str> = Vec::new();
+            let mut filed = 0;
+            for p in effect.params.iter().filter(|p| !p.section.is_empty()) {
+                if !seen.contains(&p.section) {
+                    seen.push(p.section);
+                }
+                filed += 1;
+            }
+            assert_eq!(
+                top + filed,
+                effect.params.len(),
+                "{} loses parameters between the top level and its headings",
+                effect.key
+            );
+        }
+    }
+
+    /// A heading with one control under it is a heading that costs a click and
+    /// buys nothing.
+    #[test]
+    fn no_heading_holds_a_single_control() {
+        for effect in pe_effects::all() {
+            let mut sections: Vec<(&str, usize)> = Vec::new();
+            for p in effect.params.iter().filter(|p| !p.section.is_empty()) {
+                match sections.iter_mut().find(|(s, _)| *s == p.section) {
+                    Some((_, n)) => *n += 1,
+                    None => sections.push((p.section, 1)),
+                }
+            }
+            for (name, n) in sections {
+                assert!(n > 1, "{}'s \"{name}\" holds only {n} control", effect.key);
+            }
+        }
+    }
 }

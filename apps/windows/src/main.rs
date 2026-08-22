@@ -18,6 +18,7 @@ mod inspector;
 mod library;
 mod mixer;
 mod preview;
+mod resolve;
 mod scopes;
 mod wheels;
 
@@ -106,6 +107,8 @@ pub struct App {
     show_scopes: bool,
     shown: scopes::Shown,
     scope_textures: scopes::Textures,
+    /// Which inspector page is showing.
+    tab: Tab,
     /// Whether the crop tool is open. It changes what the viewer shows — the
     /// whole straightened frame rather than the cropped result — so it lives
     /// here rather than inside the panel.
@@ -169,6 +172,7 @@ impl App {
             show_scopes: false,
             shown: scopes::Shown::default(),
             scope_textures: scopes::Textures::default(),
+            tab: Tab::Colour,
             cropping: false,
             last: None,
             last_frame: (1, 1),
@@ -978,53 +982,53 @@ impl eframe::App for App {
         }
 
         egui::SidePanel::right("inspector")
-            .default_width(340.0)
-            .width_range(300.0..=560.0)
+            .default_width(420.0)
+            .width_range(320.0..=640.0)
             .show(ctx, |ui| {
-                ui.add_space(4.0);
-                basic::histogram(ui, self.preview.as_ref().and_then(|p| p.histogram()));
-                ui.add_space(4.0);
+                let name = self
+                    .path
+                    .as_ref()
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "test chart".into());
+                inspector_header(ui, &name, (self.image.width, self.image.height));
+                tab_row(ui, &mut self.tab);
+                ui.add_space(6.0);
 
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    egui::CollapsingHeader::new("Basic")
-                        .default_open(true)
-                        .show(ui, |ui| {
-                            basic::panel(ui, &mut self.history);
-                            if ui.small_button("Reset Basic").clicked() {
-                                basic::reset(&mut self.history);
-                            }
+                egui::ScrollArea::vertical().show(ui, |ui| match self.tab {
+                    Tab::Colour => {
+                        basic::histogram(ui, self.preview.as_ref().and_then(|p| p.histogram()));
+                        ui.add_space(6.0);
+                        egui::CollapsingHeader::new("Basic")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                basic::panel(ui, &mut self.history);
+                                if ui.small_button("Reset Basic").clicked() {
+                                    basic::reset(&mut self.history);
+                                }
+                            });
+                        egui::CollapsingHeader::new("Tone Curve").show(ui, |ui| {
+                            curve::editor(ui, &mut self.history);
                         });
-
-                    egui::CollapsingHeader::new("Crop & Size")
-                        .default_open(false)
-                        .show(ui, |ui| {
-                            let source = (self.image.width, self.image.height);
-                            let was = self.cropping;
-                            crop::panel(ui, &mut self.history, source, &mut self.cropping);
-                            if was != self.cropping {
-                                self.view.fit();
-                            }
+                        egui::CollapsingHeader::new("Colour Wheels").show(ui, |ui| {
+                            wheels::panel(ui, &mut self.history);
                         });
-
-                    egui::CollapsingHeader::new("Tone Curve").show(ui, |ui| {
-                        curve::editor(ui, &mut self.history);
-                    });
-
-                    egui::CollapsingHeader::new("Colour Wheels").show(ui, |ui| {
-                        wheels::panel(ui, &mut self.history);
-                    });
-
-                    ui.add_space(6.0);
-                    ui.separator();
-                    egui::CollapsingHeader::new("Colour Mixer").show(ui, |ui| {
-                        mixer::panel(ui, &mut self.history);
-                    });
-
-                    egui::CollapsingHeader::new("Effects")
-                        .default_open(true)
-                        .show(ui, |ui| {
-                            inspector::show(ui, &mut self.history, &mut self.ids);
+                        egui::CollapsingHeader::new("Colour Mixer").show(ui, |ui| {
+                            mixer::panel(ui, &mut self.history);
                         });
+                    }
+                    Tab::Effects => {
+                        inspector::show(ui, &mut self.history, &mut self.ids);
+                    }
+                    Tab::Image => {
+                        let source = (self.image.width, self.image.height);
+                        let was = self.cropping;
+                        crop::panel(ui, &mut self.history, source, &mut self.cropping);
+                        if was != self.cropping {
+                            self.view.fit();
+                        }
+                    }
+                    Tab::File => file_page(ui, self),
                 });
             });
 
@@ -1137,6 +1141,205 @@ impl eframe::App for App {
         if let Some(index) = selected {
             self.select(index, ctx);
         }
+    }
+}
+
+/// Which page of the inspector is showing.
+///
+/// Resolve's tab row, with the tabs a photo editor can honestly fill. Video,
+/// Audio and Transition are clip properties that do not exist here, and a tab
+/// that opens onto nothing is worse than one that is not there.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tab {
+    Colour,
+    Effects,
+    Image,
+    File,
+}
+
+impl Tab {
+    const ALL: [Tab; 4] = [Tab::Colour, Tab::Effects, Tab::Image, Tab::File];
+
+    fn label(self) -> &'static str {
+        match self {
+            Tab::Colour => "Colour",
+            Tab::Effects => "Effects",
+            Tab::Image => "Image",
+            Tab::File => "File",
+        }
+    }
+}
+
+/// The inspector's title bar: what is being edited, and how big it is.
+fn inspector_header(ui: &mut egui::Ui, name: &str, size: (u32, u32)) {
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), egui::Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let painter = ui.painter();
+
+    // A small picture glyph, drawn rather than typed — the bundled fonts have
+    // no dingbats, and one icon is not worth shipping a font for.
+    let icon = egui::Rect::from_min_size(
+        egui::pos2(rect.min.x + 6.0, rect.center().y - 8.0),
+        egui::vec2(18.0, 16.0),
+    );
+    painter.rect_stroke(
+        icon,
+        2.0,
+        egui::Stroke::new(1.2_f32, resolve::colour::ICON),
+        egui::StrokeKind::Inside,
+    );
+    painter.circle_filled(
+        egui::pos2(icon.min.x + 5.0, icon.min.y + 5.0),
+        1.8,
+        resolve::colour::ICON,
+    );
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            egui::pos2(icon.min.x + 3.0, icon.max.y - 2.5),
+            egui::pos2(icon.min.x + 8.5, icon.min.y + 7.0),
+            egui::pos2(icon.max.x - 2.5, icon.max.y - 2.5),
+        ],
+        resolve::colour::ICON,
+        egui::Stroke::NONE,
+    ));
+
+    painter.text(
+        egui::pos2(icon.max.x + 10.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        name,
+        egui::FontId::proportional(14.0),
+        resolve::colour::TITLE,
+    );
+    painter.text(
+        egui::pos2(rect.max.x - 8.0, rect.center().y),
+        egui::Align2::RIGHT_CENTER,
+        format!("{} x {}", size.0, size.1),
+        egui::FontId::proportional(11.0),
+        resolve::colour::LABEL,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(rect.min.x, rect.max.y),
+            egui::pos2(rect.max.x, rect.max.y),
+        ],
+        egui::Stroke::new(1.0_f32, resolve::colour::RULE),
+    );
+}
+
+/// Resolve's tab row: an underline under the one you are on, nothing else.
+fn tab_row(ui: &mut egui::Ui, current: &mut Tab) {
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), egui::Sense::hover());
+    let width = rect.width() / Tab::ALL.len() as f32;
+    for (i, tab) in Tab::ALL.iter().enumerate() {
+        let cell = egui::Rect::from_min_size(
+            egui::pos2(rect.min.x + i as f32 * width, rect.min.y),
+            egui::vec2(width, rect.height()),
+        );
+        let response = ui.interact(cell, ui.id().with(("tab", i)), egui::Sense::click());
+        if response.clicked() {
+            *current = *tab;
+        }
+        if !ui.is_rect_visible(cell) {
+            continue;
+        }
+        let active = *current == *tab;
+        let painter = ui.painter();
+        painter.text(
+            cell.center(),
+            egui::Align2::CENTER_CENTER,
+            tab.label(),
+            egui::FontId::proportional(12.0),
+            if active {
+                resolve::colour::TITLE
+            } else if response.hovered() {
+                resolve::colour::HANDLE
+            } else {
+                resolve::colour::LABEL
+            },
+        );
+        if active {
+            painter.line_segment(
+                [
+                    egui::pos2(cell.min.x + 10.0, cell.max.y - 1.0),
+                    egui::pos2(cell.max.x - 10.0, cell.max.y - 1.0),
+                ],
+                egui::Stroke::new(2.0_f32, resolve::colour::ACCENT),
+            );
+        }
+    }
+    ui.painter().line_segment(
+        [
+            egui::pos2(rect.min.x, rect.max.y),
+            egui::pos2(rect.max.x, rect.max.y),
+        ],
+        egui::Stroke::new(1.0_f32, resolve::colour::RULE),
+    );
+}
+
+/// The File page: where the photograph came from and what it is.
+fn file_page(ui: &mut egui::Ui, app: &App) {
+    let rows: Vec<(String, String)> = vec![
+        (
+            "Name".into(),
+            app.path
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "test chart".into()),
+        ),
+        (
+            "Folder".into(),
+            app.path
+                .as_ref()
+                .and_then(|p| p.parent())
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default(),
+        ),
+        (
+            "Source".into(),
+            format!("{} x {}", app.image.width, app.image.height),
+        ),
+        ("Output".into(), {
+            let (w, h) = pe_render::export::output_size(
+                app.history.document(),
+                app.image.width,
+                app.image.height,
+            );
+            format!("{w} x {h}")
+        }),
+        (
+            "Working space".into(),
+            format!(
+                "{} in, {} out",
+                app.history.document().color.input,
+                app.history.document().color.output
+            ),
+        ),
+        (
+            "In the set".into(),
+            format!(
+                "{} of {}",
+                app.library.current() + 1,
+                app.library.len().max(1)
+            ),
+        ),
+    ];
+    for (label, value) in rows {
+        ui.horizontal(|ui| {
+            ui.add_sized(
+                [resolve::LABEL_WIDTH, 18.0],
+                egui::Label::new(
+                    egui::RichText::new(label)
+                        .small()
+                        .color(resolve::colour::LABEL),
+                ),
+            );
+            ui.label(egui::RichText::new(value).small().monospace());
+        });
     }
 }
 

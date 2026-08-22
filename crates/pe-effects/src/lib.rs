@@ -88,9 +88,31 @@ pub struct ParamDef {
     pub kind: ParamKind,
     /// Unit suffix for the readout, e.g. `"EV"`, `"K"`, `"%"`.
     pub unit: &'static str,
+    /// Collapsible group this parameter belongs to in the inspector, or `""`
+    /// for the top level.
+    ///
+    /// Resolve's plugins put their controls under headings — Add Vignetting,
+    /// Add Dirt, Add Scratch 1 — and once an effect has thirty parameters that
+    /// stops being decoration. Film Damage is unusable as a flat list.
+    pub section: &'static str,
 }
 
 impl ParamDef {
+    /// The same parameter, filed under a heading.
+    ///
+    /// A method rather than another argument on every constructor: most
+    /// parameters have no section, and threading an empty string through a
+    /// hundred call sites to serve the handful that do is the wrong trade.
+    pub const fn in_section(self, section: &'static str) -> ParamDef {
+        ParamDef {
+            key: self.key,
+            name: self.name,
+            kind: self.kind,
+            unit: self.unit,
+            section,
+        }
+    }
+
     /// The value this parameter has when the user has not touched it.
     pub fn default_value(&self) -> ParamValue {
         match self.kind {

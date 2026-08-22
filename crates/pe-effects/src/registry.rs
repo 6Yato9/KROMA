@@ -35,6 +35,7 @@ const fn bipolar(
             neutral: 0.0,
         },
         unit,
+        section: "",
     }
 }
 
@@ -50,6 +51,7 @@ const fn amount(key: &'static str, name: &'static str) -> ParamDef {
             neutral: 0.0,
         },
         unit: "",
+        section: "",
     }
 }
 
@@ -84,6 +86,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 6500.0,
                 },
                 unit: "K",
+                section: "",
             },
             bipolar("tint", "Tint", 100.0, ""),
         ],
@@ -110,6 +113,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.4135,
                 },
                 unit: "",
+                section: "",
             },
         ],
     },
@@ -127,24 +131,28 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Luma",
                 kind: ParamKind::Curve,
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "red",
                 name: "Red",
                 kind: ParamKind::Curve,
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "green",
                 name: "Green",
                 kind: ParamKind::Curve,
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "blue",
                 name: "Blue",
                 kind: ParamKind::Curve,
                 unit: "",
+                section: "",
             },
             amount("soft_clip", "Soft Clip"),
             // The parametric curve. Four regions and three movable boundaries
@@ -164,6 +172,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.25,
                 },
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "split_mid",
@@ -175,6 +184,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.5,
                 },
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "split_high",
@@ -186,6 +196,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.75,
                 },
                 unit: "",
+                section: "",
             },
         ],
     },
@@ -217,18 +228,21 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Lift",
                 kind: ParamKind::Wheel,
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "gamma",
                 name: "Gamma",
                 kind: ParamKind::Wheel,
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "gain",
                 name: "Gain",
                 kind: ParamKind::Wheel,
                 unit: "",
+                section: "",
             },
             // The fourth wheel. Resolve has it and it is the one people
             // actually reach for; leaving it out is the most common way a
@@ -238,6 +252,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Offset",
                 kind: ParamKind::Wheel,
                 unit: "",
+                section: "",
             },
         ],
     },
@@ -262,12 +277,14 @@ pub static EFFECTS: &[EffectDef] = &[
                     default: "natural",
                 },
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "preview_influence",
                 name: "Preview Influence",
                 kind: ParamKind::Bool { default: false },
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "strength",
@@ -279,6 +296,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "pivot",
@@ -290,6 +308,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.3,
                 },
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "hue_angle",
@@ -301,12 +320,14 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 20.0,
                 },
                 unit: "°",
+                section: "",
             },
             ParamDef {
                 key: "protect_neutrals",
                 name: "Protect Neutrals",
                 kind: ParamKind::Bool { default: false },
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "min_saturation",
@@ -318,6 +339,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "",
+                section: "Protect Neutrals",
             },
             ParamDef {
                 key: "max_saturation",
@@ -329,6 +351,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 1.0,
                 },
                 unit: "",
+                section: "Protect Neutrals",
             },
             // Custom mode only. Resolve hides these behind the mode dropdown;
             // we keep them present so a document round-trips whatever mode it
@@ -343,6 +366,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 1.0,
                 },
                 unit: "",
+                section: "Shadows",
             },
             ParamDef {
                 key: "shadow_hue",
@@ -354,6 +378,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 200.0,
                 },
                 unit: "°",
+                section: "Shadows",
             },
             ParamDef {
                 key: "highlight_strength",
@@ -365,6 +390,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 1.0,
                 },
                 unit: "",
+                section: "Highlights",
             },
             ParamDef {
                 key: "highlight_hue",
@@ -376,6 +402,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 20.0,
                 },
                 unit: "°",
+                section: "Highlights",
             },
         ],
     },
@@ -403,6 +430,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "size",
@@ -416,6 +444,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 // Microns on a 35mm frame, not pixels. This is what makes the
                 // 1200px preview and the 6000px export agree.
                 unit: "µm",
+                section: "",
             },
             ParamDef {
                 key: "softness",
@@ -427,6 +456,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "",
+                section: "",
             },
             // Resolve: "At a value of 0, grain is monochrome." A continuous
             // control, not the boolean we had.
@@ -440,6 +470,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 1.0,
                 },
                 unit: "",
+                section: "",
             },
             // "Lower values emphasize lighter grains, higher values emphasize
             // darker grains."
@@ -454,6 +485,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 1.0,
                 },
                 unit: "",
+                section: "Advanced Controls",
             },
             ParamDef {
                 key: "midtone_gain",
@@ -465,6 +497,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 1.0,
                 },
                 unit: "",
+                section: "Advanced Controls",
             },
             ParamDef {
                 key: "highlight_gain",
@@ -476,6 +509,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 1.0,
                 },
                 unit: "",
+                section: "Advanced Controls",
             },
         ],
     },
@@ -506,6 +540,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "",
+                section: "",
             },
             // Threshold and Normalization are in *linear light*, where diffuse
             // white is 1.0. Defaulting the threshold to 1.0 meant nothing in an
@@ -522,6 +557,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.5,
                 },
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "normalization",
@@ -533,6 +569,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 1.0,
                 },
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "spread",
@@ -546,6 +583,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 // Fraction of the image's long edge. Resolution independence
                 // again: a pixel radius would shrink to a rim on export.
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "saturation",
@@ -557,6 +595,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 1.0,
                 },
                 unit: "",
+                section: "",
             },
             // Red-orange, the characteristic colour of light scattering back
             // off the film base through the dye layers.
@@ -570,6 +609,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 12.0,
                 },
                 unit: "°",
+                section: "",
             },
             amount("secondary_strength", "Secondary Glow"),
             ParamDef {
@@ -582,6 +622,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "",
+                section: "",
             },
             // Resolve's Fine Tune Relative Spread. With it off the glow is one
             // radius tinted by Hue; with it on each channel scatters its own
@@ -594,6 +635,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Fine Tune Relative Spread",
                 kind: ParamKind::Bool { default: false },
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "relative_red",
@@ -605,6 +647,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 1.0,
                 },
                 unit: "",
+                section: "Fine Tune Spread",
             },
             ParamDef {
                 key: "relative_green",
@@ -616,6 +659,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.7,
                 },
                 unit: "",
+                section: "Fine Tune Spread",
             },
             ParamDef {
                 key: "relative_blue",
@@ -627,6 +671,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.5,
                 },
                 unit: "",
+                section: "Fine Tune Spread",
             },
         ],
     },
@@ -654,6 +699,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "size",
@@ -665,6 +711,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.5,
                 },
                 unit: "",
+                section: "",
             },
             // Stretches the shape horizontally. At 0 the vignette follows
             // the frame; positive values widen it the way an anamorphic lens
@@ -680,6 +727,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.5,
                 },
                 unit: "",
+                section: "",
             },
             // 0 is an ellipse, 1 approaches a rectangle, by way of a
             // superellipse exponent.
@@ -693,6 +741,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "",
+                section: "Shape",
             },
             ParamDef {
                 key: "rotation",
@@ -704,6 +753,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "°",
+                section: "Shape",
             },
             ParamDef {
                 key: "center_x",
@@ -715,6 +765,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.5,
                 },
                 unit: "",
+                section: "Center Position",
             },
             ParamDef {
                 key: "center_y",
@@ -726,6 +777,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.5,
                 },
                 unit: "",
+                section: "Center Position",
             },
             ParamDef {
                 key: "color",
@@ -736,6 +788,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     default: [0.0, 0.0, 0.0],
                 },
                 unit: "",
+                section: "",
             },
         ],
     },
@@ -756,6 +809,7 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Display Depth",
                 kind: ParamKind::Bool { default: false },
                 unit: "",
+                section: "",
             },
             bipolar("shadow", "Shadow", 1.0, ""),
             bipolar("highlight", "Highlight", 1.0, ""),
@@ -768,6 +822,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     default: [0.78, 0.82, 0.90],
                 },
                 unit: "",
+                section: "",
             },
         ],
     },
@@ -790,6 +845,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "radius",
@@ -801,6 +857,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.06,
                 },
                 unit: "",
+                section: "",
             },
             // Linear light again: 1.0 is diffuse white and an SDR photo never
             // passes it. The same trap Halation had.
@@ -814,6 +871,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.5,
                 },
                 unit: "",
+                section: "",
             },
         ],
     },
@@ -839,6 +897,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "",
+                section: "",
             },
             // Positive warms, simulating a projector bulb running hot;
             // positive tint yellows, simulating dye failure.
@@ -854,6 +913,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "",
+                section: "Add Vignetting",
             },
             ParamDef {
                 key: "geometry_factor",
@@ -865,6 +925,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.5,
                 },
                 unit: "",
+                section: "Add Vignetting",
             },
             ParamDef {
                 key: "tilt_amount",
@@ -876,6 +937,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "",
+                section: "Add Vignetting",
             },
             ParamDef {
                 key: "tilt_angle",
@@ -887,6 +949,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 90.0,
                 },
                 unit: "°",
+                section: "Add Vignetting",
             },
             ParamDef {
                 key: "dirt_density",
@@ -898,6 +961,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "",
+                section: "Add Dirt",
             },
             ParamDef {
                 key: "dirt_size",
@@ -909,6 +973,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 1.0,
                 },
                 unit: "",
+                section: "Add Dirt",
             },
             ParamDef {
                 key: "dirt_blur",
@@ -920,6 +985,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.4,
                 },
                 unit: "",
+                section: "Add Dirt",
             },
             ParamDef {
                 key: "dirt_seed",
@@ -931,6 +997,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 7.0,
                 },
                 unit: "",
+                section: "Add Dirt",
             },
             ParamDef {
                 key: "dirt_color",
@@ -940,6 +1007,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     default: [0.0, 0.0, 0.0],
                 },
                 unit: "",
+                section: "Add Dirt",
             },
             ParamDef {
                 key: "scratch_blur",
@@ -951,6 +1019,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.3,
                 },
                 unit: "",
+                section: "Scratches",
             },
             ParamDef {
                 key: "scratch_color",
@@ -959,6 +1028,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     default: [1.0, 1.0, 1.0],
                 },
                 unit: "",
+                section: "Scratches",
             },
             // Five independent scratches, matching Resolve. A count
             // parameter could not place them, and placement is most of
@@ -973,6 +1043,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.2,
                 },
                 unit: "",
+                section: "Add Scratch 1",
             },
             ParamDef {
                 key: "scratch1_width",
@@ -984,6 +1055,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.002,
                 },
                 unit: "",
+                section: "Add Scratch 1",
             },
             ParamDef {
                 key: "scratch1_strength",
@@ -995,6 +1067,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "",
+                section: "Add Scratch 1",
             },
             ParamDef {
                 key: "scratch2_position",
@@ -1006,6 +1079,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.35,
                 },
                 unit: "",
+                section: "Add Scratch 2",
             },
             ParamDef {
                 key: "scratch2_width",
@@ -1017,6 +1091,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.002,
                 },
                 unit: "",
+                section: "Add Scratch 2",
             },
             ParamDef {
                 key: "scratch2_strength",
@@ -1028,6 +1103,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "",
+                section: "Add Scratch 2",
             },
             ParamDef {
                 key: "scratch3_position",
@@ -1039,6 +1115,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.5,
                 },
                 unit: "",
+                section: "Add Scratch 3",
             },
             ParamDef {
                 key: "scratch3_width",
@@ -1050,6 +1127,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.002,
                 },
                 unit: "",
+                section: "Add Scratch 3",
             },
             ParamDef {
                 key: "scratch3_strength",
@@ -1061,6 +1139,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "",
+                section: "Add Scratch 3",
             },
             ParamDef {
                 key: "scratch4_position",
@@ -1072,6 +1151,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.65,
                 },
                 unit: "",
+                section: "Add Scratch 4",
             },
             ParamDef {
                 key: "scratch4_width",
@@ -1083,6 +1163,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.002,
                 },
                 unit: "",
+                section: "Add Scratch 4",
             },
             ParamDef {
                 key: "scratch4_strength",
@@ -1094,6 +1175,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "",
+                section: "Add Scratch 4",
             },
             ParamDef {
                 key: "scratch5_position",
@@ -1105,6 +1187,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.8,
                 },
                 unit: "",
+                section: "Add Scratch 5",
             },
             ParamDef {
                 key: "scratch5_width",
@@ -1116,6 +1199,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.002,
                 },
                 unit: "",
+                section: "Add Scratch 5",
             },
             ParamDef {
                 key: "scratch5_strength",
@@ -1127,6 +1211,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "",
+                section: "Add Scratch 5",
             },
         ],
     },
@@ -1191,24 +1276,28 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Shadow",
                 kind: ParamKind::Wheel,
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "midtone",
                 name: "Midtone",
                 kind: ParamKind::Wheel,
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "highlight",
                 name: "Highlight",
                 kind: ParamKind::Wheel,
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "offset",
                 name: "Offset",
                 kind: ParamKind::Wheel,
                 unit: "",
+                section: "",
             },
             // Where "shadow" stops and "highlight" starts. Defaults sit
             // either side of 18% grey (0.4136 in ACEScct), which is where a
@@ -1223,6 +1312,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.30,
                 },
                 unit: "",
+                section: "",
             },
             ParamDef {
                 key: "high_range",
@@ -1234,6 +1324,7 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.48,
                 },
                 unit: "",
+                section: "",
             },
         ],
     },
