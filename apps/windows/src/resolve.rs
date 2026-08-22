@@ -901,6 +901,107 @@ mod tests {
         fired
     }
 
+    /// Click into a row's number box, then press Left arrow the way the
+    /// application does: consumed at the top of the frame, before any panel
+    /// is drawn.
+    ///
+    /// Returns whether egui reports the keyboard as taken, and whether the
+    /// key still reached the application anyway.
+    ///
+    /// Three frames to set up: one to register the widget, one to click it,
+    /// and one for the field to come back as a text box and take focus.
+    fn arrow_key_while_editing_a_number() -> (bool, bool) {
+        let ctx = egui::Context::default();
+        let width = 300.0;
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(width, 400.0));
+        let mut value = 0.5_f32;
+        let (mut busy, mut stolen) = (false, false);
+
+        let mut frame = |input: egui::RawInput, value: &mut f32, watch: bool| {
+            let _ = ctx.run(input, |ctx| {
+                if watch {
+                    // Exactly what the application does, in the same place.
+                    busy = ctx.wants_keyboard_input();
+                    stolen = ctx
+                        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft));
+                }
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                    slider_row(
+                        &mut child,
+                        egui::Id::new("row"),
+                        "Exposure",
+                        value,
+                        0.0..=1.0,
+                        3,
+                    );
+                });
+            });
+        };
+
+        let base = egui::RawInput {
+            screen_rect: Some(rect),
+            ..Default::default()
+        };
+        frame(base.clone(), &mut value, false);
+
+        // The number box sits between the reset arrow and the track.
+        let at = egui::pos2(
+            rect.max.x - RESET_W - GAP - VALUE_W * 0.5,
+            rect.min.y + ROW_H * 0.5,
+        );
+        let mut click = base.clone();
+        click.events = vec![
+            egui::Event::PointerMoved(at),
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: Default::default(),
+            },
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            },
+        ];
+        frame(click, &mut value, false);
+
+        let mut press = base;
+        press.events = vec![egui::Event::Key {
+            key: egui::Key::ArrowLeft,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }];
+        frame(press, &mut value, true);
+        (busy, stolen)
+    }
+
+    /// A row's number box is documented as something you can type into, and
+    /// the application binds bare Left, Right, F, S and C to changing the
+    /// photograph. Those two only coexist if the shortcuts stand down while a
+    /// field has the keyboard.
+    ///
+    /// egui will not do it for you: the shortcuts are read at the top of the
+    /// frame, before any widget is drawn, so the field never gets the chance
+    /// to swallow the key. `wants_keyboard_input` is the only signal there is,
+    /// and this pins down that it says what we need it to.
+    #[test]
+    fn a_focused_number_box_claims_the_keyboard() {
+        let (busy, stolen) = arrow_key_while_editing_a_number();
+        assert!(
+            busy,
+            "clicking the number box did not give it keyboard focus, so there is              nothing to hold the single-key shortcuts back with"
+        );
+        assert!(
+            stolen,
+            "egui declined the key on its own — if this ever starts failing, the              guard in the toolbar's input block is no longer carrying its weight"
+        );
+    }
+
     #[test]
     fn an_icon_button_reports_a_click() {
         assert!(press_icon(true), "clicking the glyph did nothing");

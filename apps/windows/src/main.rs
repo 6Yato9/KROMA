@@ -104,7 +104,8 @@ pub struct App {
     /// proves the stage cache works — it should read 1 while a slider is being
     /// dragged, not the stack depth.
     last_passes: usize,
-    status: String,
+    /// The last thing the application said, and whether it went well.
+    status: Status,
     /// The window title can only be set once a Context exists, so it is
     /// deferred to the first frame rather than done in the constructor.
     titled: bool,
@@ -209,7 +210,7 @@ impl App {
             gpu_name,
             bypass_all: false,
             last_passes: 0,
-            status: String::new(),
+            status: Status::default(),
             titled: false,
             view: View::default(),
             library,
@@ -260,14 +261,16 @@ impl App {
         let image = match pe_io::load(&path) {
             Ok(img) => img,
             Err(e) => {
-                self.status = format!("could not open {}: {e}", path.display());
+                self.status
+                    .problem(format!("could not open {}: {e}", path.display()));
                 return;
             }
         };
         if let Some(preview) = self.preview.as_mut()
             && let Err(e) = preview.set_source(&image)
         {
-            self.status = format!("could not upload {}: {e}", path.display());
+            self.status
+                .problem(format!("could not upload {}: {e}", path.display()));
             return;
         }
 
@@ -314,14 +317,16 @@ impl App {
         let image = match pe_io::load(&path) {
             Ok(img) => img,
             Err(e) => {
-                self.status = format!("could not open {}: {e}", path.display());
+                self.status
+                    .problem(format!("could not open {}: {e}", path.display()));
                 return;
             }
         };
         if let Some(preview) = self.preview.as_mut()
             && let Err(e) = preview.set_source(&image)
         {
-            self.status = format!("could not upload {}: {e}", path.display());
+            self.status
+                .problem(format!("could not upload {}: {e}", path.display()));
             return;
         }
         self.image = image;
@@ -344,7 +349,7 @@ impl App {
         self.library.remove(index);
         self.remember_session();
         if self.library.is_empty() {
-            self.status = "no photos open".into();
+            self.status.problem("no photos open");
             return;
         }
         if was_current {
@@ -369,7 +374,8 @@ impl App {
         let image = match pe_io::load(&path) {
             Ok(img) => img,
             Err(e) => {
-                self.status = format!("could not open {}: {e}", path.display());
+                self.status
+                    .problem(format!("could not open {}: {e}", path.display()));
                 return;
             }
         };
@@ -377,7 +383,8 @@ impl App {
         if let Some(preview) = self.preview.as_mut()
             && let Err(e) = preview.set_source(&image)
         {
-            self.status = format!("could not upload {}: {e}", path.display());
+            self.status
+                .problem(format!("could not upload {}: {e}", path.display()));
             return;
         }
 
@@ -385,7 +392,7 @@ impl App {
             .unwrap_or_else(|| pe_effects::new_document(path.to_string_lossy().to_string()));
         self.ids = RowIdGenerator::resuming(&doc);
         self.history = History::new(doc);
-        self.status = format!("opened {}", path.display());
+        self.status.done(format!("opened {}", path.display()));
         self.image = image;
         self.path = Some(path);
         self.view.fit();
@@ -507,19 +514,21 @@ impl App {
         };
         let found = Library::scan(&dir);
         if found.is_empty() {
-            self.status = format!("no images in {}", dir.display());
+            self.status
+                .problem(format!("no images in {}", dir.display()));
             return;
         }
         let n = found.len();
         self.add_and_show(found, ctx);
-        self.status = format!("opened {n} photos from {}", dir.display());
+        self.status
+            .done(format!("opened {n} photos from {}", dir.display()));
     }
 
     /// Add photographs to the set and move to the first genuinely new one.
     fn add_and_show(&mut self, paths: Vec<PathBuf>, ctx: &egui::Context) {
         let first_run = self.library.is_empty();
         let Some(index) = self.library.add(paths) else {
-            self.status = "already open".into();
+            self.status.done("already open");
             return;
         };
         self.show_strip = true;
@@ -543,7 +552,7 @@ impl App {
     /// Start a batch export of every photograph in the set.
     fn batch_export(&mut self) {
         if self.library.is_empty() {
-            self.status = "no photos open".into();
+            self.status.problem("no photos open");
             return;
         }
         let start = self.path.as_ref().and_then(|p| p.parent());
@@ -573,11 +582,15 @@ impl App {
             let (done, failed) = (batch.done, batch.failed);
             let dir = batch.dir.clone();
             self.batch = None;
-            self.status = if failed == 0 {
-                format!("exported {done} photos to {}", dir.display())
+            if failed == 0 {
+                self.status
+                    .done(format!("exported {done} photos to {}", dir.display()));
             } else {
-                format!("exported {done} to {}, {failed} failed", dir.display())
-            };
+                self.status.problem(format!(
+                    "exported {done} to {}, {failed} failed",
+                    dir.display()
+                ));
+            }
             return false;
         };
         batch.next += 1;
@@ -654,7 +667,7 @@ impl App {
     /// original file is never touched.
     fn save_edit(&mut self) {
         let Some(path) = self.edit_path() else {
-            self.status = "open a photo first".into();
+            self.status.problem("open a photo first");
             return;
         };
         // A sidecar could only collide with a photograph if one were named
@@ -662,7 +675,10 @@ impl App {
         // anyway, because "never write over an original" is worth being a rule
         // rather than a set of places the rule happens to hold.
         if self.would_overwrite_a_source(&path) {
-            self.status = format!("refused: {} is one of your photographs", path.display());
+            self.status.problem(format!(
+                "refused: {} is one of your photographs",
+                path.display()
+            ));
             return;
         }
         match self
@@ -672,8 +688,8 @@ impl App {
             .map_err(|e| e.to_string())
             .and_then(|json| std::fs::write(&path, json).map_err(|e| e.to_string()))
         {
-            Ok(()) => self.status = format!("saved {}", path.display()),
-            Err(e) => self.status = format!("save failed: {e}"),
+            Ok(()) => self.status.done(format!("saved {}", path.display())),
+            Err(e) => self.status.problem(format!("save failed: {e}")),
         }
     }
 
@@ -684,7 +700,7 @@ impl App {
     /// by mistake is reach for Ctrl-Z.
     fn revert(&mut self) {
         let Some(path) = self.path.clone() else {
-            self.status = "open a photo first".into();
+            self.status.problem("open a photo first");
             return;
         };
         let fresh = pe_effects::new_document(path.to_string_lossy().to_string());
@@ -692,12 +708,12 @@ impl App {
         self.ids = RowIdGenerator::resuming(self.history.document());
         autosave::forget(&path);
         self.autosave.reset(self.history.revision());
-        self.status = format!("reverted {}", path.display());
+        self.status.done(format!("reverted {}", path.display()));
     }
 
     fn load_edit(&mut self) {
         let Some(path) = self.edit_path() else {
-            self.status = "open a photo first".into();
+            self.status.problem("open a photo first");
             return;
         };
         let loaded = std::fs::read_to_string(&path)
@@ -708,9 +724,9 @@ impl App {
                 self.ids = RowIdGenerator::resuming(&doc);
                 self.history = History::new(doc);
                 self.autosave.reset(self.history.revision());
-                self.status = format!("loaded {}", path.display());
+                self.status.done(format!("loaded {}", path.display()));
             }
-            Err(e) => self.status = format!("load failed: {e}"),
+            Err(e) => self.status.problem(format!("load failed: {e}")),
         }
     }
 
@@ -763,11 +779,12 @@ impl App {
             write(&path, self.history.document());
         }
 
-        self.status = if failed == 0 {
-            format!("saved {written} edits")
+        if failed == 0 {
+            self.status.done(format!("saved {written} edits"));
         } else {
-            format!("saved {written} edits, {failed} failed")
-        };
+            self.status
+                .problem(format!("saved {written} edits, {failed} failed"));
+        }
     }
 
     fn edit_path(&self) -> Option<PathBuf> {
@@ -791,13 +808,16 @@ impl App {
 
     fn export(&mut self) {
         let Some(preview) = self.preview.as_ref() else {
-            self.status = "no GPU".into();
+            self.status.problem("no GPU");
             return;
         };
         let source = self.path.clone().unwrap_or_else(|| PathBuf::from("export"));
         let out = source.with_file_name(export_name(&source));
         if self.would_overwrite_a_source(&out) {
-            self.status = format!("refused: {} is one of your photographs", out.display());
+            self.status.problem(format!(
+                "refused: {} is one of your photographs",
+                out.display()
+            ));
             return;
         }
 
@@ -815,12 +835,14 @@ impl App {
             Ok(pixels) => {
                 let saved = pe_io::DecodedImage::new(w, h, pixels)
                     .and_then(|img| pe_io::save_jpeg(&img, &out, 95));
-                self.status = match saved {
-                    Ok(()) => format!("exported {} at {w}x{h}", out.display()),
-                    Err(e) => format!("export failed: {e}"),
-                };
+                match saved {
+                    Ok(()) => self
+                        .status
+                        .done(format!("exported {} at {w}x{h}", out.display())),
+                    Err(e) => self.status.problem(format!("export failed: {e}")),
+                }
             }
-            Err(e) => self.status = format!("export failed: {e}"),
+            Err(e) => self.status.problem(format!("export failed: {e}")),
         }
     }
 }
@@ -842,8 +864,42 @@ impl eframe::App for App {
         let mut action: Option<filmstrip::Action> = None;
         let mut open_requested = false;
         let mut open_folder_requested = false;
+        let mut save_requested = false;
+        let mut export_requested = false;
         let mut stop_batch = false;
+        // A parameter's number box is a text field while you are typing in it,
+        // and it wants the same keys these shortcuts do: the arrows move the
+        // caret, Ctrl+Z takes back a digit. Shortcuts are read here, at the top
+        // of the frame and before a single widget is drawn, so the field never
+        // gets the chance to swallow them first — it has to be asked whether it
+        // is busy. Without this, correcting a typed value with the left arrow
+        // changes which photograph you are looking at.
+        //
+        // Opening is deliberately left outside the guard. No text field claims
+        // Ctrl+O, and it is the one shortcut somebody might reach for while a
+        // field happens to still have focus.
+        // A parameter's number box is a text field while you are typing in it,
+        // and it wants the same keys these shortcuts do: the arrows move the
+        // caret, Ctrl+Z takes back a digit, and the bare letters are letters.
+        // Shortcuts are read here, at the top of the frame and before a single
+        // widget is drawn, so the field never gets the chance to swallow them
+        // first — it has to be asked whether it is busy. Without this, nudging
+        // a typed value with the left arrow changes which photograph you are
+        // looking at and throws away what you were typing.
+        let typing = ctx.wants_keyboard_input();
         ctx.input_mut(|i| {
+            // Opening is deliberately outside the guard: no text field claims
+            // Ctrl+O, and it is the one shortcut somebody might reach for while
+            // a field still happens to have focus.
+            open_requested = i.consume_key(egui::Modifiers::COMMAND, egui::Key::O);
+            open_folder_requested = i.consume_key(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::O,
+            );
+            if typing {
+                return;
+            }
+
             if i.consume_key(egui::Modifiers::COMMAND, egui::Key::Z) {
                 self.history.undo();
             }
@@ -852,6 +908,15 @@ impl eframe::App for App {
                 egui::Key::Z,
             ) {
                 self.history.redo();
+            }
+            // Saving and exporting went into menus, which cost them a click
+            // each. A shortcut hands it back to whoever reaches for them often,
+            // and the menu items name the keys beside them.
+            if i.consume_key(egui::Modifiers::COMMAND, egui::Key::S) {
+                save_requested = true;
+            }
+            if i.consume_key(egui::Modifiers::COMMAND, egui::Key::E) {
+                export_requested = true;
             }
             if !self.library.is_empty() {
                 if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight) {
@@ -873,11 +938,6 @@ impl eframe::App for App {
             if i.consume_key(egui::Modifiers::SHIFT, egui::Key::D) {
                 self.bypass_all = !self.bypass_all;
             }
-            open_requested = i.consume_key(egui::Modifiers::COMMAND, egui::Key::O);
-            open_folder_requested = i.consume_key(
-                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                egui::Key::O,
-            );
         });
         // Drag a photo onto the window. Cheaper for the user than any menu,
         // and the first thing people try.
@@ -958,7 +1018,7 @@ impl eframe::App for App {
                     ui.separator();
                     ui.add_enabled_ui(self.path.is_some(), |ui| {
                         if ui
-                            .button("Save edit")
+                            .add(egui::Button::new("Save edit").shortcut_text("Ctrl+S"))
                             .on_hover_text("Writes <photo>.peproj beside the original")
                             .clicked()
                         {
@@ -999,7 +1059,7 @@ impl eframe::App for App {
                 ui.menu_button("Export", |ui| {
                     ui.set_min_width(MENU_W);
                     if ui
-                        .button("Export JPEG")
+                        .add(egui::Button::new("Export JPEG").shortcut_text("Ctrl+E"))
                         .on_hover_text("Beside the original, named <photo>_KROMA.jpg")
                         .clicked()
                     {
@@ -1024,7 +1084,7 @@ impl eframe::App for App {
                             .clicked()
                         {
                             self.clipboard = Some(self.history.document().stack.clone());
-                            self.status = "grade copied".into();
+                            self.status.done("grade copied");
                         }
                     });
                     ui.add_enabled_ui(self.clipboard.is_some(), |ui| {
@@ -1034,7 +1094,7 @@ impl eframe::App for App {
                             self.history
                                 .edit("Paste Grade", None, move |doc| doc.stack = stack);
                             self.ids = RowIdGenerator::resuming(self.history.document());
-                            self.status = "grade pasted".into();
+                            self.status.done("grade pasted");
                         }
                         if ui
                             .button("Paste to all")
@@ -1045,7 +1105,7 @@ impl eframe::App for App {
                             && let Some(stack) = self.clipboard.clone()
                         {
                             let n = self.library.paste_stack_to_all(&stack);
-                            self.status = format!("grade pasted to {n} photos");
+                            self.status.done(format!("grade pasted to {n} photos"));
                         }
                     });
                 });
@@ -1089,6 +1149,13 @@ impl eframe::App for App {
                     self.compare = self.compare.next();
                 }
                 ui.separator();
+                // The filmstrip had no control at all until now — only the
+                // bare F key, which is not a thing anybody finds. A panel you
+                // can hide and cannot get back is a panel you have lost.
+                ui.add_enabled_ui(self.library.len() > 1, |ui| {
+                    ui.toggle_value(&mut self.show_strip, "Filmstrip")
+                        .on_hover_text("F — the other photographs in the set");
+                });
                 ui.toggle_value(&mut self.show_scopes, "Scopes")
                     .on_hover_text("S — waveform, parade and vectorscope");
                 ui.separator();
@@ -1141,16 +1208,51 @@ impl eframe::App for App {
                 });
         }
 
-        if !self.status.is_empty() {
-            egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(self.status.clone());
+        // A message that went well clears itself, but egui only redraws when
+        // something happens — without this the message sits there until the
+        // next time the mouse moves, which is not "six seconds".
+        if let Some(left) = self.status.expires_in() {
+            if left.is_zero() {
+                self.status.clear();
+            } else {
+                ctx.request_repaint_after(left);
+            }
+        }
+
+        // Always present, rather than appearing with the first message. A bar
+        // that comes and goes moves the photograph up and down under it, and a
+        // photograph that jumps while you are judging it is worse than a strip
+        // of window spent on the name of what you are looking at.
+        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                if self.status.text.is_empty() {
+                    let idle = match self.path.as_ref() {
+                        Some(p) => format!(
+                            "{} — {}x{}",
+                            p.file_name().unwrap_or(p.as_os_str()).to_string_lossy(),
+                            self.image.width,
+                            self.image.height
+                        ),
+                        None => "no photograph open".to_string(),
+                    };
+                    ui.label(egui::RichText::new(idle).color(theme::colour::DIM));
+                } else {
+                    // ERROR rather than WARN: the palette already draws the
+                    // distinction between "be careful" and "this did not
+                    // happen", and every message that lands here is the
+                    // second kind.
+                    let tint = if self.status.bad {
+                        theme::colour::ERROR
+                    } else {
+                        theme::colour::LABEL
+                    };
+                    ui.label(egui::RichText::new(&self.status.text).color(tint));
                     if ui.small_button("dismiss").clicked() {
                         self.status.clear();
                     }
-                });
+                }
             });
-        }
+        });
 
         if let Some(batch) = self.batch.as_ref() {
             let total = batch.targets.len();
@@ -1463,9 +1565,21 @@ impl eframe::App for App {
         if open_folder_requested {
             self.open_folder_dialog(ctx);
         }
+        // Both refuse politely with no photograph open, which is why they are
+        // called unconditionally rather than gated on `self.path` here.
+        if save_requested {
+            self.save_edit();
+        }
+        if export_requested {
+            self.export();
+        }
 
         if stop_batch && let Some(batch) = self.batch.take() {
-            self.status = format!("stopped after {} of {}", batch.done, batch.targets.len());
+            self.status.done(format!(
+                "stopped after {} of {}",
+                batch.done,
+                batch.targets.len()
+            ));
         }
         match action {
             Some(filmstrip::Action::Show(index)) => selected = Some(index),
@@ -1752,6 +1866,55 @@ fn file_page(ui: &mut egui::Ui, app: &App) {
     }
 }
 
+/// One line of feedback at the bottom of the window.
+///
+/// Two kinds, because they want opposite lifetimes. "exported at 6000x4000"
+/// has been read by the time it has finished appearing and should then get out
+/// of the way. "export failed: permission denied" is the only place that
+/// failure is ever reported, and a message that clears itself is a failure
+/// nobody sees.
+#[derive(Default)]
+struct Status {
+    text: String,
+    /// Drawn in the warning colour, and never expires.
+    bad: bool,
+    /// When it was said. `None` for the ones that are staying.
+    said: Option<std::time::Instant>,
+}
+
+/// How long a message that went well stays up.
+///
+/// Long enough to read a path in, short enough that it is gone before you have
+/// finished the next thing.
+const STATUS_LINGER: std::time::Duration = std::time::Duration::from_secs(6);
+
+impl Status {
+    /// It worked. Say so, briefly.
+    fn done(&mut self, text: impl Into<String>) {
+        self.text = text.into();
+        self.bad = false;
+        self.said = Some(std::time::Instant::now());
+    }
+
+    /// It did not work, or it was refused. Stays until it is dismissed.
+    fn problem(&mut self, text: impl Into<String>) {
+        self.text = text.into();
+        self.bad = true;
+        self.said = None;
+    }
+
+    fn clear(&mut self) {
+        self.text.clear();
+        self.said = None;
+    }
+
+    /// How long this message has left, or `None` if it is not going anywhere.
+    fn expires_in(&self) -> Option<std::time::Duration> {
+        self.said
+            .map(|at| STATUS_LINGER.saturating_sub(at.elapsed()))
+    }
+}
+
 /// A batch export in progress.
 ///
 /// One photograph per frame, on the main thread. The obvious alternative is a
@@ -2032,6 +2195,34 @@ fn draw(ui: &egui::Ui, rect: egui::Rect, framing: &Framing) -> egui::Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The whole point of the two kinds: one leaves on its own, the other
+    /// waits to be read.
+    ///
+    /// A failure that clears itself is a failure nobody sees, and the status
+    /// bar is the only place this application ever reports one.
+    #[test]
+    fn only_the_good_news_expires() {
+        let mut status = Status::default();
+
+        status.done("exported at 6000x4000");
+        let left = status.expires_in().expect("good news should be on a clock");
+        assert!(!left.is_zero(), "it expired before it was drawn once");
+        assert!(left <= STATUS_LINGER);
+
+        status.problem("export failed: permission denied");
+        assert!(
+            status.expires_in().is_none(),
+            "a failure was put on a timer — it would clear itself unread"
+        );
+        assert!(status.bad, "a failure must be drawn as one");
+
+        // And saying something good again puts it back on the clock, rather
+        // than inheriting the failure's stay-forever.
+        status.done("saved");
+        assert!(!status.bad);
+        assert!(status.expires_in().is_some());
+    }
 
     /// A cycling button has to come back round, or it is a one-way trip: the
     /// control that turned the comparison on is the only one there is to turn

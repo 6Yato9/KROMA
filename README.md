@@ -3,11 +3,12 @@
 DaVinci's colour page, rebuilt for photographs, with a stacked reorderable
 inspector instead of a node graph. Free and open source, MIT or Apache-2.0.
 
-**Status: the colour page works.** Twenty-three effects run on the GPU, ten of
+**Status: the colour page works.** Thirty effects run on the GPU, eleven of
 them pinned as fixed panels the way Lightroom lays them out, the rest a
 reorderable stack with per-row blend, blend mode and enable. Curves — four tone
-and six secondaries — wheels, scopes, crop and straighten, a filmstrip, batch
-export. Isolation (qualifier, power windows) is next.
+and six secondaries — the Colour Warper's three views, wheels, scopes, crop and
+straighten, a filmstrip, batch export. Isolation (qualifier, power windows) is
+next.
 
 Effect parameters follow Resolve's own — names, ranges and defaults read off
 Resolve's inspector and recorded in
@@ -66,8 +67,23 @@ The only other thing written beside a photograph is its `.peproj` sidecar,
 which holds the edit and appears only when you ask for it with Save edit or
 Save all. Nothing at all is written when the window closes.
 
-`Shift+D` bypasses the whole stack. `Ctrl+Z` / `Ctrl+Shift+Z` undo and redo,
-with slider drags collapsed into a single step.
+## Keys
+
+| | |
+|---|---|
+| `Ctrl+O` / `Ctrl+Shift+O` | open a photograph / a folder |
+| `Ctrl+S` | save the edit as a `.peproj` sidecar |
+| `Ctrl+E` | export a JPEG |
+| `Ctrl+Z` / `Ctrl+Shift+Z` | undo / redo, with slider drags collapsed into one step |
+| `←` / `→` | previous / next photograph in the set |
+| `F` / `S` / `C` | filmstrip / scopes / crop |
+| `Shift+D` | bypass the whole stack |
+| scroll | zoom, anchored under the cursor |
+| double-click | fit to the window |
+
+They all stand down while you are typing into a parameter's number box, so
+correcting a value with the arrow keys does not change which photograph you
+are looking at.
 
 ## Layout
 
