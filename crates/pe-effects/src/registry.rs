@@ -145,7 +145,32 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "curves",
         spatial: false,
         derived_slots: 0,
-        gates: &[],
+        gates: &[
+            // Each intensity scales its own drawn curve, so on an untouched
+            // one it mixes the picture with itself and does nothing. Dimmed
+            // until there is something for it to dial back — a live control
+            // that cannot act is one the user concludes is broken.
+            Gate {
+                by: "luma",
+                when: When::Drawn,
+                params: &["luma_intensity"],
+            },
+            Gate {
+                by: "red",
+                when: When::Drawn,
+                params: &["red_intensity"],
+            },
+            Gate {
+                by: "green",
+                when: When::Drawn,
+                params: &["green_intensity"],
+            },
+            Gate {
+                by: "blue",
+                when: When::Drawn,
+                params: &["blue_intensity"],
+            },
+        ],
         params: &[
             ParamDef {
                 key: "luma",
@@ -4313,6 +4338,7 @@ mod tests {
                 let kind = e.param(gate.by).unwrap().kind;
                 let ok = match gate.when {
                     When::True | When::False => matches!(kind, ParamKind::Bool { .. }),
+                    When::Drawn => matches!(kind, ParamKind::Curve { .. }),
                     When::Positive => matches!(kind, ParamKind::Float { .. }),
                     When::Is(option) => match kind {
                         ParamKind::Choice { options, .. } => options.contains(&option),
@@ -4341,6 +4367,31 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A curve gate opens when the curve is drawn on, and not before.
+    ///
+    /// The case it was built for: the Curves panel's four intensity sliders
+    /// scale a *drawn* curve, so on an untouched one they mix the picture with
+    /// itself. They were live and inert, and "the Y/R/G/B sliders seem to be
+    /// doing nothing" is the only thing a user can conclude from that.
+    #[test]
+    fn an_intensity_is_dead_until_its_curve_is_drawn() {
+        let e = by_key("curves").unwrap();
+        let mut p = e.default_params();
+        assert!(
+            !e.is_active("luma_intensity", &p),
+            "an untouched curve left its intensity live"
+        );
+
+        // An S-curve: any point off the diagonal is a drawn curve.
+        let curve = pe_core::Curve {
+            points: vec![[0.0, 0.0], [0.5, 0.7], [1.0, 1.0]],
+        };
+        p.set("luma", pe_core::ParamValue::Curve(curve));
+        assert!(e.is_active("luma_intensity", &p));
+        // And only its own.
+        assert!(!e.is_active("red_intensity", &p));
     }
 
     /// The behaviour itself, on the case the screenshots showed: Halation's

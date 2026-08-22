@@ -196,6 +196,14 @@ pub enum When {
     Positive,
     /// A dropdown that has to be on one particular option.
     Is(&'static str),
+    /// A curve that has actually been drawn on.
+    ///
+    /// The case that made this worth having: the Curves panel's four
+    /// intensity sliders scale a drawn curve, so on an untouched one they mix
+    /// the picture with itself and do nothing. They were live and inert, which
+    /// tells the user nothing about why — and "this slider is broken" is the
+    /// only conclusion available to them.
+    Drawn,
 }
 
 /// Everything the renderer and the UI need to know about one effect.
@@ -263,6 +271,16 @@ impl EffectDef {
             (When::False, Some(ParamValue::Bool(v))) => !v,
             (When::Positive, Some(ParamValue::Float(v))) => v.abs() > 1e-6,
             (When::Is(option), Some(ParamValue::Choice(v))) => v == option,
+            (When::Drawn, Some(ParamValue::Curve(c))) => {
+                match self.param(gate.by).map(|p| p.kind) {
+                    // A tone curve's identity is the diagonal and a secondary's is
+                    // a flat line, which is the same distinction `default_value`
+                    // makes and for the same reason.
+                    Some(ParamKind::Curve { flat: true }) => !c.is_flat(),
+                    Some(ParamKind::Curve { flat: false }) => !c.is_identity(),
+                    _ => true,
+                }
+            }
             // A gate naming a parameter that is not there, or one of the wrong
             // kind, must not silently disable the controls it guards — that
             // would be a typo taking a third of a panel away with no error.

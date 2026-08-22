@@ -490,20 +490,49 @@ fn edit_column(ui: &mut egui::Ui, history: &mut History, id: RowId, channel: &mu
         ("green_intensity", 2),
         ("blue_intensity", 3),
     ];
+    let mut any_live = false;
     for (key, i) in INTENSITY {
+        // Dimmed until its own curve has been drawn on. Until then it would
+        // mix the picture with itself, and a slider that moves and does
+        // nothing is one the user reasonably concludes is broken.
+        let live = history
+            .document()
+            .stack
+            .get(id)
+            .and_then(|row| pe_effects::by_key("curves").map(|e| e.is_active(key, &row.params)))
+            .unwrap_or(true);
         let mut v = float_param(history, id, key, 100.0);
         // Through the same row as every other parameter in the application, so
         // the tracks line up with the panel above and below rather than
         // starting wherever this label happened to end.
-        let edit = resolve::slider_row(
-            ui,
-            ui.id().with(key),
-            ["Y", "R", "G", "B"][i],
-            &mut v,
-            0.0..=100.0,
-            0,
-        );
+        let edit = ui
+            .scope(|ui| {
+                if !live {
+                    ui.disable();
+                }
+                resolve::slider_row(
+                    ui,
+                    ui.id().with(key),
+                    ["Y", "R", "G", "B"][i],
+                    &mut v,
+                    0.0..=100.0,
+                    0,
+                )
+            })
+            .inner;
+        any_live |= live;
         apply(history, id, key, v, edit, 100.0);
+    }
+    if !any_live {
+        // Once, under the four, and only in the state that prompted it. Four
+        // copies of the same sentence — one per dimmed slider — would be
+        // clutter, and every other gated control in the application says its
+        // piece by being dim.
+        ui.label(
+            egui::RichText::new("dial back a curve once you have drawn one")
+                .small()
+                .weak(),
+        );
     }
 
     ui.add_space(8.0);
