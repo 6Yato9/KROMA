@@ -425,18 +425,24 @@ impl Preview {
             "preview-display",
         );
 
+        // Handed to egui through a view that does *not* decode sRGB on the way
+        // out, because egui decodes it itself. Through the ordinary view the
+        // picture goes through the transfer function twice and arrives
+        // noticeably dark — dark enough to see beside the filmstrip, which
+        // goes to egui as plain bytes and gets it right.
+        let display_view = display.raw_view();
         let mut renderer = self.egui_renderer.write();
         match self.texture_id {
             Some(id) => renderer.update_egui_texture_from_wgpu_texture(
                 &self.gpu.device,
-                &display.view,
+                &display_view,
                 wgpu::FilterMode::Linear,
                 id,
             ),
             None => {
                 self.texture_id = Some(renderer.register_native_texture(
                     &self.gpu.device,
-                    &display.view,
+                    &display_view,
                     wgpu::FilterMode::Linear,
                 ));
             }
@@ -449,17 +455,18 @@ impl Preview {
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             "preview-before",
         );
+        let before_view = before.raw_view();
         match self.before_id {
             Some(id) => renderer.update_egui_texture_from_wgpu_texture(
                 &self.gpu.device,
-                &before.view,
+                &before_view,
                 wgpu::FilterMode::Linear,
                 id,
             ),
             None => {
                 self.before_id = Some(renderer.register_native_texture(
                     &self.gpu.device,
-                    &before.view,
+                    &before_view,
                     wgpu::FilterMode::Linear,
                 ));
             }

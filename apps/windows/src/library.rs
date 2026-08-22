@@ -346,6 +346,74 @@ pub fn load_edit(path: &Path) -> Option<pe_core::Document> {
 
 #[cfg(test)]
 mod tests {
+
+    /// A grade belongs to the photograph it was made on.
+    ///
+    /// Switching parks the outgoing edit and takes the incoming one, and the
+    /// incoming one for a photograph never opened is a fresh document. Worth
+    /// asserting rather than reading, because the failure is quiet and looks
+    /// exactly like a colour-management bug: the new picture simply comes up
+    /// looking wrong.
+    #[test]
+    fn switching_does_not_carry_a_grade_to_the_next_photograph() {
+        let mut library = Library::new(vec![
+            PathBuf::from("Z:/none/a.jpg"),
+            PathBuf::from("Z:/none/b.jpg"),
+        ]);
+        let (mut history, ids) = library.take_current();
+        let id = history
+            .document()
+            .stack
+            .find_by_effect("exposure")
+            .expect("a pinned row");
+        history.edit("push", None, |doc| {
+            if let Some(row) = doc.stack.get_mut(id) {
+                row.params.set("ev", pe_core::ParamValue::Float(2.0));
+            }
+        });
+
+        let (next, _) = library.switch(1, history, ids);
+        let carried = next
+            .document()
+            .stack
+            .get(id)
+            .and_then(|r| r.params.get("ev"))
+            .and_then(pe_core::ParamValue::as_float)
+            .expect("set");
+        assert_eq!(carried, 0.0, "the first photograph's exposure came along");
+    }
+
+    /// And going back finds it again, which is the other half of the same
+    /// promise — parking is not discarding.
+    #[test]
+    fn switching_back_returns_the_edit_that_was_parked() {
+        let mut library = Library::new(vec![
+            PathBuf::from("Z:/none/a.jpg"),
+            PathBuf::from("Z:/none/b.jpg"),
+        ]);
+        let (mut history, ids) = library.take_current();
+        let id = history
+            .document()
+            .stack
+            .find_by_effect("exposure")
+            .expect("a pinned row");
+        history.edit("push", None, |doc| {
+            if let Some(row) = doc.stack.get_mut(id) {
+                row.params.set("ev", pe_core::ParamValue::Float(2.0));
+            }
+        });
+
+        let (b, b_ids) = library.switch(1, history, ids);
+        let (a, _) = library.switch(0, b, b_ids);
+        let back = a
+            .document()
+            .stack
+            .get(id)
+            .and_then(|r| r.params.get("ev"))
+            .and_then(pe_core::ParamValue::as_float)
+            .expect("set");
+        assert_eq!(back, 2.0, "the parked edit was lost");
+    }
     use super::*;
 
     fn library(names: &[&str]) -> Library {

@@ -163,3 +163,92 @@ pub fn reset(history: &mut History) {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pe_core::Document;
+
+    fn pushed(effect: &str, key: &str, to: f32) -> (History, pe_core::RowId) {
+        let doc: Document = pe_effects::new_document("photo.jpg");
+        let id = doc.stack.find_by_effect(effect).expect("a pinned row");
+        let mut history = History::new(doc);
+        history.edit("push", None, |doc| {
+            if let Some(row) = doc.stack.get_mut(id) {
+                row.params.set(key, ParamValue::Float(to));
+            }
+        });
+        (history, id)
+    }
+
+    fn value(history: &History, id: pe_core::RowId, key: &str) -> f32 {
+        history
+            .document()
+            .stack
+            .get(id)
+            .and_then(|r| r.params.get(key))
+            .and_then(ParamValue::as_float)
+            .expect("set")
+    }
+
+    /// Click the reset arrow on a real Basic row and see what the document
+    /// says afterwards.
+    ///
+    /// Driven as a click rather than by calling the handler, because the two
+    /// failures this is guarding against are different and only one of them
+    /// is visible from the code: a caller that drops `Edit::reset` — which is
+    /// what the Curves panel did for months — and a row whose arrow is not
+    /// where the click lands.
+    ///
+    /// Two frames, because egui hit-tests against the rectangles the previous
+    /// frame registered.
+    #[test]
+    fn the_reset_arrow_on_a_basic_row_puts_the_value_back() {
+        let (mut history, id) = pushed("exposure", "ev", 1.75);
+        assert_eq!(value(&history, id, "ev"), 1.75);
+
+        let ctx = egui::Context::default();
+        let area = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(420.0, 300.0));
+        let frame = |input: egui::RawInput, history: &mut History| {
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(area));
+                    slider(&mut child, history, "exposure", "ev", "Exposure");
+                });
+            });
+        };
+
+        let base = egui::RawInput {
+            screen_rect: Some(area),
+            ..Default::default()
+        };
+        frame(base.clone(), &mut history);
+
+        // The reset arrow sits at the end of the row, nine points in from the
+        // right edge — the centre of its column.
+        let at = egui::pos2(area.max.x - 9.0, area.min.y + 11.0);
+        let mut input = base;
+        input.events = vec![
+            egui::Event::PointerMoved(at),
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: Default::default(),
+            },
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            },
+        ];
+        frame(input, &mut history);
+
+        assert_eq!(
+            value(&history, id, "ev"),
+            0.0,
+            "the reset arrow left the value where it was"
+        );
+    }
+}

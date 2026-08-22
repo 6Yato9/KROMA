@@ -876,6 +876,73 @@ mod tests {
         }
     }
 
+    /// Click the reset arrow on a real effect row and see what the document
+    /// says afterwards.
+    ///
+    /// The Effects tab draws every parameter of every effect through one
+    /// function, so this covers all of them at once — and it covers the thing
+    /// a reading cannot: that the arrow is where the click lands.
+    #[test]
+    fn the_reset_arrow_on_an_effect_row_puts_the_value_back() {
+        let mut doc = pe_effects::new_document("photo.jpg");
+        let def = pe_effects::by_key("sharpen").expect("sharpen is registered");
+        let id = RowId(900);
+        let mut row = pe_core::StackRow::new(id, "sharpen");
+        row.params = def.default_params();
+        row.params.set("amount", ParamValue::Float(7.0));
+        doc.stack.push(row);
+        let mut history = History::new(doc);
+
+        let amount = def.param("amount").expect("amount");
+        let ctx = egui::Context::default();
+        let area = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(420.0, 300.0));
+        let frame = |input: egui::RawInput, history: &mut History| {
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(area));
+                    param_ui(&mut child, history, id, amount, egui::Id::new("row"));
+                });
+            });
+        };
+
+        let base = egui::RawInput {
+            screen_rect: Some(area),
+            ..Default::default()
+        };
+        frame(base.clone(), &mut history);
+
+        let at = egui::pos2(area.max.x - 9.0, area.min.y + 11.0);
+        let mut input = base;
+        input.events = vec![
+            egui::Event::PointerMoved(at),
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: Default::default(),
+            },
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            },
+        ];
+        frame(input, &mut history);
+
+        let now = history
+            .document()
+            .stack
+            .get(id)
+            .and_then(|r| r.params.get("amount"))
+            .and_then(ParamValue::as_float)
+            .expect("set");
+        // Neutral, not the default: Resolve ships Sharpen at 1.8 and reset
+        // means "do nothing", which is the distinction this whole list of
+        // visible defaults rests on.
+        assert_eq!(now, 0.0, "the reset arrow left the value where it was");
+    }
+
     /// A heading with one control under it is a heading that costs a click and
     /// buys nothing.
     ///

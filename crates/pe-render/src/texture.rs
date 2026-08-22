@@ -47,6 +47,16 @@ impl ImageTexture {
         usage: wgpu::TextureUsages,
         label: &str,
     ) -> Self {
+        // An sRGB texture may also be viewed as its plain counterpart. Costs
+        // nothing to allow, and [`Self::raw_view`] needs it. Derived from the
+        // format rather than named, so it stays right if the display format
+        // ever becomes one of the Bgra pair.
+        let plain = format.remove_srgb_suffix();
+        let view_formats = if plain == format {
+            Vec::new()
+        } else {
+            vec![plain]
+        };
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
@@ -59,7 +69,7 @@ impl ImageTexture {
             dimension: wgpu::TextureDimension::D2,
             format,
             usage,
-            view_formats: &[],
+            view_formats: &view_formats,
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         Self {
@@ -68,6 +78,25 @@ impl ImageTexture {
             width: width.max(1),
             height: height.max(1),
         }
+    }
+
+    /// A view that hands back the bytes as they are stored, with no sRGB
+    /// decode on the way out.
+    ///
+    /// The default view of an `...Srgb` texture applies the EOTF when sampled,
+    /// which is right for anything reading it as *colour*. It is wrong for
+    /// egui: its shader takes what a texture gives it as already
+    /// gamma-encoded and does the decode itself, so through the ordinary view
+    /// the picture is decoded twice and arrives visibly dark. egui-wgpu says
+    /// as much — a natively registered texture must be `Rgba8Unorm`.
+    ///
+    /// The pixels are not touched either way. This only decides who applies
+    /// the transfer function, and the answer has to be "exactly one of us".
+    pub fn raw_view(&self) -> wgpu::TextureView {
+        self.texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(self.texture.format().remove_srgb_suffix()),
+            ..Default::default()
+        })
     }
 
     /// Upload 8-bit RGBA pixels as an sRGB-encoded source texture.
