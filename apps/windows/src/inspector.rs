@@ -878,8 +878,18 @@ mod tests {
 
     /// A heading with one control under it is a heading that costs a click and
     /// buys nothing.
+    ///
+    /// Two exceptions, both Resolve's own, and both listed rather than waved
+    /// through: there the heading is doing a *dividing* job even with one
+    /// member — "Chroma" says the control below it is about colour and the
+    /// ones above are about luminance. Naming them here keeps the rule with
+    /// teeth for anything we invent ourselves.
     #[test]
     fn no_heading_holds_a_single_control() {
+        const RESOLVE_HAS_THESE: [(&str, &str); 2] = [
+            ("sharpen", "Chroma"),
+            ("soften_sharpen", "Adjust Small Texture Granularity"),
+        ];
         for effect in pe_effects::all() {
             let mut sections: Vec<(&str, usize)> = Vec::new();
             for p in effect.params.iter().filter(|p| !p.section.is_empty()) {
@@ -889,6 +899,9 @@ mod tests {
                 }
             }
             for (name, n) in sections {
+                if RESOLVE_HAS_THESE.contains(&(effect.key, name)) {
+                    continue;
+                }
                 assert!(n > 1, "{}'s \"{name}\" holds only {n} control", effect.key);
             }
         }

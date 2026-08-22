@@ -130,7 +130,11 @@ fn label_text(ui: &egui::Ui, rect: egui::Rect, text: &str) {
 }
 
 /// The circular reset arrow at the end of every row.
-fn reset_button(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id) -> bool {
+///
+/// Public because the Image tab's X/Y rows are laid out by hand — two boxes
+/// and a link chain will not fit the four-column row — and they still have to
+/// end in the same arrow as everything else.
+pub fn reset_button(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id) -> bool {
     let response = ui.interact(rect, id, egui::Sense::click());
     if ui.is_rect_visible(rect) {
         let c = rect.center();

@@ -550,3 +550,43 @@ fn film_grain_field(
     // Saturation 0 is monochrome grain, matching Resolve.
     return mix(vec3<f32>(mono), n, clamp(saturation, 0.0, 2.0));
 }
+
+// ---------------------------------------------------------------------------
+// Detail bands, shared.
+// ---------------------------------------------------------------------------
+//
+// Sharpen, Sharpen Edges and Soften and Sharpen are all the same idea: take
+// the picture apart into scales, scale each band, put it back. Written once
+// here because the *decomposition* is the part that has to agree between them
+// — three implementations would put "medium detail" at three different sizes,
+// and a user moving between the effects would find the same slider meaning
+// something different in each.
+
+/// One band: what is in the picture at this scale and not at the next one up.
+///
+/// A difference of blurs, which is the cheap and correct way to say it. The
+/// sum of every band plus the coarsest blur is the original picture exactly,
+/// so scaling the bands and adding them back can never invent or lose light.
+fn detail_band(uv: vec2<f32>, inner: f32, outer: f32) -> vec3<f32> {
+    return film_halo_blur(uv, inner, 1.0) - film_halo_blur(uv, outer, 1.0);
+}
+
+/// The strength of the local edge, 0 where the picture is flat.
+///
+/// The spread of a small neighbourhood rather than a gradient: a gradient has
+/// a direction and picks a favourite, and an edge mask wants to say "there is
+/// structure here" whichever way it runs.
+fn edge_strength(uv: vec2<f32>, radius: f32) -> f32 {
+    let aspect = frame_aspect();
+    let here = luma(textureSampleLevel(src_texture, src_sampler, uv, 0.0).rgb);
+    var lo = here;
+    var hi = here;
+    for (var i = 0; i < 8; i = i + 1) {
+        let a = f32(i) * 0.785398;
+        let offset = vec2<f32>(cos(a) * radius / max(aspect, 1e-4), sin(a) * radius);
+        let s = luma(textureSampleLevel(src_texture, src_sampler, uv + offset, 0.0).rgb);
+        lo = min(lo, s);
+        hi = max(hi, s);
+    }
+    return hi - lo;
+}

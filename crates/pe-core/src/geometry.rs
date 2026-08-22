@@ -427,6 +427,44 @@ impl Geometry {
         self.size = [full[0] * safe, full[1] * safe];
     }
 
+    /// Slide the crop back inside the source, keeping its size.
+    ///
+    /// The counterpart to [`Self::shrink_to_fit`], and the distinction is the
+    /// whole point: *straightening* a crop has to cost some of its edges,
+    /// because the rotated rectangle genuinely does not fit any more. *Moving*
+    /// one does not — the rectangle is the same rectangle, it is simply
+    /// somewhere it cannot be. Shrinking it there means dragging Position
+    /// towards an edge quietly zooms in, which is a control changing another
+    /// control's value behind the user's back.
+    ///
+    /// Bisected from a position known to be good, for the same reason the
+    /// shrink is: the closed form has a case for every aspect, angle and
+    /// quadrant, and this is exact to within a ten-thousandth of the frame.
+    pub fn slide_to_fit(&mut self, from: [f32; 2], source_w: u32, source_h: u32) {
+        if self.fits(source_w, source_h) {
+            return;
+        }
+        let want = self.centre;
+        let (mut lo, mut hi) = (0.0_f32, 1.0_f32);
+        for _ in 0..24 {
+            let mid = 0.5 * (lo + hi);
+            self.centre = [
+                from[0] + (want[0] - from[0]) * mid,
+                from[1] + (want[1] - from[1]) * mid,
+            ];
+            if self.fits(source_w, source_h) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        let safe = lo * 0.999;
+        self.centre = [
+            from[0] + (want[0] - from[0]) * safe,
+            from[1] + (want[1] - from[1]) * safe,
+        ];
+    }
+
     /// Re-shape the crop to the locked aspect, keeping its centre and never
     /// growing it.
     pub fn apply_aspect(&mut self, source_w: u32, source_h: u32) {
@@ -448,6 +486,57 @@ impl Geometry {
 
 #[cfg(test)]
 mod tests {
+
+    /// Moving a crop must not resize it.
+    ///
+    /// Shrinking it when it runs off the edge made the Position control
+    /// quietly change the Zoom readout, because Zoom *is* the reciprocal of
+    /// the size — one control writing another's value behind the user's back.
+    #[test]
+    fn sliding_a_crop_off_the_edge_keeps_its_size() {
+        let mut g = Geometry {
+            size: [0.5, 0.5],
+            ..Default::default()
+        };
+        let before = g.size;
+        let from = g.centre;
+        g.centre = [0.9, 0.0];
+        g.slide_to_fit(from, 4000, 3000);
+
+        assert_eq!(g.size, before, "the crop was resized by a move");
+        assert!(g.fits(4000, 3000), "it was left hanging off the edge");
+        // It went as far as it could, which is up against the right edge.
+        assert!(g.centre[0] > 0.2, "it barely moved: {:?}", g.centre);
+    }
+
+    /// And a move that was always legal is left exactly alone.
+    #[test]
+    fn a_move_that_fits_is_not_touched() {
+        let mut g = Geometry {
+            size: [0.5, 0.5],
+            ..Default::default()
+        };
+        g.centre = [0.1, -0.05];
+        g.slide_to_fit([0.0, 0.0], 4000, 3000);
+        assert_eq!(g.centre, [0.1, -0.05]);
+    }
+
+    /// Straightening still costs edges. The two operations answer different
+    /// questions and this pins the difference: a rotated rectangle genuinely
+    /// does not fit any more, so that one shrinks.
+    #[test]
+    fn straightening_still_shrinks_rather_than_sliding() {
+        let mut g = Geometry {
+            angle: 8.0,
+            ..Default::default()
+        };
+        g.shrink_to_fit(4000, 3000);
+        assert!(
+            g.size[0] < 1.0,
+            "a straightened crop should have been cut in"
+        );
+        assert!(g.fits(4000, 3000));
+    }
     use super::*;
 
     const W: u32 = 400;

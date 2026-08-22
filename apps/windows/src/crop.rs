@@ -278,15 +278,23 @@ const SIZES: [(&str, Resize); 5] = [
 /// Position.
 ///
 /// Returns the new pair when either moved.
+/// What an X/Y row reports.
+#[derive(Clone, Copy, PartialEq)]
+enum XyEdit {
+    Set([f32; 2]),
+    Reset,
+}
+
 fn xy_row(
     ui: &mut egui::Ui,
     label: &str,
     value: [f32; 2],
     range: std::ops::RangeInclusive<f32>,
     link: Option<&mut bool>,
-) -> Option<[f32; 2]> {
+) -> Option<XyEdit> {
     let mut next = value;
     let mut changed = false;
+    let mut reset = false;
     ui.horizontal(|ui| {
         ui.add_sized(
             [96.0, 18.0],
@@ -339,6 +347,16 @@ fn xy_row(
                 }
             }
         }
+        // The reset arrow every other row in the application has. These two
+        // did not, which made them the only controls with no way back short
+        // of remembering what the number used to be.
+        ui.add_space(4.0);
+        let arrow = egui::Rect::from_min_size(
+            egui::pos2(ui.cursor().min.x, ui.min_rect().min.y),
+            egui::vec2(18.0, 18.0),
+        );
+        ui.allocate_rect(arrow, egui::Sense::hover());
+        reset = crate::resolve::reset_button(ui, arrow, egui::Id::new(("xy_reset", label)));
     });
     if let Some(l) = link
         && let Some(on) = ui.data(|d| d.get_temp::<bool>(egui::Id::new(("xy_link_pending", label))))
@@ -346,7 +364,10 @@ fn xy_row(
         *l = on;
         ui.data_mut(|d| d.remove::<bool>(egui::Id::new(("xy_link_pending", label))));
     }
-    changed.then_some(next)
+    if reset {
+        return Some(XyEdit::Reset);
+    }
+    changed.then_some(XyEdit::Set(next))
 }
 
 /// Resolve's Transform panel, against our geometry.
@@ -362,15 +383,35 @@ fn transform_section(ui: &mut egui::Ui, history: &mut History, source: (u32, u32
     let zoom = [1.0 / g.size[0].max(1e-3), 1.0 / g.size[1].max(1e-3)];
     let link_id = ui.make_persistent_id("zoom_link");
     let mut link: bool = ui.data_mut(|d| *d.get_temp_mut_or(link_id, true));
-    if let Some(next) = xy_row(ui, "Zoom", zoom, 1.0..=20.0, Some(&mut link)) {
-        edit(history, source, "Zoom", move |g| {
-            g.size = [1.0 / next[0].max(1e-3), 1.0 / next[1].max(1e-3)];
-        });
+    match xy_row(ui, "Zoom", zoom, 1.0..=20.0, Some(&mut link)) {
+        Some(XyEdit::Set(next)) => {
+            edit(history, source, "Zoom", move |g| {
+                g.size = [1.0 / next[0].max(1e-3), 1.0 / next[1].max(1e-3)];
+            });
+        }
+        Some(XyEdit::Reset) => {
+            edit(history, source, "Zoom", |g| g.size = [1.0, 1.0]);
+        }
+        None => {}
     }
     ui.data_mut(|d| d.insert_temp(link_id, link));
 
-    if let Some(next) = xy_row(ui, "Position", g.centre, -1.0..=1.0, None) {
-        edit(history, source, "Position", move |g| g.centre = next);
+    match xy_row(ui, "Position", g.centre, -1.0..=1.0, None) {
+        Some(XyEdit::Set(next)) => {
+            // Slid back inside rather than shrunk. Moving a crop does not make
+            // it stop fitting the way straightening does — the rectangle is
+            // the same rectangle — and shrinking it here made Position quietly
+            // change Zoom, which is one control writing another's value.
+            let from = g.centre;
+            history.edit("Position", None, move |doc| {
+                doc.geometry.centre = next;
+                doc.geometry.slide_to_fit(from, source.0, source.1);
+            });
+        }
+        Some(XyEdit::Reset) => {
+            edit(history, source, "Position", |g| g.centre = [0.0, 0.0]);
+        }
+        None => {}
     }
 
     let mut angle = g.angle;

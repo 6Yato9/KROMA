@@ -454,3 +454,91 @@ is corrective and this is its mirror image, but they are different kinds of
 tool: Dehaze answers "there is haze here I did not want", and this answers "I
 want haze here". A haze effect that adds no haze until you find the right
 slider reads as broken.
+
+---
+
+## Sharpen, Sharpen Edges, Soften and Sharpen
+
+Three takes on the same idea — take the picture apart into scales, change each
+band, put it back — and Resolve ships all three because they answer different
+questions. Sharpen pushes every band; Sharpen Edges pushes only where there is
+an edge, so sky and skin keep their noise instead of having it amplified; and
+Soften and Sharpen makes each band *bipolar*, so medium at −0.8 with small at
++0.3 is skin that keeps its pores and loses its blotches.
+
+The decomposition lives once in `shaders/common.wgsl`. Three copies would put
+"medium detail" at three different sizes, and the same slider would mean
+different things in each effect.
+
+| Effect | Parameter | Default | Range | Status |
+|---|---|---|---|---|
+| Sharpen | Sharpen Amount | 1.800 | 0…10 | confirmed / inferred range |
+| Sharpen | Fine Detail Size | 0.050 | 0…0.12 | confirmed / inferred range |
+| Sharpen | Fine, Medium, Large Details | 1.000 | 0…10 | confirmed / inferred range |
+| Sharpen | Sharpen Chroma | 1.000 | 0…10 | confirmed / inferred range |
+| Sharpen Edges | Sharpen Amount | 2.000 | 0…10 | confirmed / inferred range |
+| Sharpen Edges | Sharpen Radius | 0.050 | 0…0.12 | confirmed / inferred range |
+| Sharpen Edges | Display Edges | off | — | confirmed |
+| Sharpen Edges | Pre Denoise | 0.100 | 0…1 | confirmed |
+| Sharpen Edges | Edge Detect Thr | 0.200 | 0…1 | confirmed |
+| Sharpen Edges | Edge Mask Strength | 2.000 | 0…5 | confirmed / inferred range |
+| Sharpen Edges | Edge Blur | 0.200 | 0…1 | confirmed |
+| Soften and Sharpen | Small / Medium / Large Texture | 0.000 | −1…1 | confirmed |
+| Soften and Sharpen | Small Texture Size | 0.100 | 0…0.25 | confirmed / inferred range |
+
+**Every range here is inferred from handle position**, which is worth being
+plain about: the defaults are read off the panel and are right, but a slider
+showing 1.000 with its handle hard left says only "the maximum is much larger
+than one". Ten is a guess that makes the control usable.
+
+Sharpen and Sharpen Edges ship *visible*, because Resolve ships them at 1.8
+and 2.0. Both still carry a neutral of zero, so the reset arrow gives a row
+that does nothing.
+
+## Lens Distortion
+
+| Parameter | Default | Range | Status |
+|---|---|---|---|
+| Split Channels | off | — | confirmed |
+| Distortion | **−0.400** | −1…1 | confirmed (worth re-checking) |
+| Fine Adjustment | off | — | confirmed |
+| Position X / Y | 0.500 | 0…1 | confirmed |
+| Edge Behaviour | Black | Black / Replicate / Mirror / Wrap | confirmed / inferred options |
+
+**Split Channels is lateral chromatic aberration** — each channel distorted by
+a slightly different amount. That is the same optical failure, so the same
+control undoes it, which is why there is no separate CA effect.
+
+The −0.400 default is flagged because a corrective tool that warps the picture
+the moment it is added is unusual. It is what the panel showed, so it is what
+we ship, with a neutral of zero.
+
+## Dirt Removal
+
+Resolve's **Automatic Dirt Removal**, made single-frame — and that is not a
+trim, it is a weaker test.
+
+Theirs finds dirt by *motion*: a speck is present in this frame and absent from
+its neighbours, which is close to proof. Motion Est. Type, Neighbor Frames and
+Motion Thr. are that test, and a photograph has no neighbours to run it
+against.
+
+What a still can test is weaker: a speck is a small spot that disagrees with
+everything around it. That finds sensor dust and scanning dirt well, and it
+will also find a distant bird. **Show Repair Mask is not a nicety here** — it
+is how you check the weaker test did not take something you wanted.
+
+| Parameter | Default | Range | Status |
+|---|---|---|---|
+| Repair Strength | 0.900 | 0…1 | confirmed |
+| Dirt Size Thr. | 0.100 | 0…1 | confirmed |
+| Show Repair Mask | off | — | confirmed |
+| Edge Ignore | 0.000 | 0…1 | confirmed |
+
+Edge Ignore is at the top level rather than under Resolve's "Fine Controls"
+heading: the only other control there was Motion Thr., and a heading with one
+control under it costs a click and buys nothing.
+
+It is deliberately **not** a visible-default effect even though it opens at 0.9
+— on a photograph with no dirt in it that is correctly no change at all, and
+"visible at its defaults" has to mean visible on any picture.

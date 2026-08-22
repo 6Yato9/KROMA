@@ -1203,6 +1203,428 @@ pub static EFFECTS: &[EffectDef] = &[
         ],
     },
     EffectDef {
+        key: "sharpen",
+        name: "Sharpen",
+        group: Group::Optics,
+        space: WorkingSpace::Linear,
+        shader: "sharpen",
+        spatial: true,
+        derived_slots: 0,
+        gates: &[],
+        params: &[
+            // Resolve's Sharpen: unsharp masking split across three scales, so the
+            // fine grain of a surface and the shape of an edge can be pushed by
+            // different amounts. One radius cannot do that, and one radius is what
+            // makes an over-sharpened picture look like an over-sharpened picture —
+            // everything crunchy at the same size.
+            ParamDef {
+                key: "amount",
+                name: "Sharpen Amount",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 10.0,
+                    default: 1.8,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "",
+            },
+            // The size of the finest band, as a fraction of the frame. The other
+            // two are multiples of it, which is what keeps them separated when the
+            // size changes.
+            ParamDef {
+                key: "fine_size",
+                name: "Fine Detail Size",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 0.12,
+                    default: 0.05,
+                    neutral: 0.05,
+                },
+                unit: "",
+                section: "Detail Levels",
+            },
+            ParamDef {
+                key: "fine",
+                name: "Fine Details",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 10.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Detail Levels",
+            },
+            ParamDef {
+                key: "medium",
+                name: "Medium Details",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 10.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Detail Levels",
+            },
+            ParamDef {
+                key: "large",
+                name: "Large Details",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 10.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Detail Levels",
+            },
+            // Sharpening colour as hard as luminance is how a sharpened photograph
+            // gets coloured fringes: chroma noise is coarser than the detail you
+            // are trying to bring out, so it is the first thing to come up.
+            ParamDef {
+                key: "chroma",
+                name: "Sharpen Chroma",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 10.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Chroma",
+            },
+        ],
+    },
+    EffectDef {
+        key: "sharpen_edges",
+        name: "Sharpen Edges",
+        group: Group::Optics,
+        space: WorkingSpace::Linear,
+        shader: "sharpen_edges",
+        spatial: true,
+        derived_slots: 0,
+        gates: &[],
+        params: &[
+            // The same unsharp mask, applied only where the picture has an edge.
+            //
+            // The difference from Sharpen is what it *leaves alone*: sky, skin and
+            // shadow have no edges in them, so they keep their noise instead of
+            // having it amplified. That is the whole reason Resolve ships both.
+            ParamDef {
+                key: "amount",
+                name: "Sharpen Amount",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 10.0,
+                    default: 2.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "radius",
+                name: "Sharpen Radius",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 0.12,
+                    default: 0.05,
+                    neutral: 0.05,
+                },
+                unit: "",
+                section: "",
+            },
+            // The mask itself, on its own, because a mask you cannot see is a
+            // mask you are tuning blind.
+            ParamDef {
+                key: "display_edges",
+                name: "Display Edges",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+                section: "Edge Detection Controls",
+            },
+            // Softening before detection, not after. An edge detector run on noise
+            // finds edges in the noise, and then the sharpener amplifies exactly
+            // the thing this effect exists to avoid.
+            ParamDef {
+                key: "pre_denoise",
+                name: "Pre Denoise",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.1,
+                    neutral: 0.1,
+                },
+                unit: "",
+                section: "Edge Detection Controls",
+            },
+            ParamDef {
+                key: "edge_threshold",
+                name: "Edge Detect Thr",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.2,
+                    neutral: 0.2,
+                },
+                unit: "",
+                section: "Edge Detection Controls",
+            },
+            ParamDef {
+                key: "edge_strength",
+                name: "Edge Mask Strength",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 5.0,
+                    default: 2.0,
+                    neutral: 2.0,
+                },
+                unit: "",
+                section: "Edge Detection Controls",
+            },
+            // Feathering the mask, so the sharpening arrives at an edge rather
+            // than switching on at it.
+            ParamDef {
+                key: "edge_blur",
+                name: "Edge Blur",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.2,
+                    neutral: 0.2,
+                },
+                unit: "",
+                section: "Edge Detection Controls",
+            },
+        ],
+    },
+    EffectDef {
+        key: "soften_sharpen",
+        name: "Soften and Sharpen",
+        group: Group::Optics,
+        space: WorkingSpace::Linear,
+        shader: "soften_sharpen",
+        spatial: true,
+        derived_slots: 0,
+        gates: &[],
+        params: &[
+            // Three bands, each of which can go either way. Positive sharpens,
+            // negative softens, and being able to do both at once is the point:
+            // -0.8 medium with +0.3 small is skin that keeps its pores and loses
+            // its blotches, which is not a thing either a sharpener or a blur can
+            // do on its own.
+            ParamDef {
+                key: "small",
+                name: "Small Texture",
+                kind: ParamKind::Float {
+                    min: -1.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "medium",
+                name: "Medium Texture",
+                kind: ParamKind::Float {
+                    min: -1.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "large",
+                name: "Large Texture",
+                kind: ParamKind::Float {
+                    min: -1.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "small_size",
+                name: "Small Texture Size",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 0.25,
+                    default: 0.1,
+                    neutral: 0.1,
+                },
+                unit: "",
+                section: "Adjust Small Texture Granularity",
+            },
+        ],
+    },
+    EffectDef {
+        key: "lens_distortion",
+        name: "Lens Distortion",
+        group: Group::Optics,
+        space: WorkingSpace::Linear,
+        shader: "lens_distortion",
+        spatial: true,
+        derived_slots: 0,
+        gates: &[],
+        params: &[
+            // Barrel and pincushion, added or taken away. Negative pulls the
+            // corners in, which is what corrects the barrel a wide lens gives you;
+            // positive pushes them out.
+            //
+            // Split Channels distorts each channel by a slightly different amount,
+            // which is lateral chromatic aberration — the same optical failure,
+            // and the same control undoes it.
+            ParamDef {
+                key: "split_channels",
+                name: "Split Channels",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "distortion",
+                name: "Distortion",
+                kind: ParamKind::Float {
+                    min: -1.0,
+                    max: 1.0,
+                    default: -0.4,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "",
+            },
+            // Fine Adjustment scales the control down so the useful range is the
+            // whole slider rather than the first tenth of it.
+            ParamDef {
+                key: "fine_adjustment",
+                name: "Fine Adjustment",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "center_x",
+                name: "Position X",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.5,
+                },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "center_y",
+                name: "Position Y",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.5,
+                },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "edge_behaviour",
+                name: "Edge Behaviour",
+                kind: ParamKind::Choice {
+                    options: &["Black", "Replicate", "Mirror", "Wrap"],
+                    default: "Black",
+                },
+                unit: "",
+                section: "",
+            },
+        ],
+    },
+    EffectDef {
+        key: "dirt_removal",
+        name: "Dirt Removal",
+        group: Group::Optics,
+        space: WorkingSpace::Linear,
+        shader: "dirt_removal",
+        spatial: true,
+        derived_slots: 0,
+        gates: &[],
+        params: &[
+            // Resolve's Automatic Dirt Removal, made single-frame — and it is worth
+            // being plain about what that changes, because it is not a trim.
+            //
+            // Theirs finds dirt by *motion*: a speck is something that is here in
+            // this frame and not in its neighbours, which is close to proof. Motion
+            // Est. Type, Neighbor Frames and Motion Thr. are all that test, and a
+            // photograph has no neighbours to run it against.
+            //
+            // What is left is the weaker test a still can actually make: a speck is
+            // a small spot that disagrees with everything around it. That finds
+            // sensor dust and scanning dirt well, and it will also find a distant
+            // bird. Show Repair Mask is therefore not a nicety here — it is how you
+            // check the weaker test did not take something you wanted.
+            ParamDef {
+                key: "strength",
+                name: "Repair Strength",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.9,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "",
+            },
+            // How big a spot may be and still be dirt, as a fraction of the frame.
+            // Above this it is part of the picture.
+            ParamDef {
+                key: "size_threshold",
+                name: "Dirt Size Thr.",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.1,
+                    neutral: 0.1,
+                },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "show_mask",
+                name: "Show Repair Mask",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+                section: "",
+            },
+            // Edges are where a single-frame detector goes wrong: a corner is a
+            // small thing that disagrees with its surroundings, which is the
+            // definition it is working from. This is how much of the edge to spare.
+            //
+            // Resolve files this under a "Fine Controls" heading with Motion
+            // Thr. beside it. That one is temporal and gone, and a heading
+            // with a single control under it costs a click and buys nothing —
+            // so the heading went with it.
+            ParamDef {
+                key: "edge_ignore",
+                name: "Edge Ignore",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "",
+            },
+        ],
+    },
+    EffectDef {
         key: "cinematic_haze",
         name: "Cinematic Haze",
         group: Group::Optics,
@@ -3614,6 +4036,23 @@ pub const EFFECTS_WITH_VISIBLE_DEFAULTS: &[&str] = &[
     // the right slider reads as broken. Resolve ships it visible for the same
     // reason.
     "cinematic_haze",
+    // These three are corrective tools by nature, which is normally the
+    // argument *against* being on this list — but Resolve ships every one of
+    // them doing something, and the values came off its panels: Sharpen opens
+    // at 1.8, Sharpen Edges at 2.0, Lens Distortion at -0.4.
+    //
+    // The escape hatch is the one this list was built around: each still
+    // carries a neutral of zero, so the reset arrow gives a row that does
+    // nothing. What you cannot have is a Sharpen row that arrives sharpening
+    // *and* an assertion that it does not.
+    "sharpen",
+    "sharpen_edges",
+    "lens_distortion",
+    // Dirt Removal is deliberately *not* here, and the reason is worth
+    // keeping: it opens at Repair Strength 0.9, but on a photograph with no
+    // dirt in it that is correctly no change at all. "Visible at its
+    // defaults" has to mean visible on any picture, or the assertion behind
+    // this list stops meaning anything.
 ];
 
 /// The fixed panels, in the order they are applied.
@@ -3674,7 +4113,7 @@ mod tests {
     fn the_registry_is_the_expected_size() {
         // Nine at M1, plus Split Tone once the Resolve parameter research
         // landed. Pinned so an accidental duplicate or deletion is visible.
-        assert_eq!(EFFECTS.len(), 24);
+        assert_eq!(EFFECTS.len(), 29);
     }
 
     /// A gate naming a parameter that does not exist would quietly do
@@ -3819,6 +4258,15 @@ mod tests {
             ("dehaze", WorkingSpace::Linear),
             // The same model as Dehaze, run forwards instead of backwards.
             ("cinematic_haze", WorkingSpace::Linear),
+            // Sharpening adds and subtracts light. In log it pulls harder in
+            // the shadows than the highlights for no reason anyone asked for.
+            ("sharpen", WorkingSpace::Linear),
+            ("sharpen_edges", WorkingSpace::Linear),
+            ("soften_sharpen", WorkingSpace::Linear),
+            // A resample, and a resample averages light.
+            ("lens_distortion", WorkingSpace::Linear),
+            // The repair is an average of the surroundings.
+            ("dirt_removal", WorkingSpace::Linear),
             ("bloom", WorkingSpace::Linear),
             ("film_damage", WorkingSpace::Linear),
             // Local contrast adds light back to a region.
@@ -3878,6 +4326,13 @@ mod tests {
                     // A depth estimate, a glow, rays and a shimmer: every part
                     // of it reads its neighbours.
                     | "cinematic_haze"
+                    // Every one of these is a neighbourhood: a band of detail,
+                    // an edge mask, a resample, a ring of surrounding pixels.
+                    | "sharpen"
+                    | "sharpen_edges"
+                    | "soften_sharpen"
+                    | "lens_distortion"
+                    | "dirt_removal"
                     // Film Look Creator carries Resolve's halation, bloom,
                     // vignette and grain sections, and every one of those
                     // reads its neighbours.

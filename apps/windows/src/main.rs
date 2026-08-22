@@ -385,7 +385,13 @@ impl App {
     /// Zooming keeps the point under the cursor fixed, which is the difference
     /// between a viewer that feels direct and one that feels like it is
     /// fighting you.
-    fn handle_view_input(&mut self, ui: &egui::Ui, response: &egui::Response, rect: egui::Rect) {
+    fn handle_view_input(
+        &mut self,
+        ui: &egui::Ui,
+        response: &egui::Response,
+        rect: egui::Rect,
+        pan: bool,
+    ) {
         let Some((scale, visible)) = self.last else {
             return;
         };
@@ -399,7 +405,7 @@ impl App {
             return;
         }
 
-        if response.dragged() {
+        if pan && response.dragged() {
             // Screen points -> image pixels -> frame uv.
             let delta = response.drag_delta() / scale.max(1e-4);
             self.view.centre -= egui::vec2(delta.x / image.x, delta.y / image.y);
@@ -1130,9 +1136,14 @@ impl eframe::App for App {
                 if response.drag_stopped() {
                     self.dragging_wipe = false;
                 }
-                if !self.cropping && !self.dragging_wipe {
-                    self.handle_view_input(ui, &response, rect);
-                }
+                // Panning is a drag, and while the crop tool is open the drag
+                // belongs to the crop rectangle. Zooming is not — it is the
+                // wheel — so it keeps working, which is the whole point of the
+                // two being separate controls. Blocking all of it was the
+                // other half of the coupling: the tool did not force the view
+                // back to fit any more, it just would not let you leave it.
+                let pan = !self.cropping && !self.dragging_wipe;
+                self.handle_view_input(ui, &response, rect, pan);
 
                 // Dropping an effect on the picture adds it. It is the same
                 // gesture as dropping it on the list, and the picture is the
