@@ -339,7 +339,24 @@ impl Library {
 }
 
 /// Read the edit saved beside a photograph, if there is one.
+/// The edit to open this photograph with, if there is one.
+///
+/// The autosave first, then the sidecar. Not a judgement about which is more
+/// important — it is that the autosave is by construction the *later* of the
+/// two: saving a sidecar does not stop the work being autosaved, so anything
+/// in the sidecar is also in the autosave unless you have edited since, in
+/// which case the autosave is what you were actually looking at.
+///
+/// "Load edit" stays the explicit way to pull a sidecar back over the top.
 pub fn load_edit(path: &Path) -> Option<pe_core::Document> {
+    if let Some(doc) = crate::autosave::load(path) {
+        return Some(doc);
+    }
+    load_sidecar(path)
+}
+
+/// Strictly the `.peproj` beside the photograph, ignoring any autosave.
+pub fn load_sidecar(path: &Path) -> Option<pe_core::Document> {
     let json = std::fs::read_to_string(path.with_extension("peproj")).ok()?;
     pe_core::Document::from_json(&json).ok()
 }

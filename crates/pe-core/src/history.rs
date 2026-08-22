@@ -26,6 +26,8 @@ struct Entry {
 }
 
 pub struct History {
+    /// See [`Self::revision`].
+    revision: u64,
     /// Snapshots *before* each edit, oldest first.
     past: Vec<Entry>,
     /// Snapshots undone, most recently undone last.
@@ -37,6 +39,7 @@ pub struct History {
 impl History {
     pub fn new(doc: Document) -> Self {
         Self {
+            revision: 0,
             past: Vec::new(),
             future: Vec::new(),
             current: doc,
@@ -47,6 +50,17 @@ impl History {
     pub fn with_limit(mut self, limit: usize) -> Self {
         self.limit = limit.max(1);
         self
+    }
+
+    /// How many times the document has changed.
+    ///
+    /// A counter rather than a hash of the document, because the question
+    /// anything asks of it — "is this still what I last saw?" — is answered
+    /// exactly by a counter and only probably by a hash, and the autosave
+    /// consults it on every frame. Undo and redo count as changes, because
+    /// from the outside they are.
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub fn document(&self) -> &Document {
@@ -98,6 +112,7 @@ impl History {
         // Any new edit invalidates the redo branch.
         self.future.clear();
         f(&mut self.current);
+        self.revision += 1;
     }
 
     pub fn undo(&mut self) -> bool {
@@ -110,6 +125,7 @@ impl History {
             label: entry.label,
             coalesce: entry.coalesce,
         });
+        self.revision += 1;
         true
     }
 
@@ -123,6 +139,7 @@ impl History {
             label: entry.label,
             coalesce: entry.coalesce,
         });
+        self.revision += 1;
         true
     }
 
@@ -137,6 +154,35 @@ impl History {
 
 #[cfg(test)]
 mod tests {
+
+    /// The revision has to move for *every* change, including the ones that
+    /// undo other changes. Anything watching it — the autosave, for one — is
+    /// asking "is this still what I last saw", and an undo means it is not.
+    #[test]
+    fn every_change_moves_the_revision_including_undo() {
+        let mut h = History::new(Document::from_path("photo.jpg"));
+        let start = h.revision();
+        h.edit("one", None, |d| d.stack.rows.clear());
+        let after_edit = h.revision();
+        assert!(after_edit > start, "an edit did not move the revision");
+
+        assert!(h.undo());
+        assert!(h.revision() > after_edit, "an undo did not move it");
+        let after_undo = h.revision();
+        assert!(h.redo());
+        assert!(h.revision() > after_undo, "a redo did not move it");
+    }
+
+    /// And it must not move when nothing happened, or the autosave writes on
+    /// every frame forever.
+    #[test]
+    fn a_refused_undo_does_not_move_the_revision() {
+        let mut h = History::new(Document::from_path("photo.jpg"));
+        let before = h.revision();
+        assert!(!h.undo());
+        assert!(!h.redo());
+        assert_eq!(h.revision(), before);
+    }
     use super::*;
     use crate::params::ParamValue;
     use crate::stack::{RowId, StackRow};

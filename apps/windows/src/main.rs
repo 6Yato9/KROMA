@@ -10,6 +10,7 @@
 //! Resolve wheels come next, as pinned rows at the head of the same stack the
 //! effects list already uses.
 
+mod autosave;
 mod basic;
 mod crop;
 mod curve;
@@ -127,6 +128,8 @@ pub struct App {
     /// What the application remembers between runs: starred effects, and
     /// whatever joins that list later.
     settings: settings::Settings,
+    /// Decides when the work in progress is written out. See `autosave`.
+    autosave: autosave::Watcher,
     /// The effect under the pointer in the browser, previewed on the picture
     /// for as long as the pointer is there.
     preview_effect: Option<&'static str>,
@@ -213,6 +216,7 @@ impl App {
             scope_textures: scopes::Textures::default(),
             tab: Tab::Colour,
             settings: settings::Settings::load(),
+            autosave: autosave::Watcher::new(),
             preview_effect: None,
             dragging_effect: None,
             cropping: false,
@@ -258,6 +262,15 @@ impl App {
             return;
         }
 
+        // Anything unwritten goes out before the photograph does. The
+        // throttle is beside the point here: the thing that would have
+        // triggered the write is about to stop being the thing on screen.
+        if let Some(old) = self.path.clone()
+            && self.autosave.pending()
+        {
+            autosave::store(&old, self.history.document());
+        }
+
         // Swap in a placeholder so the outgoing history can be moved out
         // wholesale rather than cloned; `History` deliberately is not `Clone`,
         // because an undo stack with two owners is a bug waiting to happen.
@@ -275,6 +288,7 @@ impl App {
         self.view.fit();
         self.cropping = false;
         self.last = None;
+        self.autosave.reset(self.history.revision());
         self.set_title(ctx);
         self.remember_session();
     }
@@ -654,6 +668,24 @@ impl App {
         }
     }
 
+    /// Throw away the edit and the work saved for it.
+    ///
+    /// Undoable in the ordinary way, which matters: it is one click next to
+    /// two other buttons, and the first thing anybody does after pressing it
+    /// by mistake is reach for Ctrl-Z.
+    fn revert(&mut self) {
+        let Some(path) = self.path.clone() else {
+            self.status = "open a photo first".into();
+            return;
+        };
+        let fresh = pe_effects::new_document(path.to_string_lossy().to_string());
+        self.history.edit("Revert", None, move |doc| *doc = fresh);
+        self.ids = RowIdGenerator::resuming(self.history.document());
+        autosave::forget(&path);
+        self.autosave.reset(self.history.revision());
+        self.status = format!("reverted {}", path.display());
+    }
+
     fn load_edit(&mut self) {
         let Some(path) = self.edit_path() else {
             self.status = "open a photo first".into();
@@ -666,6 +698,7 @@ impl App {
             Ok(doc) => {
                 self.ids = RowIdGenerator::resuming(&doc);
                 self.history = History::new(doc);
+                self.autosave.reset(self.history.revision());
                 self.status = format!("loaded {}", path.display());
             }
             Err(e) => self.status = format!("load failed: {e}"),
@@ -860,6 +893,28 @@ impl eframe::App for App {
             self.add_and_show(paths, ctx);
         }
 
+        // Work in progress, written out a moment after you stop moving.
+        //
+        // On a timer rather than on every change: a slider drag would
+        // otherwise be sixty writes a second, and on a photo directory over a
+        // network that is not a small thing. A pause of under a second is what
+        // counts as stopping, which makes closing the window a decision about
+        // nothing.
+        if let Some(path) = self.path.clone()
+            && self
+                .autosave
+                .tick(self.history.revision(), std::time::Instant::now())
+        {
+            autosave::store(&path, self.history.document());
+        }
+        // Kept awake so the write happens even if nothing else is moving. A
+        // repaint a second after the last edit is not a cost worth measuring,
+        // and without it an idle window would sit on unsaved work until
+        // something else woke it.
+        if self.autosave.pending() {
+            ctx.request_repaint_after(autosave::IDLE);
+        }
+
         if !self.titled {
             self.set_title(ctx);
             self.titled = true;
@@ -908,6 +963,19 @@ impl eframe::App for App {
                     }
                     if ui.button("Load edit").clicked() {
                         self.load_edit();
+                    }
+                    // The counterpart to saving without being asked. An edit
+                    // that comes back every time you open a photograph, with
+                    // no way to be rid of it, is not a convenience — it is a
+                    // photograph you can no longer see.
+                    if ui
+                        .button("Revert")
+                        .on_hover_text(
+                            "Back to the photograph as it was, and forget the autosave",
+                        )
+                        .clicked()
+                    {
+                        self.revert();
                     }
                 });
                 ui.add_enabled_ui(self.library.len() > 1, |ui| {

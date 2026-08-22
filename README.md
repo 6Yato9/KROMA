@@ -28,6 +28,27 @@ to watch: with a nine-row stack, dragging the deepest slider should read `1`.
 That is the stage cache re-running only what changed, and it is why the
 application does not get slower as you do more to an image.
 
+## Autosave
+
+Every edit is written out about a second after you stop moving, and read back
+when the photograph is next opened. Closing the window is not a decision:
+close mid-grade, come back tomorrow, carry on.
+
+It is kept **with the application**, under `%APPDATA%\Kroma\edits`, not beside
+your photographs. A `.peproj` sidecar is something you ask for; this happens
+whether you asked or not, and an application that sprinkles files through
+somebody's photo library uninvited is doing something it was not invited to
+do. A photo directory that has never been written to stays that way.
+
+The two are not rivals. A sidecar is a decision — *this* is the edit, keep it,
+move it with the photograph. The autosave is just where you happened to stop,
+so it is the one that wins when a photograph is opened, and **Load edit** is
+the explicit way to pull a sidecar back over the top.
+
+**Revert** throws both the edit and the saved work away. An edit that comes
+back every time you open a photograph with no way to be rid of it is not a
+convenience; it is a photograph you can no longer see.
+
 ## Your originals are never written to
 
 The application does not modify the photograph you opened. It cannot: every
