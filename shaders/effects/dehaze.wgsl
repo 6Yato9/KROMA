@@ -1,5 +1,10 @@
 // Linear. Slots:
-//   0 strength, 1 display_depth, 2 shadow, 3 highlight, 4-6 haze_colour
+//   0 strength, 1-3 haze_colour, 4 display_depth, 5 shadow, 6 highlight
+//
+// Slots are assigned by the order the parameters are *declared* in the
+// registry, so that order is load-bearing and this comment has to move with
+// it. Reordering the panel without reordering this reads every control off
+// its neighbour.
 //
 // Aerial perspective: distant objects lose contrast and drift toward the
 // colour of the intervening air. The physical model is
@@ -43,17 +48,17 @@ fn transmission(uv: vec2<f32>, haze: vec3<f32>) -> f32 {
 }
 
 fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
-    let strength = u.p[0].x;
-    let display_depth = u.p[0].y > 0.5;
-    let shadow = u.p[0].z;
-    let highlight = u.p[0].w;
+    let strength = slot(0u);
+    let display_depth = slot(4u) > 0.5;
+    let shadow = slot(5u);
+    let highlight = slot(6u);
 
     if strength == 0.0 && !display_depth {
         return c;
     }
 
     // Guard against a black haze colour: it is a divisor.
-    let haze = max(slot3(4u), vec3<f32>(1e-3));
+    let haze = max(slot3(1u), vec3<f32>(1e-3));
 
     var t = transmission(uv, haze);
     // Shadow lifts the far end of the depth matte, Highlight scales the near
