@@ -17,6 +17,7 @@ pub mod geometry;
 pub mod history;
 pub mod parametric;
 pub mod params;
+pub mod pins;
 pub mod stack;
 pub mod warp;
 
@@ -24,6 +25,7 @@ pub use document::{ColorSettings, Document, DocumentError, Metadata, SCHEMA_VERS
 pub use geometry::{Affine, AspectLock, Geometry, Resize};
 pub use history::History;
 pub use params::{Curve, ParamMap, ParamValue, Wheel};
+pub use pins::{Pin, Pins};
 pub use stack::{BlendMode, Key, KeyAdjust, RowId, Stack, StackRow, WindowShape};
 pub use warp::Warp;
 

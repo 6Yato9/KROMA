@@ -77,6 +77,102 @@ fn warp_sample(grid: i32, cols: i32, rows: i32, u: f32, v: f32, wrap: bool) -> v
     return mix(top, bottom, ty);
 }
 
+// ---------------------------------------------------------------------------
+// Chroma Warp: pins on the chromaticity diagram.
+// ---------------------------------------------------------------------------
+//
+// The other two views push hue and saturation around, which are constructs.
+// This one works on *chromaticity* — where a colour sits on the CIE diagram,
+// independent of how bright it is — because that is what the plot draws and
+// what a pin is placed on. Moving a colour there changes its hue and its
+// purity together, holds its luminance still, and is the one operation that
+// means the same thing to a colourist and to a spectrophotometer.
+//
+// The matrices are AP1's, generated from the primaries by
+// `pe-color/tests/print_matrix.rs` rather than typed in from a web page. A
+// matrix transcribed by hand is a matrix with a digit wrong in it.
+
+const PIN_ROW: i32 = 16;
+const PIN_STRIDE: i32 = 12;
+const MAX_PINS: i32 = 8;
+
+const AP1_TO_XYZ: mat3x3<f32> = mat3x3<f32>(
+    vec3<f32>(0.66245418, 0.27222872, -0.00557465),
+    vec3<f32>(0.13400421, 0.67408177, 0.00406073),
+    vec3<f32>(0.15618769, 0.05368952, 1.01033910),
+);
+const XYZ_TO_AP1: mat3x3<f32> = mat3x3<f32>(
+    vec3<f32>(1.64102338, -0.66366286, 0.01172189),
+    vec3<f32>(-0.32480329, 1.61533159, -0.00828444),
+    vec3<f32>(-0.23642470, 0.01675635, 0.98839486),
+);
+
+fn pin_value(index: i32, field: i32) -> f32 {
+    return textureLoad(lut_texture, vec2<i32>(index * PIN_STRIDE + field, PIN_ROW), 0).r;
+}
+
+/// How much of a pin's pull this tone takes.
+///
+/// Low and high are the shadow and highlight ends and the pivot is where one
+/// becomes the other. Both at one is every tone equally, which is why both
+/// default to one — a pin that has to be told it applies to the whole picture
+/// is a pin with a control too many.
+fn pin_tone(l: f32, low: f32, high: f32, pivot: f32) -> f32 {
+    let t = smoothstep(pivot - 0.25, pivot + 0.25, l);
+    return mix(low, high, t);
+}
+
+/// Everything the pins do to one colour.
+///
+/// No count is passed, and none is stored. Pins are written into the LUT from
+/// index zero with no gaps, and an unused slot is all zeros — so a range of
+/// zero *is* the end of the list. One texture fetch answers "are there any
+/// pins at all", which is the answer on almost every frame.
+fn chroma_warp(c: vec3<f32>) -> vec3<f32> {
+    if pin_value(0, 4) <= 0.0 {
+        return c;
+    }
+    let lin = max(cct_decode(c), vec3<f32>(0.0));
+    let xyz = AP1_TO_XYZ * lin;
+    let sum = xyz.x + xyz.y + xyz.z;
+    if sum <= 1e-6 {
+        // Black has no chromaticity to move.
+        return c;
+    }
+    var xy = vec2<f32>(xyz.x / sum, xyz.y / sum);
+    // Luminance is held: a chroma warp changes which colour something is, not
+    // how much light it is. Exposure is the one control here that may.
+    var y = max(xyz.y, 0.0);
+    let l = clamp((luma(c) - CCT_BLACK) / (CCT_WHITE - CCT_BLACK), 0.0, 1.0);
+
+    for (var i = 0; i < MAX_PINS; i = i + 1) {
+        let range = pin_value(i, 4);
+        if range <= 0.0 {
+            break;
+        }
+        let at = vec2<f32>(pin_value(i, 0), pin_value(i, 1));
+        let to = vec2<f32>(pin_value(i, 2), pin_value(i, 3));
+        let tone = pin_tone(l, pin_value(i, 5), pin_value(i, 6), pin_value(i, 7));
+        let exposure = pin_value(i, 8);
+
+        // Measured from where the pin was *placed*, not from where it has been
+        // dragged to. The pin marks a colour in the picture and then says
+        // where that colour should go; measuring from the destination would
+        // make the selection move as you drag it, which is a control that
+        // slides out from under you.
+        let d = distance(xy, at);
+        let w = (1.0 - smoothstep(range * 0.5, range, d)) * tone;
+        if w > 0.0 {
+            xy = xy + (to - at) * w;
+            y = y * pow(2.0, exposure * w);
+        }
+    }
+
+    // Back to a colour: the moved chromaticity at the luminance we kept.
+    let out_xyz = vec3<f32>(xy.x * y / max(xy.y, 1e-5), y, (1.0 - xy.x - xy.y) * y / max(xy.y, 1e-5));
+    return cct_encode(max(XYZ_TO_AP1 * out_xyz, vec3<f32>(0.0)));
+}
+
 /// The divisions dropdowns hold an index into 4 / 6 / 8 / 12 / 16.
 fn divisions(index: f32) -> i32 {
     let i = i32(round(index));
@@ -105,7 +201,12 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let chroma_rows = divisions(slot(3u));
     let axis = radians(slot(4u));
 
-    var hsv = rgb_to_hsv(max(c, vec3<f32>(0.0)));
+    // The pins first. They work on chromaticity, which the grids then push
+    // around as hue and saturation — the other order would have the grids
+    // move a colour out from under the pin that was aimed at it.
+    let warped = chroma_warp(c);
+
+    var hsv = rgb_to_hsv(max(warped, vec3<f32>(0.0)));
 
     // ---- Hue against saturation ------------------------------------------
     // Read at the colour's own hue and saturation, which is what makes the

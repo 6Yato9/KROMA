@@ -577,16 +577,38 @@ in the effects list. It was an ordinary effect first and that was the wrong
 home: everything else on Resolve's colour page is simply *there*, and a tool
 you have to remember the name of in order to find is a tool nobody finds.
 
-**Chroma Warp is not built.** It is the one view that is not the same object:
-it places *pins* on the gamut, each with its own chroma range, tonal range and
-exposure, rather than dragging a fixed grid. The icon is there and says so
-rather than pretending; building it needs a sparse pin model, which is a
-different parameter type again.
+**Chroma Warp** is the third view, and the one that is not the same object.
+The grids ask what happens to *every* colour; a pin asks what happens to
+**this** one, and a picture usually has two or three colours anybody has an
+opinion about.
 
-The values under Pin in the screenshot — Chroma Range 0.040, Tonal Range Low
-and High 1.000, Tonal Range Pivot 0.500, Exposure 0.000 — are recorded here so
-they are not lost, and they are greyed in the screenshot because no pin was
-selected.
+| Pin parameter | Default | Range | Status |
+|---|---|---|---|
+| Chroma Range | 0.040 | 0…0.5 | confirmed / inferred range |
+| Tonal Range Low | 1.000 | 0…1 | confirmed |
+| Tonal Range High | 1.000 | 0…1 | confirmed |
+| Tonal Range Pivot | 0.500 | 0…1 | confirmed |
+| Exposure | 0.000 | −2…2 | confirmed / inferred range |
+
+They are greyed in the screenshot because no pin was selected, and they are
+greyed here for the same reason.
+
+**It works on chromaticity, not on hue and saturation.** CIE xy is what the
+plot draws and what a pin is placed on: moving a colour there changes its hue
+and its purity together, holds its luminance still, and means the same thing to
+a colourist and to a spectrophotometer. The AP1 matrices in the shader are
+generated from the primaries by `pe-color/tests/print_matrix.rs` rather than
+transcribed — a matrix typed in by hand is a matrix with a digit wrong in it.
+
+**The reach is measured from where the pin was placed**, not from where it has
+been dragged to. The pin marks a colour in the picture and then says where that
+colour should go; measuring from the destination would make the selection slide
+out from under you as you drag it.
+
+Eight pins, twelve floats each, in one LUT row. No count is stored: pins are
+written from index zero with no gaps and an unused slot is all zeros, so a
+range of zero *is* the end of the list — and one texture fetch answers "are
+there any pins at all", which is the answer on almost every frame.
 
 ---
 

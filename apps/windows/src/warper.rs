@@ -11,7 +11,7 @@
 //! its lattice and showed the displacement some other way would be a table of
 //! numbers with lines between them.
 
-use pe_core::{History, ParamValue, RowId, Warp};
+use pe_core::{History, ParamValue, Pin, Pins, RowId, Warp};
 
 /// Which window onto the lattice is showing.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -80,7 +80,7 @@ pub fn panel(ui: &mut egui::Ui, history: &mut History, id: RowId, row_id: egui::
             crate::basic::slider_of(ui, history, id, "colour_warper", "axis_angle");
         }
         View::ChromaWarp => {
-            not_yet(ui);
+            chroma_warp(ui, history, id, row_id);
         }
     }
 }
@@ -190,19 +190,307 @@ fn icon(painter: &egui::Painter, rect: egui::Rect, view: View, tint: egui::Color
     }
 }
 
-fn not_yet(ui: &mut egui::Ui) {
-    let width = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 96.0), egui::Sense::hover());
+/// The chromaticity plot, its pins, and the selected pin's controls.
+///
+/// A pin is placed where the colour you care about *is*, dragged to where you
+/// want it to go, and told how far around itself to reach. That is a different
+/// question from the one the grids answer, which is why this is a view and not
+/// a third pair of axes.
+fn chroma_warp(ui: &mut egui::Ui, history: &mut History, id: RowId, row_id: egui::Id) {
+    let pins = read_pins(history, id);
+    let chosen_id = row_id.with("pin");
+    let mut chosen: Option<usize> = ui.data_mut(|d| d.get_temp(chosen_id).unwrap_or(None));
+    if chosen.is_some_and(|i| i >= pins.len()) {
+        chosen = None;
+    }
+
+    let mut next: Option<Pins> = None;
+    let side = ui.available_width().clamp(120.0, 320.0);
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click_and_drag());
+
     if ui.is_rect_visible(rect) {
-        let painter = ui.painter();
-        painter.rect_filled(rect, 3.0, crate::theme::colour::WELL);
-        painter.text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            "Chroma Warp is not built yet.\nIt places pins on the gamut rather than dragging a grid,\nwhich is a different tool wearing the same panel.",
-            egui::FontId::proportional(11.0),
-            crate::theme::colour::DIM,
+        gamut(ui.painter(), rect);
+        draw_pins(ui.painter(), rect, &pins, chosen);
+    }
+
+    // Which pin a drag belongs to, decided once when it starts.
+    let held_id = row_id.with("pin_held");
+    let mut held: Option<usize> = ui.data_mut(|d| d.get_temp(held_id).unwrap_or(None));
+    if response.drag_started()
+        && let Some(p) = response.interact_pointer_pos()
+    {
+        held = grabbed(rect, &pins, p);
+        if held.is_some() {
+            chosen = held;
+        }
+        ui.data_mut(|d| d.insert_temp(held_id, held));
+    }
+    if response.drag_stopped() {
+        ui.data_mut(|d| d.insert_temp(held_id, None::<usize>));
+        history.break_coalescing();
+    }
+    if response.dragged()
+        && let Some(i) = held
+        && let Some(p) = response.interact_pointer_pos()
+    {
+        let mut moved = pins.clone();
+        if let Some(pin) = moved.get_mut(i) {
+            pin.to = plot_from_screen(rect, p);
+        }
+        next = Some(moved);
+    }
+
+    // A click on empty plot selects nothing; a click on a pin selects it.
+    if response.clicked()
+        && let Some(p) = response.interact_pointer_pos()
+    {
+        chosen = grabbed(rect, &pins, p);
+    }
+
+    ui.horizontal(|ui| {
+        let room = pins.len() < pe_core::pins::MAX_PINS;
+        if ui
+            .add_enabled(room, egui::Button::new("Add pin"))
+            .on_hover_text("Places a pin in the middle of the plot")
+            .clicked()
+        {
+            let mut added = pins.clone();
+            if let Some(i) = added.add(Pin::placed([0.33, 0.35])) {
+                chosen = Some(i);
+            }
+            next = Some(added);
+        }
+        if ui
+            .add_enabled(chosen.is_some(), egui::Button::new("Delete"))
+            .clicked()
+            && let Some(i) = chosen
+        {
+            let mut fewer = pins.clone();
+            fewer.remove(i);
+            chosen = None;
+            next = Some(fewer);
+        }
+        ui.label(
+            egui::RichText::new(match pins.len() {
+                0 => "add a pin, then drag it".to_string(),
+                n => format!("{n} pin{}", if n == 1 { "" } else { "s" }),
+            })
+            .small()
+            .weak(),
         );
+    });
+
+    ui.data_mut(|d| d.insert_temp(chosen_id, chosen));
+
+    // The selected pin's own controls. Dimmed with nothing selected, which is
+    // how Resolve draws them and the only honest thing to do — they have
+    // nothing to act on.
+    ui.add_space(4.0);
+    ui.label(
+        egui::RichText::new("Pin")
+            .small()
+            .color(crate::resolve::colour::TITLE),
+    );
+    let selected = chosen.and_then(|i| pins.get(i).copied());
+    let mut edited = selected;
+    ui.scope(|ui| {
+        if selected.is_none() {
+            ui.disable();
+        }
+        let mut pin = selected.unwrap_or(Pin::placed([0.33, 0.35]));
+        let mut touched = false;
+        for (label, value, range, decimals) in [
+            ("Chroma Range", &mut pin.chroma_range, 0.0..=0.5, 3),
+            ("Tonal Range Low", &mut pin.tonal_low, 0.0..=1.0, 3),
+            ("Tonal Range High", &mut pin.tonal_high, 0.0..=1.0, 3),
+            ("Tonal Range Pivot", &mut pin.tonal_pivot, 0.0..=1.0, 3),
+            ("Exposure", &mut pin.exposure, -2.0..=2.0, 3),
+        ] {
+            let edit = crate::resolve::slider_row(
+                ui,
+                row_id.with(("pin_param", label)),
+                label,
+                value,
+                range,
+                decimals,
+            );
+            touched |= edit.changed || edit.reset;
+            if edit.reset {
+                let fresh = Pin::placed([0.0, 0.0]);
+                *value = match label {
+                    "Chroma Range" => fresh.chroma_range,
+                    "Tonal Range Low" => fresh.tonal_low,
+                    "Tonal Range High" => fresh.tonal_high,
+                    "Tonal Range Pivot" => fresh.tonal_pivot,
+                    _ => fresh.exposure,
+                };
+            }
+            if edit.released {
+                history.break_coalescing();
+            }
+        }
+        if touched && selected.is_some() {
+            edited = Some(pin);
+        }
+    });
+
+    if let (Some(i), Some(pin)) = (chosen, edited)
+        && selected != Some(pin)
+    {
+        let mut changed = pins.clone();
+        if let Some(slot) = changed.get_mut(i) {
+            *slot = pin;
+        }
+        next = Some(changed);
+    }
+
+    if let Some(pins) = next {
+        history.edit("Chroma Warp", Some(format!("{}.pins", id.0)), move |doc| {
+            if let Some(row) = doc.stack.get_mut(id) {
+                row.params.set("pins", ParamValue::Pins(pins));
+            }
+        });
+    }
+}
+
+fn read_pins(history: &History, id: RowId) -> Pins {
+    history
+        .document()
+        .stack
+        .get(id)
+        .and_then(|r| r.params.get("pins"))
+        .and_then(ParamValue::as_pins)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Plot coordinates are CIE xy, which the plot draws directly: x across,
+/// y up, both over 0..0.8 — the range the spectral locus actually occupies.
+const PLOT_SPAN: f32 = 0.8;
+
+fn plot_to_screen(rect: egui::Rect, at: [f32; 2]) -> egui::Pos2 {
+    egui::pos2(
+        rect.min.x + (at[0] / PLOT_SPAN).clamp(0.0, 1.0) * rect.width(),
+        rect.max.y - (at[1] / PLOT_SPAN).clamp(0.0, 1.0) * rect.height(),
+    )
+}
+
+fn plot_from_screen(rect: egui::Rect, p: egui::Pos2) -> [f32; 2] {
+    [
+        ((p.x - rect.min.x) / rect.width().max(1e-4)).clamp(0.0, 1.0) * PLOT_SPAN,
+        ((rect.max.y - p.y) / rect.height().max(1e-4)).clamp(0.0, 1.0) * PLOT_SPAN,
+    ]
+}
+
+fn grabbed(rect: egui::Rect, pins: &Pins, p: egui::Pos2) -> Option<usize> {
+    let want = plot_from_screen(rect, p);
+    let (i, _) = pins.nearest(want)?;
+    let pin = pins.get(i)?;
+    (plot_to_screen(rect, pin.to).distance(p) <= GRAB).then_some(i)
+}
+
+/// The chromaticity plane, drawn as the colour at each point.
+///
+/// Every pixel is asked what colour its own coordinates are, which is what
+/// makes this a picture of the space rather than a decoration of it — the pin
+/// you place at a green really is sitting on the green.
+fn gamut(painter: &egui::Painter, rect: egui::Rect) {
+    painter.rect_filled(rect, 3.0, crate::theme::colour::VIEWER);
+    const STEPS: usize = 40;
+    let mut mesh = egui::Mesh::default();
+    for row in 0..=STEPS {
+        for col in 0..=STEPS {
+            let u = col as f32 / STEPS as f32;
+            let v = row as f32 / STEPS as f32;
+            let at = [u * PLOT_SPAN, v * PLOT_SPAN];
+            mesh.colored_vertex(plot_to_screen(rect, at), xy_colour(at));
+        }
+    }
+    let w = STEPS as u32 + 1;
+    for row in 0..STEPS as u32 {
+        for col in 0..STEPS as u32 {
+            let i = row * w + col;
+            mesh.add_triangle(i, i + 1, i + w);
+            mesh.add_triangle(i + 1, i + w, i + w + 1);
+        }
+    }
+    painter.add(egui::Shape::mesh(mesh));
+
+    // A faint grid, so a pin's position can be read rather than only seen.
+    let grid = egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(20));
+    for i in 1..4 {
+        let t = i as f32 / 4.0;
+        let x = rect.min.x + t * rect.width();
+        let y = rect.min.y + t * rect.height();
+        painter.line_segment([egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)], grid);
+        painter.line_segment([egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)], grid);
+    }
+}
+
+/// What colour sits at a chromaticity, as far as the display can show it.
+///
+/// Out-of-gamut coordinates — most of the plot, since the horseshoe is far
+/// larger than any display — are darkened rather than clipped to a lie. The
+/// shape that emerges is the gamut itself, which is the right thing for the
+/// plot to be showing.
+fn xy_colour(at: [f32; 2]) -> egui::Color32 {
+    let (x, y) = (at[0], at[1]);
+    if y <= 1e-3 || x + y >= 1.0 {
+        return crate::theme::colour::VIEWER;
+    }
+    let xyz = [x / y, 1.0, (1.0 - x - y) / y];
+    // XYZ to sRGB, which is what the screen has.
+    let m = [
+        [3.2406, -1.5372, -0.4986],
+        [-0.9689, 1.8758, 0.0415],
+        [0.0557, -0.2040, 1.0570],
+    ];
+    let mut rgb = [0.0f32; 3];
+    for i in 0..3 {
+        rgb[i] = m[i][0] * xyz[0] + m[i][1] * xyz[1] + m[i][2] * xyz[2];
+    }
+    let outside = rgb.iter().any(|c| *c < 0.0);
+    let peak = rgb.iter().cloned().fold(1e-4f32, f32::max);
+    let dim = if outside { 0.22 } else { 0.95 };
+    let encode = |v: f32| {
+        let v = (v / peak).clamp(0.0, 1.0) * dim;
+        let g = if v <= 0.0031308 {
+            v * 12.92
+        } else {
+            1.055 * v.powf(1.0 / 2.4) - 0.055
+        };
+        (g * 255.0) as u8
+    };
+    egui::Color32::from_rgb(encode(rgb[0]), encode(rgb[1]), encode(rgb[2]))
+}
+
+fn draw_pins(painter: &egui::Painter, rect: egui::Rect, pins: &Pins, chosen: Option<usize>) {
+    for (i, pin) in pins.iter().enumerate() {
+        let from = plot_to_screen(rect, pin.at);
+        let to = plot_to_screen(rect, pin.to);
+        let on = chosen == Some(i);
+        let tint = if on {
+            crate::theme::colour::ACCENT
+        } else {
+            egui::Color32::from_white_alpha(210)
+        };
+
+        // How far the pin reaches, which is the control people forget is
+        // there until they can see it.
+        let reach = pin.chroma_range / PLOT_SPAN * rect.width();
+        painter.circle_stroke(
+            from,
+            reach.max(2.0),
+            egui::Stroke::new(1.0_f32, tint.gamma_multiply(0.45)),
+        );
+        if from.distance(to) > 0.5 {
+            painter.line_segment([from, to], egui::Stroke::new(1.2_f32, tint));
+        }
+        // The origin is a ring and the handle is solid: one says where the
+        // colour was, the other where it is going.
+        painter.circle_stroke(from, 3.0, egui::Stroke::new(1.2_f32, tint));
+        painter.circle_filled(to, if on { 5.0 } else { 4.0 }, tint);
     }
 }
 

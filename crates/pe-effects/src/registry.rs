@@ -439,6 +439,22 @@ pub static EFFECTS: &[EffectDef] = &[
                 unit: "",
                 section: "Hue - Saturation",
             },
+            // ---- Chroma Warp ----
+            //
+            // The one view that is not the grid seen along different axes. A
+            // grid asks what happens to every colour; a pin asks what happens
+            // to *this* one, and a picture usually has two or three colours
+            // anybody has an opinion about.
+            ParamDef {
+                key: "pins",
+                name: "Chroma Warp",
+                kind: ParamKind::Pins,
+                unit: "",
+                // No heading: the warper draws its own panel and never lays
+                // its parameters out as rows, so a section here would be a
+                // heading over a control nobody ever sees in a list.
+                section: "",
+            },
             ParamDef {
                 key: "hue_sat",
                 name: "Hue - Saturation",

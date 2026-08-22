@@ -33,7 +33,7 @@ const LUT_WIDTH: u32 = 256;
 /// Rows in the curve LUT: four tone curves, then six secondaries.
 ///
 /// `curves.wgsl` indexes these by number, so the order here is load-bearing.
-const LUT_ROWS: u32 = 16;
+const LUT_ROWS: u32 = 17;
 
 /// Where the Colour Warper's lattices start, and how many rows each takes.
 ///
@@ -43,6 +43,10 @@ const LUT_ROWS: u32 = 16;
 /// sampled resource, which every effect pays for whether it uses it or not.
 const WARP_ROW: u32 = 10;
 const WARP_ROWS_EACH: u32 = 2;
+
+/// And the row after them holds the Colour Warper's pins, twelve floats each.
+/// Eight pins is ninety-six of a row's two hundred and fifty-six.
+const PIN_ROW: u32 = 16;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -512,6 +516,20 @@ impl EffectRenderer {
                 }
             }
         }
+        // The pins, packed twelve floats apiece into one row.
+        debug_assert_eq!(
+            data.len() as u32,
+            PIN_ROW * LUT_WIDTH,
+            "the pins must begin at the row colour_warper.wgsl reads"
+        );
+        let before = data.len();
+        if let Some(pins) = row.params.get("pins").and_then(ParamValue::as_pins) {
+            for pin in pins.iter().take(pe_core::pins::MAX_PINS) {
+                data.extend_from_slice(&pin.pack());
+            }
+        }
+        data.resize(before + LUT_WIDTH as usize, 0.0);
+
         debug_assert_eq!(
             data.len() as u32,
             LUT_WIDTH * LUT_ROWS,

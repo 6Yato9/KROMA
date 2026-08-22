@@ -749,9 +749,10 @@ fn param_row(
                 set(history, id, def, ParamValue::Rgb(default), None);
             }
         }
-        ParamKind::Warp => {
-            // Drawn by the panel, not by a row. A lattice is not a control
-            // with a value beside it, and the three views share one plot.
+        ParamKind::Warp | ParamKind::Pins => {
+            // Drawn by the panel, not by a row. Neither a lattice nor a set of
+            // pins is a control with a value beside it, and the three views
+            // share one plot.
         }
         ParamKind::Wheel {
             min,

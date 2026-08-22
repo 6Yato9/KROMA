@@ -125,6 +125,8 @@ pub enum ParamValue {
     Choice(String),
     /// A lattice of displacements — the Colour Warper's grids.
     Warp(crate::warp::Warp),
+    /// Pins on the chromaticity diagram — its third view.
+    Pins(crate::pins::Pins),
 }
 
 impl ParamValue {
@@ -139,6 +141,13 @@ impl ParamValue {
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             ParamValue::Bool(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    pub fn as_pins(&self) -> Option<&crate::pins::Pins> {
+        match self {
+            ParamValue::Pins(p) => Some(p),
             _ => None,
         }
     }
@@ -183,6 +192,7 @@ impl ParamValue {
             ParamValue::Curve(_) => "curve",
             ParamValue::Choice(_) => "choice",
             ParamValue::Warp(_) => "warp",
+            ParamValue::Pins(_) => "pins",
         }
     }
 }

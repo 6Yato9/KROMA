@@ -304,3 +304,77 @@ fn a_dragged_vertex_moves_its_own_hue_and_not_the_opposite_one() {
         "the far side of the wheel moved nearly as much: cyan {moved_cyan}, red {moved_red}"
     );
 }
+
+/// A pin moves the colour it is aimed at and leaves the rest of the picture
+/// where it was.
+///
+/// That is the whole promise of the Chroma Warp view, and the thing that makes
+/// it worth having beside the grids: a grid asks what happens to every colour,
+/// a pin asks what happens to *this* one.
+#[test]
+fn a_pin_moves_the_colour_it_sits_on_and_not_its_neighbours() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = chart();
+
+    // A pin on green — CIE xy around (0.30, 0.60) — dragged towards blue, with
+    // a reach wide enough to cover the greens in the chart and no wider.
+    let mut pin = pe_core::Pin::placed([0.30, 0.60]);
+    pin.to = [0.24, 0.42];
+    pin.chroma_range = 0.16;
+    let pins = pe_core::Pins(vec![pin]);
+
+    let out = render(
+        gpu,
+        &src,
+        &look("colour_warper", &[("pins", ParamValue::Pins(pins))]),
+    );
+
+    // Greens should have moved; reds, at the far side of the diagram, should
+    // not have.
+    let mut moved_green = 0i32;
+    let mut moved_red = 0i32;
+    for y in (src.height / 2)..src.height {
+        for x in 0..src.width {
+            let a = src.pixel(x, y);
+            let b = out.pixel(x, y);
+            let d = (a[0] as i32 - b[0] as i32).abs()
+                + (a[1] as i32 - b[1] as i32).abs()
+                + (a[2] as i32 - b[2] as i32).abs();
+            if a[1] > a[0] + 60 && a[1] > a[2] + 60 {
+                moved_green = moved_green.max(d);
+            }
+            if a[0] > a[1] + 60 && a[0] > a[2] + 60 {
+                moved_red = moved_red.max(d);
+            }
+        }
+    }
+    assert!(
+        moved_green > 12,
+        "the pin did not move the colour it was on: {moved_green}"
+    );
+    assert!(
+        moved_red * 2 < moved_green,
+        "it reached the far side of the diagram: red {moved_red}, green {moved_green}"
+    );
+}
+
+/// A pin that has been placed and not dragged must leave the picture exactly
+/// alone — otherwise placing one, which is the first half of every use of this
+/// tool, would be a change in its own right.
+#[test]
+fn a_placed_pin_that_has_not_been_dragged_does_nothing() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = chart();
+    let pins = pe_core::Pins(vec![pe_core::Pin::placed([0.30, 0.60])]);
+    let out = render(
+        gpu,
+        &src,
+        &look("colour_warper", &[("pins", ParamValue::Pins(pins))]),
+    );
+    let delta = out.max_channel_delta(&src).unwrap();
+    assert!(delta <= 2, "placing a pin moved the picture by {delta}");
+}

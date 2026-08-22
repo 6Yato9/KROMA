@@ -104,6 +104,8 @@ pub enum ParamKind {
         options: &'static [&'static str],
         default: &'static str,
     },
+    /// Pins on the chromaticity diagram. Like a warp, it rides the LUT.
+    Pins,
     /// A lattice of displacements, dragged by hand — the Colour Warper's
     /// grids. Like a curve it takes no uniform slots: it travels to the GPU
     /// inside the LUT texture, because a hundred control points read through
@@ -159,6 +161,7 @@ impl ParamDef {
             }),
             ParamKind::Choice { default, .. } => ParamValue::Choice(default.into()),
             ParamKind::Warp => ParamValue::Warp(pe_core::Warp::default()),
+            ParamKind::Pins => ParamValue::Pins(pe_core::Pins::default()),
         }
     }
 }
@@ -323,6 +326,10 @@ impl EffectDef {
                 .get(def.key)
                 .and_then(ParamValue::as_warp)
                 .is_none_or(|w| w.is_identity()),
+            ParamKind::Pins => params
+                .get(def.key)
+                .and_then(ParamValue::as_pins)
+                .is_none_or(|p| p.is_neutral()),
         })
     }
 }
