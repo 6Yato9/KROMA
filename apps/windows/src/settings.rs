@@ -80,7 +80,10 @@ impl Settings {
             let _ = std::fs::create_dir_all(dir);
         }
         if let Ok(json) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::write(path, json);
+            // Through a scratch file like everything else that is written
+            // without being asked: settings are rewritten on the way out, which
+            // is exactly when a process is most likely to be cut short.
+            let _ = pe_io::write_bytes_atomically(path, json.as_bytes());
         }
     }
 
@@ -91,13 +94,24 @@ impl Settings {
     /// it out is the only reasonable thing to do about it — there is nobody
     /// to tell yet.
     pub fn session(&self) -> (Vec<PathBuf>, usize) {
+        // Which one was showing, by name rather than by position. Dropping the
+        // photographs that have gone renumbers the list, so the remembered
+        // index refers to the old numbering: lose one from the front and every
+        // position after it slides, and the application reopens confidently on
+        // the wrong picture. Clamping the number cannot fix that, because the
+        // number was never the thing worth remembering.
+        let showing = self.session.get(self.session_index).map(PathBuf::from);
         let paths: Vec<PathBuf> = self
             .session
             .iter()
             .map(PathBuf::from)
             .filter(|p| p.is_file())
             .collect();
-        let index = self.session_index.min(paths.len().saturating_sub(1));
+        let index = showing
+            .and_then(|showing| paths.iter().position(|p| *p == showing))
+            // The one that was showing is itself gone. Falling back on the
+            // clamped position at least lands somewhere near where you were.
+            .unwrap_or_else(|| self.session_index.min(paths.len().saturating_sub(1)));
         (paths, index)
     }
 
@@ -139,6 +153,62 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Reopening has to land on the photograph you left, not on whatever has
+    /// slid into its old position.
+    ///
+    /// Real files, because the filtering is `is_file` and a test that stubbed
+    /// that out would be testing the wrong function.
+    #[test]
+    fn a_deleted_photograph_does_not_shift_which_one_reopens() {
+        let dir = std::env::temp_dir().join("kroma-session-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let names = ["a.jpg", "b.jpg", "c.jpg"];
+        for n in names {
+            std::fs::write(dir.join(n), b"x").unwrap();
+        }
+        // One that is gone, sitting in front of the others.
+        let missing = dir.join("deleted.jpg");
+        let _ = std::fs::remove_file(&missing);
+
+        let mut s = Settings::default();
+        s.session = std::iter::once(missing.display().to_string())
+            .chain(names.iter().map(|n| dir.join(n).display().to_string()))
+            .collect();
+        // "c.jpg" — third of the survivors, fourth in the remembered list.
+        s.session_index = 3;
+
+        let (paths, index) = s.session();
+        assert_eq!(paths.len(), 3, "the missing photograph should be dropped");
+        assert_eq!(
+            paths[index],
+            dir.join("c.jpg"),
+            "reopened on the wrong photograph after one was deleted from the front"
+        );
+    }
+
+    /// And when the photograph you were on is itself the one that has gone,
+    /// it still has to open something rather than give up.
+    #[test]
+    fn losing_the_current_photograph_still_opens_the_set() {
+        let dir = std::env::temp_dir().join("kroma-session-gone");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("kept.jpg"), b"x").unwrap();
+        let gone = dir.join("gone.jpg");
+        let _ = std::fs::remove_file(&gone);
+
+        let mut s = Settings::default();
+        s.session = vec![
+            dir.join("kept.jpg").display().to_string(),
+            gone.display().to_string(),
+        ];
+        s.session_index = 1;
+
+        let (paths, index) = s.session();
+        assert_eq!(paths.len(), 1);
+        assert!(index < paths.len(), "index {index} is off the end");
+        assert_eq!(paths[index], dir.join("kept.jpg"));
+    }
 
     #[test]
     fn starring_and_unstarring_are_the_same_gesture() {

@@ -98,7 +98,11 @@ pub fn store(photo: &Path, document: &Document) {
         document: document.clone(),
     };
     if let Ok(json) = serde_json::to_string(&entry) {
-        let _ = std::fs::write(path, json);
+        // The one that matters most. This is rewritten every time the user
+        // stops moving, it is the only copy of work nobody asked to save, and
+        // `load` treats an unparseable file as nothing saved at all — so a torn
+        // write here loses the lot, silently.
+        let _ = pe_io::write_bytes_atomically(path, json.as_bytes());
     }
 }
 

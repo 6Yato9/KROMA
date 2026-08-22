@@ -185,6 +185,72 @@ pub fn thumbnail(img: &DecodedImage, long_edge: u32) -> DecodedImage {
 
 /// Save as PNG. Lossless, which is what the golden references need — a JPEG
 /// reference would drift with every encoder update.
+/// Write a file so that a crash cannot leave half of one behind.
+///
+/// To a temporary name beside the target, then rename over it. Renaming within
+/// a directory is atomic on every filesystem this runs on, so a reader sees
+/// either the whole of the old file or the whole of the new one — never the
+/// truncation that `fs::write` opens with.
+///
+/// Beside the target rather than in the system temp directory, deliberately: a
+/// rename across volumes is a copy, and a copy is exactly the torn write this
+/// exists to avoid.
+///
+/// It matters most for the file written most often. The autosave rewrites a
+/// document every time you stop moving a slider, and it is the only copy of
+/// work nobody asked to save — a torn write there is not a corrupt file, it is
+/// an afternoon. It matters again for an export, where the truncation lands on
+/// top of a good JPEG from the last run.
+pub fn write_atomically(
+    path: impl AsRef<Path>,
+    write: impl FnOnce(&mut std::fs::File) -> Result<(), IoError>,
+) -> Result<(), IoError> {
+    let path = path.as_ref();
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    // The process id keeps two copies of the application from choosing the
+    // same scratch name and finishing each other's write.
+    let name = path
+        .file_name()
+        .unwrap_or_else(|| std::ffi::OsStr::new("out"));
+    let temp = parent.join(format!(
+        ".{}.{}.tmp",
+        name.to_string_lossy(),
+        std::process::id()
+    ));
+
+    let result = (|| {
+        let mut file = std::fs::File::create(&temp)?;
+        write(&mut file)?;
+        // Before the rename, not after. Without this the rename can reach the
+        // disc first and a power cut leaves the new name pointing at nothing,
+        // which is the one outcome worse than the old file surviving.
+        file.sync_all()?;
+        Ok(())
+    })();
+
+    match result {
+        Ok(()) => {
+            std::fs::rename(&temp, path)?;
+            Ok(())
+        }
+        Err(e) => {
+            // Leaving scratch files through somebody's photo library is its
+            // own small rudeness.
+            let _ = std::fs::remove_file(&temp);
+            Err(e)
+        }
+    }
+}
+
+/// [`write_atomically`] for something already in memory.
+pub fn write_bytes_atomically(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), IoError> {
+    use std::io::Write as _;
+    write_atomically(path, |file| {
+        file.write_all(bytes)?;
+        Ok(())
+    })
+}
+
 pub fn save_png(img: &DecodedImage, path: impl AsRef<Path>) -> Result<(), IoError> {
     let buf = image::RgbaImage::from_raw(img.width, img.height, img.pixels.clone()).ok_or(
         IoError::PixelCountMismatch {
@@ -201,10 +267,17 @@ pub fn save_jpeg(img: &DecodedImage, path: impl AsRef<Path>, quality: u8) -> Res
         let p = img.pixel(x, y);
         image::Rgb([p[0], p[1], p[2]])
     });
-    let mut file = std::io::BufWriter::new(std::fs::File::create(path.as_ref())?);
-    let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut file, quality.max(1));
-    enc.encode_image(&rgb)?;
-    Ok(())
+    // Through a scratch file: an export usually lands on top of the last one,
+    // and an encoder that stops halfway would otherwise have already truncated
+    // a JPEG that was fine.
+    write_atomically(path, |file| {
+        use std::io::Write as _;
+        let mut out = std::io::BufWriter::new(file);
+        let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality.max(1));
+        enc.encode_image(&rgb)?;
+        out.flush()?;
+        Ok(())
+    })
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -364,6 +437,84 @@ mod thumbnail_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join("pe-io-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        let _ = std::fs::remove_file(&path);
+        path
+    }
+
+    /// The trap this helper exists to walk into on purpose.
+    ///
+    /// `fs::rename` over an existing file is an error on some platforms and a
+    /// replacement on others. If it ever stopped replacing here, every save in
+    /// the application would fail on the second attempt and only on the second
+    /// attempt — the kind of thing that passes a demo and fails a user.
+    #[test]
+    fn writing_atomically_replaces_what_was_there() {
+        let path = scratch("replace.txt");
+        write_bytes_atomically(&path, b"first").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"first");
+
+        write_bytes_atomically(&path, b"second").unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            b"second",
+            "the rename did not replace the existing file"
+        );
+    }
+
+    /// A write that goes wrong must leave the previous file untouched, and no
+    /// scratch file behind.
+    ///
+    /// The whole argument for the temporary is that the moment of danger is
+    /// moved off the real file. If a failure still truncated it, this would be
+    /// ceremony rather than safety.
+    #[test]
+    fn a_failed_write_leaves_the_old_file_alone() {
+        let path = scratch("failure.txt");
+        write_bytes_atomically(&path, b"the good copy").unwrap();
+
+        let outcome = write_atomically(&path, |_| {
+            Err(IoError::Fs(std::io::Error::other("encoder gave up")))
+        });
+        assert!(outcome.is_err(), "the failure was swallowed");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            b"the good copy",
+            "a failed write destroyed the file it was replacing"
+        );
+
+        let leftovers: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.starts_with(".failure.txt") && n.ends_with(".tmp"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "scratch files left behind: {leftovers:?}"
+        );
+    }
+
+    /// And nothing is left lying about after a write that went fine either.
+    #[test]
+    fn a_good_write_leaves_no_scratch_file() {
+        let path = scratch("tidy.txt");
+        write_bytes_atomically(&path, b"done").unwrap();
+        let leftovers: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.starts_with(".tidy.txt") && n.ends_with(".tmp"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "scratch files left behind: {leftovers:?}"
+        );
+    }
 
     #[test]
     fn a_mismatched_buffer_is_rejected() {

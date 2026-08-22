@@ -722,8 +722,9 @@ impl App {
             .document()
             .to_json()
             .map_err(|e| e.to_string())
-            .and_then(|json| std::fs::write(&path, json).map_err(|e| e.to_string()))
-        {
+            .and_then(|json| {
+                pe_io::write_bytes_atomically(&path, json.as_bytes()).map_err(|e| e.to_string())
+            }) {
             Ok(()) => self.status.done(format!("saved {}", path.display())),
             Err(e) => self.status.problem(format!("save failed: {e}")),
         }
@@ -790,11 +791,9 @@ impl App {
                 failed += 1;
                 return;
             }
-            match doc
-                .to_json()
-                .map_err(|e| e.to_string())
-                .and_then(|json| std::fs::write(&out, json).map_err(|e| e.to_string()))
-            {
+            match doc.to_json().map_err(|e| e.to_string()).and_then(|json| {
+                pe_io::write_bytes_atomically(&out, json.as_bytes()).map_err(|e| e.to_string())
+            }) {
                 Ok(()) => written += 1,
                 Err(_) => failed += 1,
             }
