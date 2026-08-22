@@ -223,14 +223,7 @@ fn chroma_warp(
         ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click_and_drag());
 
     if ui.is_rect_visible(rect) {
-        gamut(ui.painter(), rect);
-        // The photograph's own colours, over the space they live in. Without
-        // this you are aiming a pin at where greens are in general rather than
-        // at the green in front of you, which is the difference between a
-        // diagram and a tool.
-        if let Some(d) = seen {
-            haze(ui.painter(), rect, &d.chromaticity, d.peaks[0]);
-        }
+        draw_plot(ui, rect, Plot::Chromaticity, seen);
         draw_pins(ui.painter(), rect, &pins, chosen);
     }
 
@@ -410,81 +403,6 @@ fn grabbed(rect: egui::Rect, pins: &Pins, p: egui::Pos2) -> Option<usize> {
     (plot_to_screen(rect, pin.to).distance(p) <= GRAB).then_some(i)
 }
 
-/// The chromaticity plane, drawn as the colour at each point.
-///
-/// Every pixel is asked what colour its own coordinates are, which is what
-/// makes this a picture of the space rather than a decoration of it — the pin
-/// you place at a green really is sitting on the green.
-fn gamut(painter: &egui::Painter, rect: egui::Rect) {
-    painter.rect_filled(rect, 3.0, crate::theme::colour::VIEWER);
-    const STEPS: usize = 40;
-    let mut mesh = egui::Mesh::default();
-    for row in 0..=STEPS {
-        for col in 0..=STEPS {
-            let u = col as f32 / STEPS as f32;
-            let v = row as f32 / STEPS as f32;
-            let at = [u * PLOT_SPAN, v * PLOT_SPAN];
-            mesh.colored_vertex(plot_to_screen(rect, at), xy_colour(at));
-        }
-    }
-    let w = STEPS as u32 + 1;
-    for row in 0..STEPS as u32 {
-        for col in 0..STEPS as u32 {
-            let i = row * w + col;
-            mesh.add_triangle(i, i + 1, i + w);
-            mesh.add_triangle(i + 1, i + w, i + w + 1);
-        }
-    }
-    painter.add(egui::Shape::mesh(mesh));
-
-    // A faint grid, so a pin's position can be read rather than only seen.
-    let grid = egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(20));
-    for i in 1..4 {
-        let t = i as f32 / 4.0;
-        let x = rect.min.x + t * rect.width();
-        let y = rect.min.y + t * rect.height();
-        painter.line_segment([egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)], grid);
-        painter.line_segment([egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)], grid);
-    }
-}
-
-/// What colour sits at a chromaticity, as far as the display can show it.
-///
-/// Out-of-gamut coordinates — most of the plot, since the horseshoe is far
-/// larger than any display — are darkened rather than clipped to a lie. The
-/// shape that emerges is the gamut itself, which is the right thing for the
-/// plot to be showing.
-fn xy_colour(at: [f32; 2]) -> egui::Color32 {
-    let (x, y) = (at[0], at[1]);
-    if y <= 1e-3 || x + y >= 1.0 {
-        return crate::theme::colour::VIEWER;
-    }
-    let xyz = [x / y, 1.0, (1.0 - x - y) / y];
-    // XYZ to sRGB, which is what the screen has.
-    let m = [
-        [3.2406, -1.5372, -0.4986],
-        [-0.9689, 1.8758, 0.0415],
-        [0.0557, -0.2040, 1.0570],
-    ];
-    let mut rgb = [0.0f32; 3];
-    for i in 0..3 {
-        rgb[i] = m[i][0] * xyz[0] + m[i][1] * xyz[1] + m[i][2] * xyz[2];
-    }
-    let outside = rgb.iter().any(|c| *c < 0.0);
-    let peak = rgb.iter().cloned().fold(1e-4f32, f32::max);
-    let dim = if outside { 0.22 } else { 0.95 };
-    let encode = |v: f32| {
-        let v = (v / peak).clamp(0.0, 1.0) * dim;
-        let g = if v <= 0.0031308 {
-            v * 12.92
-        } else {
-            1.055 * v.powf(1.0 / 2.4) - 0.055
-        };
-        (g * 255.0) as u8
-    };
-    egui::Color32::from_rgb(encode(rgb[0]), encode(rgb[1]), encode(rgb[2]))
-}
-
 fn draw_pins(painter: &egui::Painter, rect: egui::Rect, pins: &Pins, chosen: Option<usize>) {
     for (i, pin) in pins.iter().enumerate() {
         let from = plot_to_screen(rect, pin.at);
@@ -539,16 +457,13 @@ fn grid_plot(
         ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click_and_drag());
 
     if ui.is_rect_visible(rect) {
-        background(ui.painter(), rect, axes);
-        // The frame's own colours, in this view's projection. Each view needs
-        // its own measurement — a cloud plotted for one set of axes says
-        // nothing on another.
-        if let Some(d) = seen {
-            match axes {
-                Axes::HueSat => haze(ui.painter(), rect, &d.hue_sat, d.peaks[1]),
-                Axes::ChromaLuma => haze(ui.painter(), rect, &d.chroma_luma, d.peaks[2]),
-            }
-        }
+        // Each view needs its own measurement: a cloud plotted for one set
+        // of axes says nothing on another.
+        let plot = match axes {
+            Axes::HueSat => Plot::HueSat,
+            Axes::ChromaLuma => Plot::ChromaLuma,
+        };
+        draw_plot(ui, rect, plot, seen);
         lattice(ui.painter(), rect, &warp, axes);
     }
 
@@ -634,50 +549,174 @@ fn grid_plot(
     });
 }
 
-/// The frame's colours, drawn over a plot as a translucent haze.
+/// Which plot is being drawn, for the one function that draws all three.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Plot {
+    Chromaticity,
+    HueSat,
+    ChromaLuma,
+}
+
+/// How many texels across each plot's image is built.
 ///
-/// White and additive, which is what makes it read as *measurement* rather
-/// than as part of the picture underneath: it brightens whatever it lands on
-/// instead of tinting it, so a dense cloud over a green still looks like a
-/// green with a lot of pixels in it.
+/// Generated at a fixed size and scaled to whatever the panel gives it, rather
+/// than rebuilt on every resize: the plot is smooth, so a linear filter loses
+/// nothing you can see, and 384 squared is a tenth of a megapixel to fill.
+const PLOT_TEXELS: usize = 384;
+
+/// The plot, as an image: the space itself with the photograph's own colours
+/// over it.
 ///
-/// The brightness curve is a fourth root. A photograph's colours are wildly
-/// unevenly distributed — a sky is thousands of pixels in a handful of cells
-/// and a red jacket is a hundred spread over dozens — and against a linear
-/// scale the jacket is invisible next to the sky. The whole reason to draw
-/// this is to see the jacket.
-fn haze(painter: &egui::Painter, rect: egui::Rect, grid: &[u32], peak: u32) {
-    if peak == 0 {
-        return;
-    }
-    let peak = peak as f32;
-    let cell = egui::vec2(
-        rect.width() / GRID as f32 + 0.5,
-        rect.height() / GRID as f32 + 0.5,
-    );
-    let mut mesh = egui::Mesh::default();
-    for row in 0..GRID {
-        for col in 0..GRID {
-            let count = grid[row * GRID + col];
-            if count == 0 {
-                continue;
+/// One image rather than a background with something drawn on top, because the
+/// two have to be *composited*, and compositing on the CPU is the only place
+/// the two can meet at the same resolution. Drawing the haze as a mesh of
+/// little rectangles over a mesh of big ones is what made ours look like a
+/// mosaic beside Resolve's: both grids showed through as their own geometry
+/// instead of the picture they were meant to describe.
+fn plot_image(plot: Plot, seen: Option<&Distribution>) -> egui::ColorImage {
+    let n = PLOT_TEXELS;
+    let mut pixels = vec![egui::Color32::BLACK; n * n];
+    let (grid, peak) = match (plot, seen) {
+        (Plot::Chromaticity, Some(d)) => (Some(&d.chromaticity), d.peaks[0]),
+        (Plot::HueSat, Some(d)) => (Some(&d.hue_sat), d.peaks[1]),
+        (Plot::ChromaLuma, Some(d)) => (Some(&d.chroma_luma), d.peaks[2]),
+        (_, None) => (None, 0),
+    };
+
+    for row in 0..n {
+        for col in 0..n {
+            // Texel centres, and v measured upwards to match every plot here.
+            let u = (col as f32 + 0.5) / n as f32;
+            let v = 1.0 - (row as f32 + 0.5) / n as f32;
+
+            let base = match plot {
+                Plot::Chromaticity => crate::locus::colour_at(u * PLOT_SPAN, v * PLOT_SPAN)
+                    .map(|c| [c[0] * 0.82, c[1] * 0.82, c[2] * 0.82]),
+                Plot::HueSat => {
+                    // The square the hue/saturation grid is stored in: the disc
+                    // of radius one, and nothing outside it.
+                    let (x, y) = (u * 2.0 - 1.0, v * 2.0 - 1.0);
+                    let r = (x * x + y * y).sqrt();
+                    (r <= 1.0).then(|| {
+                        let hue = y.atan2(x) / std::f32::consts::TAU;
+                        let c = crate::theme::Ramp::Hue.at(hue.rem_euclid(1.0));
+                        let grey = 0.28;
+                        [
+                            grey + (c.r() as f32 / 255.0 - grey) * r,
+                            grey + (c.g() as f32 / 255.0 - grey) * r,
+                            grey + (c.b() as f32 / 255.0 - grey) * r,
+                        ]
+                    })
+                }
+                Plot::ChromaLuma => {
+                    // Grey to colourful across, dark to light up.
+                    let c = crate::theme::Ramp::Chroma.at(u);
+                    let shade = 0.18 + v * 0.78;
+                    Some([
+                        c.r() as f32 / 255.0 * shade,
+                        c.g() as f32 / 255.0 * shade,
+                        c.b() as f32 / 255.0 * shade,
+                    ])
+                }
+            };
+
+            let mut rgb = base.unwrap_or([0.03, 0.03, 0.035]);
+
+            // The photograph's colours, added rather than mixed: the haze
+            // brightens whatever it lands on instead of tinting it, so a dense
+            // cloud over a green still reads as a green with a lot of pixels
+            // in it.
+            if let Some(grid) = grid
+                && peak > 0
+            {
+                let t = sample_grid(grid, u, v) / peak as f32;
+                // A fourth root, because a photograph's colours are wildly
+                // unevenly distributed: a sky is thousands of pixels in a
+                // handful of cells and a red jacket is a hundred over dozens.
+                // On a linear scale the jacket is invisible, and seeing the
+                // jacket is the entire point.
+                let haze = t.max(0.0).powf(0.25).clamp(0.0, 1.0) * 0.85;
+                for c in &mut rgb {
+                    *c = (*c + haze).min(1.0);
+                }
             }
-            let t = (count as f32 / peak).powf(0.25).clamp(0.0, 1.0);
-            let at = egui::pos2(
-                rect.min.x + col as f32 / GRID as f32 * rect.width(),
-                rect.min.y + row as f32 / GRID as f32 * rect.height(),
-            );
-            // Premultiplied with zero alpha is egui's additive case, which is
-            // the same trick the histogram's channels use to sum to white
-            // where they agree.
-            let v = (t * 190.0) as u8;
-            mesh.add_colored_rect(
-                egui::Rect::from_min_size(at, cell),
-                egui::Color32::from_rgba_premultiplied(v, v, v, 0),
-            );
+
+            let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0) as u8;
+            pixels[row * n + col] =
+                egui::Color32::from_rgb(byte(rgb[0]), byte(rgb[1]), byte(rgb[2]));
         }
     }
-    painter.add(egui::Shape::mesh(mesh));
+
+    egui::ColorImage {
+        size: [n, n],
+        pixels,
+        source_size: egui::vec2(n as f32, n as f32),
+    }
+}
+
+/// A count grid read at a point, bilinearly.
+///
+/// Bilinear because the grid is coarser than the image it is being drawn into,
+/// and the whole complaint about the old drawing was that you could see the
+/// cells. Reading between them is what turns a lattice of counts back into the
+/// cloud it was measured from.
+fn sample_grid(grid: &[u32], u: f32, v: f32) -> f32 {
+    let n = GRID as f32;
+    // The grid stores v downwards; the plot reads it upwards.
+    let fx = (u * n - 0.5).clamp(0.0, n - 1.0);
+    let fy = ((1.0 - v) * n - 0.5).clamp(0.0, n - 1.0);
+    let (x0, y0) = (fx.floor() as usize, fy.floor() as usize);
+    let (x1, y1) = ((x0 + 1).min(GRID - 1), (y0 + 1).min(GRID - 1));
+    let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
+    let at = |x: usize, y: usize| grid[y * GRID + x] as f32;
+    let top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * tx;
+    let bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * tx;
+    top + (bottom - top) * ty
+}
+
+/// Draw a plot, keeping its image until something it depends on changes.
+///
+/// Rebuilt on the distribution's generation rather than every frame: it is a
+/// hundred thousand texels of transcendental arithmetic, which is nothing once
+/// and far too much sixty times a second.
+fn draw_plot(ui: &mut egui::Ui, rect: egui::Rect, plot: Plot, seen: Option<&Distribution>) {
+    let key = (
+        plot,
+        seen.map_or(0, |d| d.peaks[0] ^ d.peaks[1] ^ d.peaks[2]),
+    );
+    let id = egui::Id::new(("warper_plot", plot));
+    let cached: Option<(u64, egui::TextureHandle)> = ui.data(|d| d.get_temp(id));
+    let stamp = key.1 as u64;
+    let texture = match cached {
+        Some((had, handle)) if had == stamp => handle,
+        _ => {
+            let handle = ui.ctx().load_texture(
+                format!("warper-plot-{}", stamp),
+                plot_image(plot, seen),
+                egui::TextureOptions::LINEAR,
+            );
+            ui.data_mut(|d| d.insert_temp(id, (stamp, handle.clone())));
+            handle
+        }
+    };
+    ui.painter().add(egui::Shape::image(
+        texture.id(),
+        rect,
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+        egui::Color32::WHITE,
+    ));
+
+    // A faint grid, so a position can be read rather than only seen.
+    let grid = egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(18));
+    for i in 1..4 {
+        let t = i as f32 / 4.0;
+        let x = rect.min.x + t * rect.width();
+        let y = rect.min.y + t * rect.height();
+        ui.painter()
+            .line_segment([egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)], grid);
+        ui.painter()
+            .line_segment([egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)], grid);
+    }
 }
 
 /// Where a vertex sits when nothing has been done to it, in axis units.
@@ -742,60 +781,6 @@ fn nearest(rect: egui::Rect, warp: &Warp, axes: Axes, p: egui::Pos2) -> Option<(
     best.filter(|(_, d)| *d <= GRAB).map(|(v, _)| v)
 }
 
-/// The colour behind the grid: the slice of colour the axes cut.
-fn background(painter: &egui::Painter, rect: egui::Rect, axes: Axes) {
-    painter.rect_filled(rect, 3.0, crate::theme::colour::WELL);
-    let mut mesh = egui::Mesh::default();
-    match axes {
-        Axes::HueSat => {
-            // A fan from a grey middle out to full colour at the rim, which is
-            // what the two axes are.
-            let centre = rect.center();
-            let radius = rect.width() * 0.45;
-            const STEPS: usize = 48;
-            mesh.colored_vertex(centre, egui::Color32::from_gray(70));
-            for i in 0..=STEPS {
-                let t = i as f32 / STEPS as f32;
-                let a = t * std::f32::consts::TAU;
-                mesh.colored_vertex(
-                    egui::pos2(centre.x + radius * a.cos(), centre.y - radius * a.sin()),
-                    crate::theme::Ramp::Hue.at(t),
-                );
-                if i > 0 {
-                    mesh.add_triangle(0, i as u32, i as u32 + 1);
-                }
-            }
-        }
-        Axes::ChromaLuma => {
-            // Grey to colourful across, dark to light up. Drawn as one quad
-            // per corner colour, which the GPU interpolates for free.
-            const STEPS: usize = 12;
-            for i in 0..=STEPS {
-                let t = i as f32 / STEPS as f32;
-                let x = rect.min.x + t * rect.width();
-                for (j, y) in [rect.max.y, rect.min.y].into_iter().enumerate() {
-                    let v = if j == 0 { 0.25_f32 } else { 0.95 };
-                    let c = crate::theme::Ramp::Chroma.at(t);
-                    mesh.colored_vertex(
-                        egui::pos2(x, y),
-                        egui::Color32::from_rgb(
-                            (c.r() as f32 * v) as u8,
-                            (c.g() as f32 * v) as u8,
-                            (c.b() as f32 * v) as u8,
-                        ),
-                    );
-                }
-                if i > 0 {
-                    let b = (i as u32 - 1) * 2;
-                    mesh.add_triangle(b, b + 1, b + 2);
-                    mesh.add_triangle(b + 1, b + 2, b + 3);
-                }
-            }
-        }
-    }
-    painter.add(egui::Shape::mesh(mesh));
-}
-
 /// The web itself, drawn where the warp has put it.
 fn lattice(painter: &egui::Painter, rect: egui::Rect, warp: &Warp, axes: Axes) {
     let at = |col: u32, row: u32| {
@@ -840,6 +825,32 @@ fn lattice(painter: &egui::Painter, rect: egui::Rect, warp: &Warp, axes: Axes) {
 
 #[cfg(test)]
 mod tests {
+
+    /// Writes each plot to a PNG so the drawing can be looked at, which is the
+    /// only way to check a thing whose whole job is to look right. Ignored, so
+    /// it runs when asked and never in CI.
+    #[test]
+    #[ignore = "writes files; run by hand when the plots change"]
+    fn write_the_plots_out() {
+        let dir = std::env::temp_dir();
+        for (plot, name) in [
+            (Plot::Chromaticity, "chromaticity"),
+            (Plot::HueSat, "hue_sat"),
+            (Plot::ChromaLuma, "chroma_luma"),
+        ] {
+            let img = plot_image(plot, None);
+            let bytes: Vec<u8> = img
+                .pixels
+                .iter()
+                .flat_map(|c| [c.r(), c.g(), c.b(), 255])
+                .collect();
+            let out = dir.join(format!("warper-{name}.png"));
+            let decoded =
+                pe_io::DecodedImage::new(PLOT_TEXELS as u32, PLOT_TEXELS as u32, bytes).unwrap();
+            pe_io::save_jpeg(&decoded, out.with_extension("jpg"), 95).unwrap();
+            eprintln!("wrote {}", out.with_extension("jpg").display());
+        }
+    }
     use super::*;
 
     fn plot() -> egui::Rect {

@@ -17,6 +17,7 @@ mod curve;
 mod filmstrip;
 mod inspector;
 mod library;
+mod locus;
 mod mixer;
 mod preview;
 mod resolve;
