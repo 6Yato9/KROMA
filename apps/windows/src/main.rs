@@ -109,6 +109,13 @@ pub struct App {
     scope_textures: scopes::Textures,
     /// Which inspector page is showing.
     tab: Tab,
+    /// The effect under the pointer in the browser, previewed on the picture
+    /// for as long as the pointer is there.
+    preview_effect: Option<&'static str>,
+    /// The effect being dragged out of the browser. Held here rather than in
+    /// the panel because the drop can land on the picture, which the panel
+    /// cannot see.
+    dragging_effect: Option<&'static str>,
     /// Whether the crop tool is open. It changes what the viewer shows — the
     /// whole straightened frame rather than the cropped result — so it lives
     /// here rather than inside the panel.
@@ -173,6 +180,8 @@ impl App {
             shown: scopes::Shown::default(),
             scope_textures: scopes::Textures::default(),
             tab: Tab::Colour,
+            preview_effect: None,
+            dragging_effect: None,
             cropping: false,
             last: None,
             last_frame: (1, 1),
@@ -991,6 +1000,9 @@ impl eframe::App for App {
                 tab_row(ui, &mut self.tab);
                 ui.add_space(6.0);
 
+                if self.tab != Tab::Effects {
+                    self.preview_effect = None;
+                }
                 egui::ScrollArea::vertical().show(ui, |ui| match self.tab {
                     Tab::Colour => {
                         // The curve carries the histogram, so there is one
@@ -1020,7 +1032,12 @@ impl eframe::App for App {
                         });
                     }
                     Tab::Effects => {
-                        inspector::show(ui, &mut self.history, &mut self.ids);
+                        self.preview_effect = inspector::show(
+                            ui,
+                            &mut self.history,
+                            &mut self.ids,
+                            &mut self.dragging_effect,
+                        );
                     }
                     Tab::Image => {
                         let source = (self.image.width, self.image.height);
@@ -1061,6 +1078,30 @@ impl eframe::App for App {
                     self.handle_view_input(ui, &response, rect);
                 }
 
+                // Dropping an effect on the picture adds it. It is the same
+                // gesture as dropping it on the list, and the picture is the
+                // larger target — which matters when the thing you are
+                // deciding about is what the picture will look like.
+                if let Some(key) = self.dragging_effect
+                    && response.drag_stopped()
+                {
+                    if response.hover_pos().is_some_and(|p| rect.contains(p))
+                        && let Some(def) = pe_effects::by_key(key)
+                    {
+                        let id = self.ids.allocate();
+                        self.history
+                            .edit(format!("Add {}", def.name), None, move |doc| {
+                                let mut row = pe_core::StackRow::new(id, def.key);
+                                row.params = def.default_params();
+                                doc.stack.push(row);
+                            });
+                        ctx.data_mut(|d| {
+                            d.insert_temp(egui::Id::new(("fx", id.0)).with("open"), true)
+                        });
+                    }
+                    self.dragging_effect = None;
+                }
+
                 let doc = if self.bypass_all {
                     // The cheapest honest bypass: render an empty stack. It
                     // costs one frame of invalidation, and toggling back is
@@ -1071,6 +1112,15 @@ impl eframe::App for App {
                 } else {
                     self.history.document().clone()
                 };
+                // The hovered effect, appended for as long as the pointer is
+                // on it. One extra pass: the stage cache re-runs from the
+                // first changed row, and this one is last.
+                let mut doc = doc;
+                if let Some(def) = self.preview_effect.and_then(pe_effects::by_key) {
+                    let mut row = pe_core::StackRow::new(PREVIEW_ROW, def.key);
+                    row.params = def.default_params();
+                    doc.stack.push(row);
+                }
 
                 let source = (self.image.width, self.image.height);
                 // The crop tool shows the whole straightened frame so the user
@@ -1096,6 +1146,9 @@ impl eframe::App for App {
                         self.last = Some((framing.scale, framing.visible));
                         self.last_frame = framing.frame;
                         let target = draw(ui, rect, &framing);
+                        if let Some(def) = self.preview_effect.and_then(pe_effects::by_key) {
+                            previewing(ui, target, def.name);
+                        }
                         self.wipe_x = draw_compare(ui, rect, &framing, compare, self.wipe);
                         if self.dragging_wipe
                             && response.dragged()
@@ -1577,6 +1630,39 @@ fn label(ui: &egui::Ui, at: egui::Pos2, text: &str, align: egui::Align2) {
         .rect_filled(rect, 2.0, egui::Color32::from_black_alpha(150));
     ui.painter()
         .text(at, align, text, font, egui::Color32::from_white_alpha(230));
+}
+
+/// The id the hover preview borrows.
+///
+/// A sentinel rather than a real allocation: the row exists for one frame and
+/// is never in the document, so it must not consume an id the document might
+/// later want. `RowIdGenerator` counts up from zero, so the top of the range
+/// is the one value it will never hand out.
+const PREVIEW_ROW: pe_core::RowId = pe_core::RowId(u64::MAX);
+
+/// Say that the picture is showing something that has not been added yet.
+///
+/// Without it a hover preview is indistinguishable from an edit, and the first
+/// thing anyone would do is move the pointer away and wonder what they broke.
+fn previewing(ui: &egui::Ui, target: egui::Rect, name: &str) {
+    let painter = ui.painter();
+    let font = egui::FontId::proportional(11.0);
+    let text = format!("previewing {name}");
+    let galley = painter.layout_no_wrap(text, font, egui::Color32::WHITE);
+    let at = egui::pos2(target.center().x, target.min.y + 10.0);
+    let chip = egui::Rect::from_center_size(at, galley.size()).expand2(egui::vec2(9.0, 5.0));
+    painter.rect_filled(chip, 4.0, egui::Color32::from_black_alpha(190));
+    painter.rect_stroke(
+        chip,
+        4.0,
+        egui::Stroke::new(1.0_f32, resolve::colour::ACCENT),
+        egui::StrokeKind::Inside,
+    );
+    painter.galley(
+        chip.min + egui::vec2(9.0, 5.0),
+        galley,
+        egui::Color32::WHITE,
+    );
 }
 
 /// Draw the graded texture centred in the viewport.

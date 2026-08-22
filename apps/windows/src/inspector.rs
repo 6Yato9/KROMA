@@ -5,20 +5,43 @@
 //! bin, and a reset. The rows themselves are drawn by [`crate::resolve`], so
 //! every parameter in the application lines up in the same columns.
 //!
-//! Reordering is arrows, not drag-and-drop. Drag-to-reorder is the fiddliest
-//! interaction in the whole application — hit testing, an insertion indicator,
-//! autoscroll, a touch story for the tablet later — and it is not what makes
-//! the panel usable.
+//! Above the list sits the browser: every effect that can be added, always
+//! visible rather than hidden behind a menu. Hovering one previews it on the
+//! picture, which is the only way to answer "what does Halation look like on
+//! *this* photograph" without adding it and undoing.
+//!
+//! The preview costs one GPU pass. It appends a row to the end of the stack,
+//! and the stage cache only re-runs from the first changed row — so everything
+//! above it is already in VRAM and the frame under the pointer is one pass
+//! more than the frame beside it. That is the whole reason this is affordable
+//! to do on hover rather than on click.
+//!
+//! Reordering is still arrows, not drag-and-drop. Dragging *into* the list is
+//! easy because there is only one place it can land; dragging *within* it
+//! needs an insertion indicator and autoscroll, and it is not what makes the
+//! panel usable.
 
 use pe_core::{BlendMode, Curve, History, ParamValue, RowId, RowIdGenerator, StackRow, Wheel};
 use pe_effects::{EffectDef, Group, ParamDef, ParamKind};
 
 use crate::resolve::{self, Edit};
 
-pub fn show(ui: &mut egui::Ui, history: &mut History, ids: &mut RowIdGenerator) {
+pub fn show(
+    ui: &mut egui::Ui,
+    history: &mut History,
+    ids: &mut RowIdGenerator,
+    dragging: &mut Option<&'static str>,
+) -> Option<&'static str> {
     ui.add_space(4.0);
-    add_effect_menu(ui, history, ids);
-    ui.add_space(6.0);
+    let preview = browser(ui, history, ids, dragging);
+    ui.add_space(8.0);
+    ui.separator();
+    ui.label(
+        egui::RichText::new("Enabled")
+            .small()
+            .color(resolve::colour::LABEL),
+    );
+    ui.add_space(2.0);
 
     // Only the rows the user added. The pinned panels are drawn by whichever
     // panel owns them.
@@ -33,9 +56,18 @@ pub fn show(ui: &mut egui::Ui, history: &mut History, ids: &mut RowIdGenerator) 
     if rows.is_empty() {
         ui.add_space(12.0);
         ui.vertical_centered(|ui| {
-            ui.label(egui::RichText::new("No effects yet").weak().small());
+            ui.label(
+                egui::RichText::new("Drag an effect here, or click one above")
+                    .weak()
+                    .small(),
+            );
         });
-        return;
+        ui.add_space(12.0);
+        // A drop anywhere in the empty list still counts. There is nothing to
+        // aim at, and refusing the drop because the list is empty would be the
+        // panel being pedantic about its own layout.
+        take_drop(ui, history, ids, dragging);
+        return preview;
     }
 
     // Indices here are positions among the *user* rows, so the arrows read
@@ -49,59 +81,175 @@ pub fn show(ui: &mut egui::Ui, history: &mut History, ids: &mut RowIdGenerator) 
         };
         row_ui(ui, history, id, def, index, count, floor);
     }
+    take_drop(ui, history, ids, dragging);
+    preview
 }
 
-fn add_effect_menu(ui: &mut egui::Ui, history: &mut History, ids: &mut RowIdGenerator) {
-    ui.menu_button("+  Add effect", |ui| {
-        ui.set_min_width(180.0);
-        // The menu opens from a button near the bottom of a scrolled panel, so
-        // there is often less room below it than the list needs. Without this
-        // the popup is simply clipped — no scrollbar, no indication that
-        // anything is missing, and half the effects unreachable.
-        egui::ScrollArea::vertical()
-            .max_height(340.0)
-            .show(ui, |ui| {
-                let mut first = true;
-                for group in [Group::Basic, Group::Color, Group::Film, Group::Optics] {
-                    // Effects that already exist as fixed panels are not
-                    // offered again — adding a second Exposure row is
-                    // legitimate, but the menu is not where anyone would look
-                    // for it.
-                    let available: Vec<_> = pe_effects::all()
-                        .iter()
-                        .filter(|e| e.group == group)
-                        .filter(|e| !pe_effects::registry::PINNED_ROWS.contains(&e.key))
-                        .collect();
-                    // Every Basic effect is a pinned panel, so that heading has
-                    // nothing under it. A heading over nothing reads as a list
-                    // that failed to load.
-                    if available.is_empty() {
-                        continue;
-                    }
-                    if !first {
-                        ui.separator();
-                    }
-                    first = false;
+/// Add `key` to the end of the stack, opened.
+fn add(ui: &egui::Ui, history: &mut History, ids: &mut RowIdGenerator, def: &'static EffectDef) {
+    let id = ids.allocate();
+    history.edit(format!("Add {}", def.name), None, |doc| {
+        let mut row = StackRow::new(id, def.key);
+        row.params = def.default_params();
+        doc.stack.push(row);
+    });
+    // Open it. You added it to change something, and a row that arrives shut
+    // costs a click to say so.
+    let open = ui.make_persistent_id(("fx", id.0)).with("open");
+    ui.data_mut(|d| d.insert_temp(open, true));
+}
 
-                    ui.label(egui::RichText::new(group.as_str()).small().weak());
-                    for def in available {
-                        if ui.button(def.name).clicked() {
-                            let id = ids.allocate();
-                            history.edit(format!("Add {}", def.name), None, |doc| {
-                                let mut row = StackRow::new(id, def.key);
-                                row.params = def.default_params();
-                                doc.stack.push(row);
-                            });
-                            // Open it. You added it to change something, and
-                            // a row that arrives shut costs a click to say so.
-                            let open = ui.make_persistent_id(("fx", id.0)).with("open");
-                            ui.data_mut(|d| d.insert_temp(open, true));
-                            ui.close();
-                        }
+/// Resolve a drop that landed on the enabled list.
+///
+/// The whole panel counts as the target rather than the gap between two rows.
+/// Choosing a position on the way in would need an insertion indicator and a
+/// scroll-while-dragging story, and the arrows already move a row once it is
+/// there.
+fn take_drop(
+    ui: &egui::Ui,
+    history: &mut History,
+    ids: &mut RowIdGenerator,
+    dragging: &mut Option<&'static str>,
+) {
+    let Some(key) = *dragging else {
+        return;
+    };
+    if !ui.input(|i| i.pointer.any_released()) {
+        return;
+    }
+    let over = ui
+        .input(|i| i.pointer.interact_pos())
+        .is_some_and(|p| ui.min_rect().expand(4.0).contains(p));
+    if over && let Some(def) = pe_effects::by_key(key) {
+        add(ui, history, ids, def);
+    }
+    *dragging = None;
+}
+
+/// Every effect that can be added, in a list rather than behind a menu.
+///
+/// A menu is the right shape for a command you already know the name of. This
+/// is a shelf you browse, and browsing is what you are doing when the question
+/// is "what would look good here".
+fn browser(
+    ui: &mut egui::Ui,
+    history: &mut History,
+    ids: &mut RowIdGenerator,
+    dragging: &mut Option<&'static str>,
+) -> Option<&'static str> {
+    let mut preview = None;
+    egui::ScrollArea::vertical()
+        .id_salt("effect_browser")
+        .max_height(190.0)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for group in [Group::Basic, Group::Color, Group::Film, Group::Optics] {
+                let available: Vec<_> = pe_effects::all()
+                    .iter()
+                    .filter(|e| e.group == group)
+                    .filter(|e| !pe_effects::registry::PINNED_ROWS.contains(&e.key))
+                    .collect();
+                // Every Basic effect is a pinned panel, so that heading has
+                // nothing under it. A heading over nothing reads as a list
+                // that failed to load.
+                if available.is_empty() {
+                    continue;
+                }
+                ui.add_space(2.0);
+                ui.label(
+                    egui::RichText::new(group.as_str())
+                        .small()
+                        .color(resolve::colour::LABEL),
+                );
+                for def in available {
+                    if let Some(hovered) = browser_row(ui, history, ids, def, dragging) {
+                        preview = Some(hovered);
                     }
                 }
-            });
-    });
+            }
+        });
+    preview
+}
+
+/// One shelf entry. Hover to preview, click or drag to add.
+fn browser_row(
+    ui: &mut egui::Ui,
+    history: &mut History,
+    ids: &mut RowIdGenerator,
+    def: &'static EffectDef,
+    dragging: &mut Option<&'static str>,
+) -> Option<&'static str> {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), 22.0),
+        egui::Sense::click_and_drag(),
+    );
+
+    if response.drag_started() {
+        *dragging = Some(def.key);
+    }
+    if response.clicked() {
+        add(ui, history, ids, def);
+    }
+
+    let held = *dragging == Some(def.key);
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        if response.hovered() || held {
+            painter.rect_filled(rect, 3.0, egui::Color32::from_gray(44));
+        }
+        painter.text(
+            egui::pos2(rect.min.x + 10.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            def.name,
+            egui::FontId::proportional(12.0),
+            if response.hovered() || held {
+                resolve::colour::TITLE
+            } else {
+                egui::Color32::from_gray(198)
+            },
+        );
+        if response.hovered() {
+            painter.text(
+                egui::pos2(rect.max.x - 8.0, rect.center().y),
+                egui::Align2::RIGHT_CENTER,
+                "drag or click",
+                egui::FontId::proportional(10.0),
+                egui::Color32::from_gray(120),
+            );
+        }
+    }
+
+    // The chip under the pointer, so a drag looks like it is carrying
+    // something rather than like nothing is happening.
+    if held && let Some(at) = ui.ctx().pointer_interact_pos() {
+        let painter = ui.ctx().layer_painter(egui::LayerId::new(
+            egui::Order::Tooltip,
+            egui::Id::new("effect_drag_chip"),
+        ));
+        let galley = painter.layout_no_wrap(
+            def.name.to_string(),
+            egui::FontId::proportional(12.0),
+            egui::Color32::WHITE,
+        );
+        let chip = egui::Rect::from_min_size(at + egui::vec2(12.0, 8.0), galley.size())
+            .expand2(egui::vec2(8.0, 5.0));
+        painter.rect_filled(chip, 4.0, egui::Color32::from_black_alpha(220));
+        painter.rect_stroke(
+            chip,
+            4.0,
+            egui::Stroke::new(1.0_f32, resolve::colour::ACCENT),
+            egui::StrokeKind::Inside,
+        );
+        painter.galley(
+            chip.min + egui::vec2(8.0, 5.0),
+            galley,
+            egui::Color32::WHITE,
+        );
+    }
+
+    // Previewing while dragging as well: the picture under the chip is what
+    // you are deciding about.
+    (response.hovered() || held).then_some(def.key)
 }
 
 fn unknown_row(ui: &mut egui::Ui, history: &mut History, id: RowId, key: &str) {
