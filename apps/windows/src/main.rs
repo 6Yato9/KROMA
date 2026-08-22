@@ -36,6 +36,14 @@ use pe_render::GpuContext;
 
 use crate::preview::{Framing, Preview, View};
 
+/// How wide the toolbar's menus open.
+///
+/// Fixed rather than fitted to the longest item, because the items are enabled
+/// and disabled as the session goes on: a menu sized to its contents would be
+/// a different width every time you opened it, and a menu that moves is a menu
+/// you have to read instead of aim at.
+const MENU_W: f32 = 190.0;
+
 fn main() -> eframe::Result {
     // Everything after the executable name, so several photographs can be
     // opened at once from a shell or a "send to".
@@ -928,9 +936,119 @@ impl eframe::App for App {
 
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                if ui.button("Open…").on_hover_text("Ctrl+O").clicked() {
-                    open_requested = true;
-                }
+                // Ten buttons across the top were ten things to read every
+                // time you wanted one of them. A menu is one word to read and
+                // a list you only look at once you have already decided to —
+                // and the decision is nearly always "the photo", "the file" or
+                // "the grade", which is what these three are.
+                ui.menu_button("File", |ui| {
+                    ui.set_min_width(MENU_W);
+                    if ui
+                        .add(egui::Button::new("Open…").shortcut_text("Ctrl+O"))
+                        .clicked()
+                    {
+                        open_requested = true;
+                    }
+                    if ui
+                        .add(egui::Button::new("Open folder…").shortcut_text("Ctrl+Shift+O"))
+                        .clicked()
+                    {
+                        open_folder_requested = true;
+                    }
+                    ui.separator();
+                    ui.add_enabled_ui(self.path.is_some(), |ui| {
+                        if ui
+                            .button("Save edit")
+                            .on_hover_text("Writes <photo>.peproj beside the original")
+                            .clicked()
+                        {
+                            self.save_edit();
+                        }
+                        if ui.button("Load edit").clicked() {
+                            self.load_edit();
+                        }
+                    });
+                    ui.add_enabled_ui(self.library.len() > 1, |ui| {
+                        if ui
+                            .button("Save all")
+                            .on_hover_text(
+                                "A .peproj beside every photo that has been edited —                                  including ones a grade was pasted onto",
+                            )
+                            .clicked()
+                        {
+                            self.save_all_edits();
+                        }
+                    });
+                    ui.separator();
+                    // The counterpart to saving without being asked. An edit
+                    // that comes back every time you open a photograph, with
+                    // no way to be rid of it, is not a convenience — it is a
+                    // photograph you can no longer see.
+                    ui.add_enabled_ui(self.path.is_some(), |ui| {
+                        if ui
+                            .button("Revert")
+                            .on_hover_text(
+                                "Back to the photograph as it was, and forget the autosave",
+                            )
+                            .clicked()
+                        {
+                            self.revert();
+                        }
+                    });
+                });
+                ui.menu_button("Export", |ui| {
+                    ui.set_min_width(MENU_W);
+                    if ui
+                        .button("Export JPEG")
+                        .on_hover_text("Beside the original, named <photo>_KROMA.jpg")
+                        .clicked()
+                    {
+                        self.export();
+                    }
+                    ui.add_enabled_ui(self.library.len() > 1 && self.batch.is_none(), |ui| {
+                        if ui
+                            .button("Export all…")
+                            .on_hover_text("Every photo in the set, into a folder you choose")
+                            .clicked()
+                        {
+                            self.batch_export();
+                        }
+                    });
+                });
+                ui.menu_button("Grade", |ui| {
+                    ui.set_min_width(MENU_W);
+                    ui.add_enabled_ui(self.library.len() > 1, |ui| {
+                        if ui
+                            .button("Copy")
+                            .on_hover_text("The whole stack, to put on another photo")
+                            .clicked()
+                        {
+                            self.clipboard = Some(self.history.document().stack.clone());
+                            self.status = "grade copied".into();
+                        }
+                    });
+                    ui.add_enabled_ui(self.clipboard.is_some(), |ui| {
+                        if ui.button("Paste").clicked()
+                            && let Some(stack) = self.clipboard.clone()
+                        {
+                            self.history
+                                .edit("Paste Grade", None, move |doc| doc.stack = stack);
+                            self.ids = RowIdGenerator::resuming(self.history.document());
+                            self.status = "grade pasted".into();
+                        }
+                        if ui
+                            .button("Paste to all")
+                            .on_hover_text(
+                                "The grade only — a crop belongs to the frame it was drawn on",
+                            )
+                            .clicked()
+                            && let Some(stack) = self.clipboard.clone()
+                        {
+                            let n = self.library.paste_stack_to_all(&stack);
+                            self.status = format!("grade pasted to {n} photos");
+                        }
+                    });
+                });
                 ui.separator();
                 ui.add_enabled_ui(self.history.can_undo(), |ui| {
                     let what = self.history.undo_label().unwrap_or("").to_string();
@@ -957,91 +1075,6 @@ impl eframe::App for App {
                 ui.separator();
                 ui.toggle_value(&mut self.bypass_all, "Bypass all")
                     .on_hover_text("Shift+D — flatten the stack for an honest before/after");
-                ui.separator();
-                if ui
-                    .button("Open folder…")
-                    .on_hover_text("Ctrl+Shift+O")
-                    .clicked()
-                {
-                    open_folder_requested = true;
-                }
-                ui.add_enabled_ui(self.path.is_some(), |ui| {
-                    if ui
-                        .button("Save edit")
-                        .on_hover_text("Writes <photo>.peproj beside the original")
-                        .clicked()
-                    {
-                        self.save_edit();
-                    }
-                    if ui.button("Load edit").clicked() {
-                        self.load_edit();
-                    }
-                    // The counterpart to saving without being asked. An edit
-                    // that comes back every time you open a photograph, with
-                    // no way to be rid of it, is not a convenience — it is a
-                    // photograph you can no longer see.
-                    if ui
-                        .button("Revert")
-                        .on_hover_text(
-                            "Back to the photograph as it was, and forget the autosave",
-                        )
-                        .clicked()
-                    {
-                        self.revert();
-                    }
-                });
-                ui.add_enabled_ui(self.library.len() > 1, |ui| {
-                    if ui
-                        .button("Save all")
-                        .on_hover_text(
-                            "A .peproj beside every photo that has been edited —                              including ones a grade was pasted onto",
-                        )
-                        .clicked()
-                    {
-                        self.save_all_edits();
-                    }
-                });
-                ui.separator();
-                if ui.button("Export JPEG").clicked() {
-                    self.export();
-                }
-                ui.add_enabled_ui(self.library.len() > 1 && self.batch.is_none(), |ui| {
-                    if ui
-                        .button("Export all…")
-                        .on_hover_text("Every photo in the set, into a folder you choose")
-                        .clicked()
-                    {
-                        self.batch_export();
-                    }
-                });
-                ui.separator();
-                ui.add_enabled_ui(self.library.len() > 1, |ui| {
-                    if ui.button("Copy grade").clicked() {
-                        self.clipboard = Some(self.history.document().stack.clone());
-                        self.status = "grade copied".into();
-                    }
-                });
-                ui.add_enabled_ui(self.clipboard.is_some(), |ui| {
-                    if ui.button("Paste").clicked()
-                        && let Some(stack) = self.clipboard.clone()
-                    {
-                        self.history
-                            .edit("Paste Grade", None, move |doc| doc.stack = stack);
-                        self.ids = RowIdGenerator::resuming(self.history.document());
-                        self.status = "grade pasted".into();
-                    }
-                    if ui
-                        .button("Paste to all")
-                        .on_hover_text(
-                            "The grade only — a crop belongs to the frame it was drawn on",
-                        )
-                        .clicked()
-                        && let Some(stack) = self.clipboard.clone()
-                    {
-                        let n = self.library.paste_stack_to_all(&stack);
-                        self.status = format!("grade pasted to {n} photos");
-                    }
-                });
                 ui.separator();
                 // One button that cycles, rather than three that are mostly
                 // off. A three-way choice where two thirds of the control is
