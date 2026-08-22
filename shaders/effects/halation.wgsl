@@ -1,139 +1,174 @@
-// Linear. Slots:
-//   0 strength, 1 threshold, 2 normalization, 3 spread,
-//   4 saturation, 5 hue (degrees), 6 secondary_strength, 7 secondary_spread,
-//   8 fine_tune_spread, 9 relative_red, 10 relative_green, 11 relative_blue
+// Linear. Slots follow the registry's declaration order, which is Resolve's
+// panel order, so this list is load-bearing and moves when that does:
+//
+//   Isolation              0 threshold   1 normalization
+//                          2 film_saturation_level        3 view_isolated
+//   Dye Layer Reflections  4 strength    5 gamma   6 saturation   7 spread
+//                          8 fine_tune_spread
+//                          9 relative_red  10 relative_green  11 relative_blue
+//   Secondary Glow        12 strength   13 gamma  14 spread  15-17 filter
+//   Basic Grain           18 append    19 strength  20 size  21 softness
+//                         22 saturation
+//   Global Adjustments    23 view_glow_alone  24 reduce_highlights
+//                         25 aspect_ratio     26 detail_loss
 //
 // Halation is light passing through the emulsion, scattering off the film
 // base and re-exposing from behind. A linear-light phenomenon: done anywhere
 // else it reads as fog rather than glow.
 //
-// Isolation follows Resolve: Threshold is the low clip and Normalization the
-// high clip, so the source of the glow is a *band* rather than everything
-// above one level. That is what stops a bright sky glowing as hard as a
-// specular highlight.
-//
-// Fine Tune Relative Spread is the interesting control. With it off, the glow
-// is one radius and gets its colour from the Hue tint — a colour applied
-// *after* the fact. With it on, each channel scatters its own distance, and
-// the red-orange fringe emerges from the physics instead: longer wavelengths
-// penetrate the emulsion further and scatter wider, so red spreads past green,
-// which spreads past blue. The rim goes red without anyone tinting it.
+// There is no Hue control, and Resolve is right not to have one. The
+// red-orange is not a tint anybody chose — it is what light coming back
+// through the dye layers *is*. It is the constant below, and Saturation says
+// how much of it reaches the picture.
 //
 // M1 uses single-pass golden-angle disc samples. That is a real approximation
 // and it shows at large radii; a separable multi-pass blur is M2 work. Spread
 // is a fraction of the frame, never pixels.
 
-const HALATION_SAMPLES: i32 = 24;
+/// The colour of the dye layer reflection, as a hue on the wheel.
+///
+/// Around 12 degrees: the red-orange of light that has passed down through
+/// cyan, magenta and yellow dye, bounced off the base, and come back up
+/// through all three again.
+const DYE_HUE: f32 = 12.0;
 
-// One radius for all three channels. The cheap path, used when Fine Tune is
-// off — a third of the texture fetches of the per-channel version.
-fn gather_glow(uv: vec2<f32>, spread: f32, threshold: f32, normalization: f32) -> vec3<f32> {
-    let aspect = frame_aspect();
-    // Spread is a fraction of the frame, so it has to be converted into this
-    // pass's uv, or it would shrink as the view zooms in.
-    let radius = frame_to_uv(spread);
-    let band = max(normalization - threshold, 1e-3);
-
-    var glow = vec3<f32>(0.0);
-    var total = 0.0;
-    for (var i = 0; i < HALATION_SAMPLES; i = i + 1) {
-        let fi = f32(i);
-        let angle = fi * 2.39996323;
-        let r = sqrt((fi + 0.5) / f32(HALATION_SAMPLES)) * radius;
-        let offset = vec2<f32>(cos(angle) * r / aspect, sin(angle) * r);
-        let s = textureSampleLevel(src_texture, src_sampler, uv + offset, 0.0).rgb;
-        // Clip low at Threshold, normalise against the band, so the brightest
-        // sources saturate rather than dominating without limit.
-        let over = clamp((s - vec3<f32>(threshold)) / band, vec3<f32>(0.0), vec3<f32>(1.0));
-        let w = 1.0 / (1.0 + r * 12.0);
-        glow = glow + over * w;
-        total = total + w;
-    }
-    return glow / max(total, 1e-4);
-}
-
-// A separate radius per channel. Each channel is read from its own sample
-// position, so the three glows genuinely differ in extent rather than being
-// one glow that was tinted.
-fn gather_glow_rgb(
-    uv: vec2<f32>,
-    spread: f32,
-    threshold: f32,
-    normalization: f32,
-    relative: vec3<f32>,
-) -> vec3<f32> {
-    let aspect = frame_aspect();
-    let radius = frame_to_uv(spread);
-    let band = max(normalization - threshold, 1e-3);
-
-    var glow = vec3<f32>(0.0);
-    var total = vec3<f32>(0.0);
-    for (var i = 0; i < HALATION_SAMPLES; i = i + 1) {
-        let fi = f32(i);
-        let angle = fi * 2.39996323;
-        let base = sqrt((fi + 0.5) / f32(HALATION_SAMPLES)) * radius;
-        let dir = vec2<f32>(cos(angle) / aspect, sin(angle));
-
-        for (var ch = 0; ch < 3; ch = ch + 1) {
-            let r = base * relative[ch];
-            let s = textureSampleLevel(src_texture, src_sampler, uv + dir * r, 0.0).rgb;
-            let over = clamp((s[ch] - threshold) / band, 0.0, 1.0);
-            // Weight against each channel's own radius, so a narrow channel
-            // keeps a tight core rather than being diluted by the widest one.
-            let w = 1.0 / (1.0 + r * 12.0);
-            glow[ch] = glow[ch] + over * w;
-            total[ch] = total[ch] + w;
-        }
-    }
-    return glow / max(total, vec3<f32>(1e-4));
-}
+/// What the top of the Spread slider means, as a fraction of the frame.
+///
+/// The control runs 0 to 1 like Resolve's, but a glow whose radius is a whole
+/// frame width is not a glow, so the slider has to mean something narrower.
+/// The map is *squared*: a radius control needs its fine resolution at the
+/// bottom, where the difference between a rim and a halo lives, and a linear
+/// slider spends half its travel on sizes that all read as "large".
+///
+/// The secondary reaches further by construction. That is the entire reason
+/// there are two: a tight core with a long falloff is not something one
+/// radius can do.
+const PRIMARY_REACH: f32 = 0.25;
+const SECONDARY_REACH: f32 = 0.35;
 
 fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
-    let strength = u.p[0].x;
-    let threshold = u.p[0].y;
-    let normalization = u.p[0].z;
-    let spread = u.p[0].w;
-    let saturation = u.p[1].x;
-    let hue = u.p[1].y;
-    let secondary_strength = u.p[1].z;
-    let secondary_spread = u.p[1].w;
-    let fine_tune = u.p[2].x > 0.5;
-    let relative = max(vec3<f32>(u.p[2].y, u.p[2].z, u.p[2].w), vec3<f32>(0.0));
+    let threshold = slot(0u);
+    let normalization = slot(1u);
+    let film_saturation_level = slot(2u);
+    let view_isolated = slot(3u) > 0.5;
+    let strength = slot(4u);
+    let gamma = max(slot(5u), 1e-3);
+    let saturation = clamp(slot(6u), 0.0, 3.0);
+    let spread_t = clamp(slot(7u), 0.0, 1.0);
+    let spread = spread_t * spread_t * PRIMARY_REACH;
+    let fine_tune = slot(8u) > 0.5;
+    let relative = max(vec3<f32>(slot(9u), slot(10u), slot(11u)), vec3<f32>(0.0));
+    let secondary_strength = slot(12u);
+    let secondary_gamma = max(slot(13u), 1e-3);
+    let secondary_t = clamp(slot(14u), 0.0, 1.0);
+    let secondary_spread = secondary_t * secondary_t * SECONDARY_REACH;
+    let secondary_filter = slot3(15u);
+    let append_grain = slot(18u) > 0.5;
+    let grain_strength = slot(19u);
+    let grain_size = slot(20u);
+    let grain_softness = slot(21u);
+    let grain_saturation = slot(22u);
+    let view_glow_alone = slot(23u) > 0.5;
+    let reduce_highlights = slot(24u);
+    let aspect_ratio = max(slot(25u), 0.05);
+    let detail_loss = slot(26u);
+
+    // View Isolated Regions answers the question the Isolation group exists to
+    // answer — what is going to glow — without making you infer it from the
+    // result. Drawn before the early-out, so it still works at strength zero.
+    if view_isolated {
+        return vec3<f32>(film_isolate(c, threshold, normalization, film_saturation_level));
+    }
 
     if strength <= 0.0 && secondary_strength <= 0.0 {
         return c;
     }
 
-    // With per-channel spread doing the colouring, the Hue tint would be a
+    // With per-channel spread doing the colouring, the dye tint would be a
     // second bite at the same apple, so it stands down to neutral.
     var tint = vec3<f32>(1.0);
     if !fine_tune {
-        let pure = hsv_to_rgb(vec3<f32>(fract(hue / 360.0), 1.0, 1.0));
-        tint = mix(vec3<f32>(1.0), pure, clamp(saturation, 0.0, 2.0));
+        let pure = hsv_to_rgb(vec3<f32>(fract(DYE_HUE / 360.0), 1.0, 1.0));
+        tint = mix(vec3<f32>(1.0), pure, saturation);
+    }
+
+    var glow = vec3<f32>(0.0);
+    if strength > 0.0 && spread > 0.0 {
+        var g: vec3<f32>;
+        if fine_tune {
+            g = film_halo_rgb(
+                uv,
+                spread,
+                aspect_ratio,
+                threshold,
+                normalization,
+                film_saturation_level,
+                relative,
+            );
+            // Saturation still applies, pulling the naturally-separated glow
+            // toward or away from neutral.
+            g = mix(vec3<f32>(dot(g, AP1_LUMA)), g, saturation);
+        } else {
+            g = film_halo(
+                uv,
+                spread,
+                aspect_ratio,
+                threshold,
+                normalization,
+                film_saturation_level,
+            );
+        }
+        // Gamma shapes the falloff: below one the glow reaches further out at
+        // low levels, above one it stays tight around the source.
+        g = pow(max(g, vec3<f32>(0.0)), vec3<f32>(gamma));
+        glow = glow + g * tint * strength;
+    }
+
+    // The secondary glow is wider and weaker, and takes its colour from its
+    // own Filter rather than the dye — it is lens and gate scatter, not
+    // emulsion, so it has no reason to be red.
+    if secondary_strength > 0.0 && secondary_spread > 0.0 {
+        var g = film_halo(
+            uv,
+            secondary_spread,
+            aspect_ratio,
+            threshold,
+            normalization,
+            film_saturation_level,
+        );
+        g = pow(max(g, vec3<f32>(0.0)), vec3<f32>(secondary_gamma));
+        glow = glow + g * secondary_filter * 2.0 * secondary_strength * 0.5;
+    }
+
+    // Grain inside the halation rather than over it. The order is the whole
+    // point: grain laid on top sits on the glow like dust on glass, where
+    // grain applied here is in the emulsion the glow happened in.
+    if append_grain && grain_strength > 0.0 {
+        let n = film_grain_field(uv, 1.0, grain_size, 1.0, 0.0, grain_softness, grain_saturation);
+        glow = glow * (vec3<f32>(1.0) + n * grain_strength);
+    }
+
+    if view_glow_alone {
+        return glow;
     }
 
     var out = c;
-    if strength > 0.0 && spread > 0.0 {
-        var glow: vec3<f32>;
-        if fine_tune {
-            glow = gather_glow_rgb(uv, spread, threshold, normalization, relative);
-            // Saturation still applies, pulling the naturally-separated glow
-            // toward or away from neutral.
-            glow = mix(vec3<f32>(dot(glow, AP1_LUMA)), glow, clamp(saturation, 0.0, 2.0));
-        } else {
-            glow = gather_glow(uv, spread, threshold, normalization);
-        }
-        out = out + glow * tint * strength;
+
+    // Detail loss: the picture softens under the glow, the way a halated frame
+    // gives up its fine detail to the scattered light.
+    if detail_loss > 0.0 {
+        let soft = film_halo_blur(uv, frame_to_uv(0.004 + detail_loss * 0.012), aspect_ratio);
+        out = mix(out, soft, clamp(detail_loss, 0.0, 1.0));
     }
 
-    // The secondary glow is wider and weaker: together with the tight primary
-    // it gives a bright core with a long falloff, which a single radius cannot.
-    if secondary_strength > 0.0 && secondary_spread > 0.0 {
-        out = out
-            + gather_glow(uv, secondary_spread, threshold, normalization)
-                * tint
-                * secondary_strength
-                * 0.5;
+    out = out + glow;
+
+    // The glow adds light, so without this the picture gets brighter as well
+    // as glowier. Pulling the top back down is what makes it read as
+    // scattering rather than as exposure.
+    if reduce_highlights > 0.0 {
+        let added = max(dot(glow, AP1_LUMA), 0.0);
+        out = out / (vec3<f32>(1.0) + vec3<f32>(added * reduce_highlights));
     }
     return out;
 }

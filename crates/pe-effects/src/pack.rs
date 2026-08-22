@@ -246,15 +246,15 @@ mod tests {
         let at = slot_of(e, "mode").unwrap();
         let mut p = e.default_params();
 
-        p.set("mode", ParamValue::Choice("natural".into()));
+        p.set("mode", ParamValue::Choice("Natural".into()));
         assert_eq!(pack(e, &p)[at], 0.0);
-        p.set("mode", ParamValue::Choice("custom".into()));
+        p.set("mode", ParamValue::Choice("Custom".into()));
         assert_eq!(pack(e, &p)[at], 2.0);
     }
 
     #[test]
     fn an_unknown_choice_falls_back_to_the_default_index_not_zero() {
-        // "strong" is index 1; an unrecognised mode must fall back to the
+        // "Strong" is index 1; an unrecognised mode must fall back to the
         // declared default rather than to 0, which could be a different look.
         let e = by_key("split_tone").unwrap();
         let at = slot_of(e, "mode").unwrap();

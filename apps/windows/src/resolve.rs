@@ -68,6 +68,19 @@ impl TrackStyle {
     }
 }
 
+/// The colour a control draws in, given whether it can do anything.
+///
+/// egui greys out a disabled `Ui` by adjusting its *visuals*, which is no help
+/// to anything painted with a colour of its own — and almost everything here
+/// is. Each of these rows dims itself.
+fn dim(ui: &egui::Ui, c: egui::Color32) -> egui::Color32 {
+    if ui.is_enabled() {
+        c
+    } else {
+        c.gamma_multiply(0.42)
+    }
+}
+
 /// What a parameter row reports back.
 #[derive(Clone, Copy, Default)]
 pub struct Edit {
@@ -112,7 +125,7 @@ fn label_text(ui: &egui::Ui, rect: egui::Rect, text: &str) {
         egui::Align2::RIGHT_CENTER,
         text,
         egui::FontId::proportional(11.5),
-        colour::LABEL,
+        dim(ui, colour::LABEL),
     );
 }
 
@@ -122,11 +135,14 @@ fn reset_button(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id) -> bool {
     if ui.is_rect_visible(rect) {
         let c = rect.center();
         let r = 5.5_f32;
-        let tint = if response.hovered() {
-            colour::HANDLE_HOT
-        } else {
-            colour::ICON
-        };
+        let tint = dim(
+            ui,
+            if response.hovered() {
+                colour::HANDLE_HOT
+            } else {
+                colour::ICON
+            },
+        );
         let stroke = egui::Stroke::new(1.3_f32, tint);
         // Three quarters of a circle, then an arrowhead — an anticlockwise
         // "undo" arc, which is the glyph Resolve uses and the one people read
@@ -169,13 +185,16 @@ const HANDLE_HW: f32 = 5.0;
 ///
 /// The dark outline is not decoration: the fill is a light grey, and against
 /// the pale end of a temperature or luma ramp it would otherwise vanish.
-fn pointer(painter: &egui::Painter, x: f32, y: f32, hot: bool) {
+fn pointer(painter: &egui::Painter, x: f32, y: f32, hot: bool, faded: bool) {
     let hw = HANDLE_HW;
-    let fill = if hot {
+    let mut fill = if hot {
         colour::HANDLE_HOT
     } else {
         colour::HANDLE
     };
+    if faded {
+        fill = fill.gamma_multiply(0.42);
+    }
     painter.add(egui::Shape::convex_polygon(
         vec![
             egui::pos2(x, y - 7.0),
@@ -194,13 +213,16 @@ fn pointer(painter: &egui::Painter, x: f32, y: f32, hot: bool) {
 /// egui has no gradient brush and does not need one: a mesh with a colour per
 /// vertex is interpolated by the GPU for free. Twenty-four steps is past the
 /// point where more of them change the picture.
-fn gradient(painter: &egui::Painter, rect: egui::Rect, ramp: Ramp) {
+fn gradient(painter: &egui::Painter, rect: egui::Rect, ramp: Ramp, faded: bool) {
     const STEPS: usize = 24;
     let mut mesh = egui::Mesh::default();
     for i in 0..=STEPS {
         let t = i as f32 / STEPS as f32;
         let x = rect.min.x + t * rect.width();
-        let c = ramp.at(t);
+        let mut c = ramp.at(t);
+        if faded {
+            c = c.gamma_multiply(0.42);
+        }
         mesh.colored_vertex(egui::pos2(x, rect.min.y), c);
         mesh.colored_vertex(egui::pos2(x, rect.max.y), c);
         if i > 0 {
@@ -244,8 +266,9 @@ fn track(
             )
         };
 
+        let faded = !ui.is_enabled();
         if style.ramp.is_plain() {
-            painter.rect_filled(bar(2.0), 2.0, colour::TRACK);
+            painter.rect_filled(bar(2.0), 2.0, dim(ui, colour::TRACK));
             // How far it has been pushed, and from where. On a slider whose
             // neutral is the left end this is the ordinary "filled up to
             // here"; on a bipolar one it grows out of the middle, which is
@@ -256,11 +279,11 @@ fn track(
                 painter.rect_filled(
                     egui::Rect::from_min_max(egui::pos2(a, y - 2.0), egui::pos2(b, y + 2.0)),
                     2.0,
-                    colour::TRACK_FILL,
+                    dim(ui, colour::TRACK_FILL),
                 );
             }
         } else {
-            gradient(painter, bar(2.5), style.ramp);
+            gradient(painter, bar(2.5), style.ramp, faded);
         }
 
         // The neutral mark: where the parameter does nothing.
@@ -272,7 +295,13 @@ fn track(
             );
         }
 
-        pointer(painter, at(t), y, response.hovered() || response.dragged());
+        pointer(
+            painter,
+            at(t),
+            y,
+            response.hovered() || response.dragged(),
+            faded,
+        );
     }
     (moved, response.drag_stopped())
 }
@@ -490,7 +519,7 @@ pub fn section(ui: &mut egui::Ui, id: egui::Id, title: &str, body: impl FnOnce(&
             egui::Align2::LEFT_CENTER,
             title,
             egui::FontId::proportional(12.0),
-            colour::TITLE,
+            dim(ui, colour::TITLE),
         );
     }
 

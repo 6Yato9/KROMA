@@ -277,7 +277,11 @@ fn halo(gpu: &GpuContext, fine_tune: bool) -> DecodedImage {
             "halation",
             &[
                 ("strength", ParamValue::Float(1.0)),
-                ("spread", ParamValue::Float(0.22)),
+                // Spread is a 0..1 control mapped through a square, as
+                // Resolve's is, rather than a frame fraction written straight
+                // into the sampler. 0.94 is the 22% of the frame these tests
+                // were written against.
+                ("spread", ParamValue::Float(0.94)),
                 ("threshold", ParamValue::Float(0.2)),
                 ("normalization", ParamValue::Float(1.0)),
                 ("fine_tune_spread", ParamValue::Bool(fine_tune)),

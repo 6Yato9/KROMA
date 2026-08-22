@@ -28,17 +28,6 @@
 // Freeze and Animate On Every Refresh both describe what the grain does
 // between frames, and there is no next frame here.
 
-/// Width of the negative in microns, by format. This is the number the grain
-/// size is measured against, so it is what makes 16mm look like 16mm.
-fn frame_width_um(preset: f32) -> f32 {
-    let i = i32(round(preset));
-    switch i {
-        case 0: { return 12500.0; }  // Super 16
-        case 2: { return 52500.0; }  // 65mm
-        default: { return 36000.0; } // 35mm still, and Custom
-    }
-}
-
 /// The grain layer, composited onto the picture.
 ///
 /// A grain plugin does not add its noise: it builds a mid-grey layer with the
@@ -82,8 +71,6 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let opacity = slot(2u);
     let grain_only = slot(3u) > 0.5;
     let texture = clamp(slot(4u), 0.0, 1.0);
-    // 0 is coarse and 1 is fine, over six stops of grain size.
-    let size_um = 4.0 * exp2((1.0 - clamp(slot(5u), 0.0, 1.0)) * 6.0);
     let aspect_ratio = max(slot(6u), 0.05);
     let strength = slot(7u);
     let offset = slot(8u);
@@ -99,54 +86,11 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
         return c;
     }
 
-    // Grains across the frame, for this format.
-    let across = frame_width_um(preset) / size_um;
-    let f = frame_size();
-    let frame_ratio = f.y / max(f.x, 1.0);
-    // Aspect ratio stretches the lattice. Real emulsion grains are not round,
-    // and an anamorphic squeeze makes them less so.
-    let lattice = vec2<f32>(across / aspect_ratio, across * frame_ratio * aspect_ratio);
-    // Frame coordinates: grain belongs to the negative, so it must not crawl
-    // across the picture when the view is panned.
-    let scaled = frame_uv(uv) * lattice + vec2<f32>(u.seed);
-    let cell = floor(scaled);
-
-    var mono = hash21(cell) - 0.5;
-    var n = vec3<f32>(
-        mono,
-        hash21(cell + vec2<f32>(17.0, 3.0)) - 0.5,
-        hash21(cell + vec2<f32>(5.0, 29.0)) - 0.5,
-    );
-
-    // Texture: a second, coarser octave mixed in. Fine emulsions read as even
-    // fizz and coarse ones clump, and one lattice can only do the first — the
-    // clumping is what makes a fast stock look fast.
-    if texture > 0.0 {
-        let coarse_cell = floor(scaled * 0.4);
-        let coarse = vec3<f32>(
-            hash21(coarse_cell + vec2<f32>(3.0, 11.0)) - 0.5,
-            hash21(coarse_cell + vec2<f32>(23.0, 7.0)) - 0.5,
-            hash21(coarse_cell + vec2<f32>(13.0, 41.0)) - 0.5,
-        );
-        n = mix(n, n * 0.55 + coarse * 0.85, texture);
-        mono = mix(mono, mono * 0.55 + (coarse.r) * 0.85, texture);
-    }
-
-    // Softness blurs the grain layer by mixing each cell toward the average of
-    // its neighbours — cheaper than a real blur and enough at grain scale.
-    if softness > 0.0 {
-        var neighbours = 0.0;
-        neighbours = neighbours + hash21(cell + vec2<f32>(1.0, 0.0));
-        neighbours = neighbours + hash21(cell + vec2<f32>(-1.0, 0.0));
-        neighbours = neighbours + hash21(cell + vec2<f32>(0.0, 1.0));
-        neighbours = neighbours + hash21(cell + vec2<f32>(0.0, -1.0));
-        let smoothed = neighbours * 0.25 - 0.5;
-        n = mix(n, vec3<f32>(smoothed), clamp(softness, 0.0, 1.0));
-        mono = mix(mono, smoothed, clamp(softness, 0.0, 1.0));
-    }
-
-    // Saturation 0 is monochrome grain, matching Resolve.
-    n = mix(vec3<f32>(mono), n, clamp(saturation, 0.0, 2.0));
+    // The lattice, the octaves, the softening and the saturation all live in
+    // common.wgsl: Halation and Film Look Creator each have a grain section of
+    // their own, and three implementations of one emulsion would be three
+    // things to fix every time the grain is wrong.
+    var n = film_grain_field(uv, preset, slot(5u), aspect_ratio, texture, softness, saturation);
 
     // Symmetry: how the light and dark grains balance. A negative that has
     // been pushed has more visible dark grains than light ones, and at 0.5

@@ -139,6 +139,37 @@ impl ParamDef {
     }
 }
 
+/// What has to be true for a group of parameters to apply.
+///
+/// Resolve greys out controls that cannot do anything: the Basic Grain
+/// sliders inside Halation until Append Grain Internally is ticked, the
+/// Secondary Glow's Gamma and Spread until its Strength leaves zero, every
+/// Split Tone control inside Film Look Creator until it is enabled.
+///
+/// Worth copying, and not only for the look of it. A panel of forty controls
+/// where a third of them silently do nothing is a panel that teaches the user
+/// wrong things about the effect — they move a slider, see no change, and
+/// conclude the slider is broken rather than switched off.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Gate {
+    /// The parameter that decides.
+    pub by: &'static str,
+    pub when: When,
+    /// The parameters it decides for.
+    pub params: &'static [&'static str],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum When {
+    /// A checkbox that has to be ticked.
+    True,
+    /// A slider that has to be off zero — an amount of nothing gates the
+    /// controls that shape it.
+    Positive,
+    /// A dropdown that has to be on one particular option.
+    Is(&'static str),
+}
+
 /// Everything the renderer and the UI need to know about one effect.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EffectDef {
@@ -159,6 +190,8 @@ pub struct EffectDef {
     /// radius scaled by image dimensions, and cannot be fused into a single
     /// pass with their neighbours.
     pub spatial: bool,
+    /// Which controls switch other controls off. See [`Gate`].
+    pub gates: &'static [Gate],
     /// Extra uniform slots the effect does not expose as parameters, filled by
     /// [`pack::derive`] from CPU-side colour science.
     ///
@@ -181,6 +214,31 @@ impl EffectDef {
 
     pub fn param(&self, key: &str) -> Option<&'static ParamDef> {
         self.params.iter().find(|p| p.key == key)
+    }
+
+    /// Whether a parameter can currently do anything.
+    ///
+    /// The UI dims and disables the ones that cannot. The *shader* does not
+    /// consult this — it reads the switch itself — because a gate is a
+    /// statement about the interface, and duplicating it as a second source of
+    /// truth is how the two come to disagree.
+    pub fn is_active(&self, key: &str, params: &ParamMap) -> bool {
+        let Some(gate) = self.gates.iter().find(|g| g.params.contains(&key)) else {
+            return true;
+        };
+        let current = params
+            .get(gate.by)
+            .cloned()
+            .or_else(|| self.param(gate.by).map(|p| p.default_value()));
+        match (gate.when, current) {
+            (When::True, Some(ParamValue::Bool(v))) => v,
+            (When::Positive, Some(ParamValue::Float(v))) => v.abs() > 1e-6,
+            (When::Is(option), Some(ParamValue::Choice(v))) => v == option,
+            // A gate naming a parameter that is not there, or one of the wrong
+            // kind, must not silently disable the controls it guards — that
+            // would be a typo taking a third of a panel away with no error.
+            _ => true,
+        }
     }
 
     /// Whether these parameters leave the image untouched.

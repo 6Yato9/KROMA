@@ -1,7 +1,7 @@
 // Log. Slots:
 //   0 mode, 1 preview_influence, 2 strength, 3 pivot,
-//   4 hue_angle, 5 protect_neutrals, 6 min_saturation, 7 max_saturation,
-//   8 shadow_strength, 9 shadow_hue, 10 highlight_strength, 11 highlight_hue
+//   4 hue_angle, 5 protect_neutrals,
+//   6 shadow_strength, 7 shadow_hue, 8 highlight_strength, 9 highlight_hue
 //
 // Opposing hues into shadows and highlights — orange highlights against teal
 // shadows being the obvious one. Perceptual, so it belongs in log.
@@ -10,6 +10,15 @@
 // adding this effect changes the image immediately, which is deliberate on
 // their part and worth matching: a look effect that does nothing until you
 // touch it reads as broken.
+
+/// Where "neutral enough to leave alone" ends and colour begins.
+///
+/// Below the first number a pixel is treated as grey and takes no tint at all;
+/// above the second it takes the full amount. Skin sits comfortably above
+/// both, which is the point — Protect Neutrals is for concrete and overcast
+/// sky, not for faces.
+const PROTECT_FROM: f32 = 0.04;
+const PROTECT_TO: f32 = 0.18;
 
 const MODE_NATURAL: f32 = 0.0;
 const MODE_STRONG: f32 = 1.0;
@@ -22,8 +31,6 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let pivot = u.p[0].w;
     let hue_angle = u.p[1].x;
     let protect = u.p[1].y > 0.5;
-    let min_sat = u.p[1].z;
-    let max_sat = u.p[1].w;
 
     if strength <= 0.0 {
         return c;
@@ -50,10 +57,10 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
 
     if mode >= MODE_CUSTOM - 0.5 {
         // Custom decouples the two ends completely.
-        shadow_amount = strength * u.p[2].x;
-        shadow_hue = fract(u.p[2].y / 360.0);
-        highlight_amount = strength * u.p[2].z;
-        highlight_hue = fract(u.p[2].w / 360.0);
+        shadow_amount = strength * u.p[1].z;
+        shadow_hue = fract(u.p[1].w / 360.0);
+        highlight_amount = strength * u.p[2].x;
+        highlight_hue = fract(u.p[2].y / 360.0);
     }
 
     let is_highlight = t > 0.0;
@@ -69,9 +76,13 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
 
     // Protect Neutrals keeps low-saturation regions grey. Without it, a split
     // tone tints skin and concrete alike.
+    //
+    // The band is fixed rather than exposed. Resolve shows a bare checkbox
+    // here, and the two sliders we used to have were a second way of asking
+    // the same question the checkbox already answers.
     if protect {
         let s = rgb_to_hsv(c).y;
-        amount = amount * smoothstep(min_sat, max(max_sat, min_sat + 1e-3), s);
+        amount = amount * smoothstep(PROTECT_FROM, PROTECT_TO, s);
     }
 
     let tint = hsv_to_rgb(vec3<f32>(hue, 1.0, 1.0));

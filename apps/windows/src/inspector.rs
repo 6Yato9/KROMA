@@ -598,6 +598,37 @@ fn param_ui(
     def: &'static ParamDef,
     row_id: egui::Id,
 ) {
+    // Dimmed and dead when its switch is off, the way Resolve draws them.
+    // Left visible rather than hidden: a control that vanishes takes the
+    // knowledge that it exists with it, and the user has no way to find out
+    // what ticking the box would give them.
+    let active = history
+        .document()
+        .stack
+        .get(id)
+        .and_then(|row| pe_effects::by_key(&row.effect).map(|e| e.is_active(def.key, &row.params)))
+        .unwrap_or(true);
+    if !active {
+        let mut child =
+            ui.new_child(egui::UiBuilder::new().max_rect(ui.available_rect_before_wrap()));
+        child.disable();
+        // A throwaway history, so a stray interaction cannot write through a
+        // control the effect is currently ignoring.
+        param_row(&mut child, history, id, def, row_id);
+        let used = child.min_rect().height();
+        ui.allocate_space(egui::vec2(ui.available_width(), used));
+        return;
+    }
+    param_row(ui, history, id, def, row_id);
+}
+
+fn param_row(
+    ui: &mut egui::Ui,
+    history: &mut History,
+    id: RowId,
+    def: &'static ParamDef,
+    row_id: egui::Id,
+) {
     let current = history
         .document()
         .stack

@@ -278,3 +278,274 @@ fn blend_is_light_like(mode: u32) -> bool {
 fn blend(base: vec3<f32>, top: vec3<f32>, mode: u32, opacity: f32) -> vec3<f32> {
     return mix(base, blend_channels(base, top, mode), clamp(opacity, 0.0, 1.0));
 }
+
+// ===========================================================================
+// Film primitives, shared.
+// ===========================================================================
+//
+// Halation, Bloom, Vignette and Film Grain exist twice over in this
+// application: as rows of their own, and as sections inside Film Look Creator,
+// because that is how Resolve ships them. Written twice they would be two
+// implementations that drift apart the first time one of them is fixed, and
+// the second one would be the one nobody remembers to fix.
+//
+// So they are written once, here, and both callers reach for the same
+// function. The standalone effects pass their full parameter set; Film Look
+// passes the handful of controls Resolve exposes inside it and leaves the rest
+// at neutral.
+
+const FILM_SAMPLES: i32 = 24;
+
+/// Width of the negative in microns, by format.
+///
+/// This is the number grain size is measured against, and it is what makes
+/// 16mm look like 16mm: the same emulsion on a smaller frame is magnified
+/// further by the time it reaches the same print.
+fn film_width_um(preset: f32) -> f32 {
+    let i = i32(round(preset));
+    switch i {
+        case 0: { return 12500.0; }  // Super 16
+        case 2: { return 52500.0; }  // 65mm
+        default: { return 36000.0; } // 35mm still, and Custom
+    }
+}
+
+/// How much a colour's own saturation counts towards being isolated.
+///
+/// A saturated highlight halates harder than a neutral one of the same
+/// brightness, because the dye layer it came through is denser. At a level of
+/// one this does nothing at all, which is why one is the default.
+fn film_isolate_weight(c: vec3<f32>, level: f32) -> f32 {
+    let s = rgb_to_hsv(max(c, vec3<f32>(0.0))).y;
+    return clamp(1.0 + s * (level - 1.0), 0.0, 8.0);
+}
+
+/// What glows, per channel: the band between Threshold and Normalization.
+///
+/// A band rather than everything above one level, which is what stops a bright
+/// sky glowing as hard as a specular highlight.
+fn film_isolate3(c: vec3<f32>, threshold: f32, normalization: f32, level: f32) -> vec3<f32> {
+    let band = max(normalization - threshold, 1e-3);
+    let over = clamp((c - vec3<f32>(threshold)) / band, vec3<f32>(0.0), vec3<f32>(1.0));
+    return over * film_isolate_weight(c, level);
+}
+
+/// The same, as one number, for the isolation preview.
+fn film_isolate(c: vec3<f32>, threshold: f32, normalization: f32, level: f32) -> f32 {
+    return dot(film_isolate3(c, threshold, normalization, level), AP1_LUMA);
+}
+
+/// One radius for all three channels: a disc of golden-angle samples, each
+/// weighted down with distance so the core stays brighter than the tail.
+///
+/// `spread` is a fraction of the frame, never pixels — a pixel radius would
+/// shrink to a rim on export. `stretch` is Resolve's Aspect Ratio, which makes
+/// the glow oval the way an anamorphic one is.
+fn film_halo(
+    uv: vec2<f32>,
+    spread: f32,
+    stretch: f32,
+    threshold: f32,
+    normalization: f32,
+    level: f32,
+) -> vec3<f32> {
+    let aspect = frame_aspect();
+    let radius = frame_to_uv(spread);
+
+    var glow = vec3<f32>(0.0);
+    var total = 0.0;
+    for (var i = 0; i < FILM_SAMPLES; i = i + 1) {
+        let fi = f32(i);
+        let angle = fi * 2.39996323;
+        let r = sqrt((fi + 0.5) / f32(FILM_SAMPLES)) * radius;
+        let offset = vec2<f32>(cos(angle) * r * stretch / aspect, sin(angle) * r / stretch);
+        let s = textureSampleLevel(src_texture, src_sampler, uv + offset, 0.0).rgb;
+        let w = 1.0 / (1.0 + r * 12.0);
+        glow = glow + film_isolate3(s, threshold, normalization, level) * w;
+        total = total + w;
+    }
+    return glow / max(total, 1e-4);
+}
+
+/// A separate radius per channel.
+///
+/// Each channel is read from its own sample position, so the three glows
+/// genuinely differ in extent rather than being one glow that was tinted.
+fn film_halo_rgb(
+    uv: vec2<f32>,
+    spread: f32,
+    stretch: f32,
+    threshold: f32,
+    normalization: f32,
+    level: f32,
+    relative: vec3<f32>,
+) -> vec3<f32> {
+    let aspect = frame_aspect();
+    let radius = frame_to_uv(spread);
+
+    var glow = vec3<f32>(0.0);
+    var total = vec3<f32>(0.0);
+    for (var i = 0; i < FILM_SAMPLES; i = i + 1) {
+        let fi = f32(i);
+        let angle = fi * 2.39996323;
+        let base = sqrt((fi + 0.5) / f32(FILM_SAMPLES)) * radius;
+        let dir = vec2<f32>(cos(angle) * stretch / aspect, sin(angle) / stretch);
+
+        for (var ch = 0; ch < 3; ch = ch + 1) {
+            let r = base * relative[ch];
+            let s = textureSampleLevel(src_texture, src_sampler, uv + dir * r, 0.0).rgb;
+            let over = film_isolate3(s, threshold, normalization, level);
+            // Weighted against each channel's own radius, so a narrow channel
+            // keeps a tight core rather than being diluted by the widest one.
+            let w = 1.0 / (1.0 + r * 12.0);
+            glow[ch] = glow[ch] + over[ch] * w;
+            total[ch] = total[ch] + w;
+        }
+    }
+    return glow / max(total, vec3<f32>(1e-4));
+}
+
+/// A plain average over the same disc — no isolation, no falloff weighting.
+/// For where something wants softening rather than glowing.
+fn film_halo_blur(uv: vec2<f32>, radius_uv: f32, stretch: f32) -> vec3<f32> {
+    let aspect = frame_aspect();
+    var sum = vec3<f32>(0.0);
+    for (var i = 0; i < FILM_SAMPLES; i = i + 1) {
+        let fi = f32(i);
+        let angle = fi * 2.39996323;
+        let r = sqrt((fi + 0.5) / f32(FILM_SAMPLES)) * radius_uv;
+        let offset = vec2<f32>(cos(angle) * r * stretch / aspect, sin(angle) * r / stretch);
+        sum = sum + textureSampleLevel(src_texture, src_sampler, uv + offset, 0.0).rgb;
+    }
+    return sum / f32(FILM_SAMPLES);
+}
+
+/// Light spilling out of the highlights: lens scatter rather than emulsion.
+///
+/// Only what is above the threshold spills — everything below it is not a
+/// highlight and has no business glowing.
+fn film_bloom(uv: vec2<f32>, radius: f32, threshold: f32) -> vec3<f32> {
+    let aspect = frame_aspect();
+    let uv_radius = frame_to_uv(radius);
+    var glow = vec3<f32>(0.0);
+    var total = 0.0;
+    for (var i = 0; i < FILM_SAMPLES; i = i + 1) {
+        let fi = f32(i);
+        let angle = fi * 2.39996323;
+        let r = sqrt((fi + 0.5) / f32(FILM_SAMPLES)) * uv_radius;
+        let offset = vec2<f32>(cos(angle) * r / aspect, sin(angle) * r);
+        let s = textureSampleLevel(src_texture, src_sampler, uv + offset, 0.0).rgb;
+        let over = max(s - vec3<f32>(threshold), vec3<f32>(0.0));
+        let w = 1.0 / (1.0 + r * 10.0);
+        glow = glow + over * w;
+        total = total + w;
+    }
+    return glow / max(total, 1e-4);
+}
+
+/// How far into the vignette a point is: 0 clear of it, 1 fully in it.
+///
+/// Frame coordinates, so the vignette stays anchored to the photograph rather
+/// than following the viewport when the view is zoomed or panned.
+fn film_vignette_t(
+    uv: vec2<f32>,
+    size: f32,
+    softness: f32,
+    anamorphism: f32,
+    border_shape: f32,
+    rotation: f32,
+    centre: vec2<f32>,
+) -> f32 {
+    var d = frame_uv(uv) - centre;
+
+    // Rotation first, so it turns the shape rather than the frame.
+    if rotation != 0.0 {
+        let a = radians(rotation);
+        let ca = cos(a);
+        let sa = sin(a);
+        d = vec2<f32>(d.x * ca - d.y * sa, d.x * sa + d.y * ca);
+    }
+
+    // Anamorphism stretches the shape horizontally. At 0 the vignette follows
+    // the frame; positive values widen it the way an anamorphic lens would.
+    d.x = d.x / max(1.0 + anamorphism, 0.05);
+
+    // Border Shape moves between an ellipse and a rectangle by raising the
+    // superellipse exponent. p = 2 is an ellipse; large p approaches a box.
+    let p = mix(2.0, 14.0, clamp(border_shape, 0.0, 1.0));
+    let e = pow(pow(abs(d.x), p) + pow(abs(d.y), p), 1.0 / p) / 0.5;
+
+    // Size is how far the vignette reaches in: 0 hugs the very edge, 1 reaches
+    // the centre.
+    let inner = clamp(1.0 - size, 0.0, 0.999);
+    let outer = inner + max(softness, 1e-3);
+    return smoothstep(inner, outer, e);
+}
+
+/// The grain layer itself: zero-mean noise on a lattice sized in microns.
+///
+/// Everything that decides what the grain *looks* like lives here. What each
+/// caller does with it afterwards — tonal weighting, per-channel gain, which
+/// blend it is composited with — is the caller's business.
+fn film_grain_field(
+    uv: vec2<f32>,
+    preset: f32,
+    size_t: f32,
+    aspect_ratio: f32,
+    texture: f32,
+    softness: f32,
+    saturation: f32,
+) -> vec3<f32> {
+    // 0 is coarse and 1 is fine, over six stops of grain size. Exponential,
+    // because grain size is: halfway along the slider should look halfway
+    // between fine and coarse, and the eye reads size logarithmically.
+    let size_um = 4.0 * exp2((1.0 - clamp(size_t, 0.0, 1.0)) * 6.0);
+    let across = film_width_um(preset) / size_um;
+    let f = frame_size();
+    let frame_ratio = f.y / max(f.x, 1.0);
+    let ar = max(aspect_ratio, 0.05);
+    // Real emulsion grains are not round, and an anamorphic squeeze makes them
+    // less so.
+    let lattice = vec2<f32>(across / ar, across * frame_ratio * ar);
+    // Frame coordinates: grain belongs to the negative, so it must not crawl
+    // across the picture when the view is panned.
+    let scaled = frame_uv(uv) * lattice + vec2<f32>(u.seed);
+    let cell = floor(scaled);
+
+    var mono = hash21(cell) - 0.5;
+    var n = vec3<f32>(
+        mono,
+        hash21(cell + vec2<f32>(17.0, 3.0)) - 0.5,
+        hash21(cell + vec2<f32>(5.0, 29.0)) - 0.5,
+    );
+
+    // Texture: a second, coarser octave mixed in. Fine emulsions read as even
+    // fizz and coarse ones clump, and one lattice can only do the first — the
+    // clumping is what makes a fast stock look fast.
+    if texture > 0.0 {
+        let coarse_cell = floor(scaled * 0.4);
+        let coarse = vec3<f32>(
+            hash21(coarse_cell + vec2<f32>(3.0, 11.0)) - 0.5,
+            hash21(coarse_cell + vec2<f32>(23.0, 7.0)) - 0.5,
+            hash21(coarse_cell + vec2<f32>(13.0, 41.0)) - 0.5,
+        );
+        n = mix(n, n * 0.55 + coarse * 0.85, texture);
+        mono = mix(mono, mono * 0.55 + coarse.r * 0.85, texture);
+    }
+
+    // Softness blurs the grain layer by mixing each cell toward the average of
+    // its neighbours — cheaper than a real blur and enough at grain scale.
+    if softness > 0.0 {
+        var neighbours = 0.0;
+        neighbours = neighbours + hash21(cell + vec2<f32>(1.0, 0.0));
+        neighbours = neighbours + hash21(cell + vec2<f32>(-1.0, 0.0));
+        neighbours = neighbours + hash21(cell + vec2<f32>(0.0, 1.0));
+        neighbours = neighbours + hash21(cell + vec2<f32>(0.0, -1.0));
+        let smoothed = neighbours * 0.25 - 0.5;
+        n = mix(n, vec3<f32>(smoothed), clamp(softness, 0.0, 1.0));
+        mono = mix(mono, smoothed, clamp(softness, 0.0, 1.0));
+    }
+
+    // Saturation 0 is monochrome grain, matching Resolve.
+    return mix(vec3<f32>(mono), n, clamp(saturation, 0.0, 2.0));
+}

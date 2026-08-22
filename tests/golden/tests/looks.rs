@@ -60,7 +60,7 @@ fn split_tone_strong_reference() {
         &chart(),
         &look(
             "split_tone",
-            &[("mode", ParamValue::Choice("strong".into()))],
+            &[("mode", ParamValue::Choice("Strong".into()))],
         ),
     );
     pe_golden::assert_matches("split_tone_strong", &out, TOLERANCE);
@@ -83,7 +83,7 @@ fn natural_and_strong_differ_at_the_highlights() {
         &src,
         &look(
             "split_tone",
-            &[("mode", ParamValue::Choice("strong".into()))],
+            &[("mode", ParamValue::Choice("Strong".into()))],
         ),
     );
 
@@ -169,7 +169,10 @@ fn halation_reference() {
             "halation",
             &[
                 ("strength", ParamValue::Float(0.8)),
-                ("spread", ParamValue::Float(0.05)),
+                // Spread is a 0..1 control now, as Resolve's is, rather than
+                // a frame fraction written straight into the sampler. 0.45 is
+                // the 5% of the frame this reference was drawn against.
+                ("spread", ParamValue::Float(0.45)),
                 ("threshold", ParamValue::Float(0.5)),
                 ("secondary_strength", ParamValue::Float(0.4)),
             ],

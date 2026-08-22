@@ -593,6 +593,20 @@ fn ramp() -> DecodedImage {
     DecodedImage::new(256, 8, px).expect("ramp")
 }
 
+/// Film Look Creator with only its colour half running.
+///
+/// Resolve ships it with Vignette, Halation, Bloom and Grain enabled, so a
+/// freshly added row already spills light and adds noise. A test about the
+/// shoulder, the stock or the toning is not a test about any of that, and
+/// leaving them on would have each of them measuring five things at once.
+/// Ticking 3D LUT Compatible is exactly the switch for it — the control
+/// exists to say "only the part a LUT could reproduce".
+fn film_response(params: &[(&str, ParamValue)]) -> Document {
+    let mut all = vec![("lut_compatible", ParamValue::Bool(true))];
+    all.extend(params.iter().cloned());
+    look("film_look", &all)
+}
+
 /// The shoulder is the point of the whole effect. Film has no clipping point —
 /// density keeps rising, ever more slowly — so a highlight rolls off rather
 /// than stopping, and a shoulder that flattened would be a clip with extra
@@ -606,17 +620,17 @@ fn the_highlight_rolloff_compresses_without_flattening() {
     let out = render(
         gpu,
         &src,
-        &look(
-            "film_look",
-            &[
-                ("highlight_rolloff", ParamValue::Float(2.0)),
-                ("shadow_rolloff", ParamValue::Float(0.0)),
-                ("film_contrast", ParamValue::Float(1.0)),
-                ("film_saturation", ParamValue::Float(1.0)),
-                ("shadow_tone", ParamValue::Float(0.0)),
-                ("highlight_tone", ParamValue::Float(0.0)),
-            ],
-        ),
+        &film_response(&[
+            ("core_look", ParamValue::Choice("Neutral".into())),
+            ("highlights", ParamValue::Float(1.0)),
+            ("fade", ParamValue::Float(0.0)),
+            ("contrast", ParamValue::Float(1.0)),
+            ("subtractive_sat", ParamValue::Float(1.0)),
+            ("richness", ParamValue::Float(1.0)),
+            // Resolve ships Tint at 10, which is a real green push and would
+            // show up in this test as the shoulder reaching the shadows.
+            ("tint", ParamValue::Float(0.0)),
+        ]),
     );
 
     let top = out.pixel(250, 4)[0] as i32;
@@ -634,85 +648,122 @@ fn the_highlight_rolloff_compresses_without_flattening() {
     );
 }
 
-/// Choosing a stock changes the base the sliders modulate rather than
-/// overwriting them, so the three have to differ with the sliders left alone.
+/// Choosing a Core Look changes the base the sliders modulate rather than
+/// overwriting them, so the looks have to differ with the sliders left alone.
 #[test]
-fn the_three_stocks_are_actually_different() {
+fn the_core_looks_are_actually_different() {
     let Some(gpu) = pe_golden::shared_gpu() else {
         return;
     };
     let src = ramp();
-    let of = |stock: &str| {
+    let of = |core: &str| {
         render(
             gpu,
             &src,
-            &look("film_look", &[("stock", ParamValue::Choice(stock.into()))]),
+            &film_response(&[("core_look", ParamValue::Choice(core.into()))]),
         )
     };
-    let negative = of("Colour Negative");
-    let reversal = of("Reversal");
+    let modern = of("Modern");
+    let bleach = of("Bleach");
 
-    // Reversal is the harder stock, so the two ends pull apart.
+    // Bleach is the harder look — silver left in the print alongside the dye —
+    // so the two ends pull apart.
     let range = |img: &DecodedImage| img.pixel(230, 4)[0] as i32 - img.pixel(25, 4)[0] as i32;
     assert!(
-        range(&reversal) > range(&negative) + 6,
-        "reversal should be the harder stock ({} against {})",
-        range(&reversal),
-        range(&negative)
+        range(&bleach) > range(&modern) + 6,
+        "bleach bypass should be the harder look ({} against {})",
+        range(&bleach),
+        range(&modern)
+    );
+}
+
+/// The switch that makes the tests above possible has to actually work: with
+/// it on, nothing that reads a neighbouring pixel may run.
+///
+/// Worth its own test rather than being assumed, because everything else in
+/// this file leans on it. If 3D LUT Compatible quietly stopped disabling the
+/// grain, half these assertions would start measuring noise.
+#[test]
+fn lut_compatible_switches_off_everything_a_lut_could_not_do() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = ramp();
+    // Only the vignette, so the assertion is about one thing. With halation
+    // and bloom left on, the corner comes out *brighter* with the spatial half
+    // running — they add more light than the vignette takes away — and a test
+    // that measured the sum of four effects would not say which one failed.
+    let with_vignette = |lut: bool| {
+        look(
+            "film_look",
+            &[
+                ("lut_compatible", ParamValue::Bool(lut)),
+                ("halation_enable", ParamValue::Bool(false)),
+                ("bloom_enable", ParamValue::Bool(false)),
+                ("grain_enable", ParamValue::Bool(false)),
+            ],
+        )
+    };
+    let flat = render(gpu, &src, &with_vignette(true));
+    let full = render(gpu, &src, &with_vignette(false));
+
+    // Sampled at the *bright* corner: this fixture ramps dark to light, and
+    // there is nothing to take away from a corner that is already black.
+    let corner = |img: &DecodedImage| img.pixel(252, 3)[0] as i32;
+    assert!(
+        corner(&flat) > corner(&full) + 4,
+        "the vignette ran with 3D LUT Compatible ticked ({} against {})",
+        corner(&flat),
+        corner(&full)
     );
 }
 
 /// Toning shifts the colour without lifting the level. A tint that also
 /// brightened would be two controls in one, and the second one impossible to
 /// turn off.
+///
+/// One hue angle drives both ends now, as Resolve's does: the highlights take
+/// the angle and the shadows take the colour opposite it. That is the whole
+/// idea of a *split* tone, and it is worth asserting both halves — a control
+/// that tinted the shadows and left the highlights alone would be a shadow
+/// tint wearing the wrong name.
 #[test]
-fn split_toning_colours_the_ends_without_moving_them() {
+fn split_toning_colours_the_two_ends_in_opposite_directions() {
     let Some(gpu) = pe_golden::shared_gpu() else {
         return;
     };
     let src = ramp();
-    let plain = render(
-        gpu,
-        &src,
-        &look(
-            "film_look",
-            &[
-                ("shadow_tone", ParamValue::Float(0.0)),
-                ("highlight_tone", ParamValue::Float(0.0)),
-            ],
-        ),
-    );
+    let plain = render(gpu, &src, &film_response(&[]));
     let toned = render(
         gpu,
         &src,
-        &look(
-            "film_look",
-            &[
-                ("shadow_hue", ParamValue::Float(210.0)),
-                ("shadow_tone", ParamValue::Float(1.0)),
-                ("highlight_tone", ParamValue::Float(0.0)),
-            ],
-        ),
+        &film_response(&[
+            ("split_tone_enable", ParamValue::Bool(true)),
+            ("split_tone_mode", ParamValue::Choice("Strong".into())),
+            ("split_tone_amount", ParamValue::Float(1.0)),
+            // Warm highlights, which puts the shadows on the blue side.
+            ("split_tone_hue", ParamValue::Float(20.0)),
+            ("split_tone_pivot", ParamValue::Float(0.5)),
+        ]),
     );
 
-    // The shadows went blue.
-    let p = toned.pixel(30, 4);
+    let shadow = toned.pixel(30, 4);
     assert!(
-        p[2] as i32 > p[0] as i32 + 4,
-        "the shadow tone did not reach the shadows, got {p:?}"
+        shadow[2] as i32 > shadow[0] as i32 + 4,
+        "the shadows did not take the opposing hue, got {shadow:?}"
     );
-    // And they are the same brightness they were.
-    let before = 0.2126 * plain.pixel(30, 4)[0] as f32
-        + 0.7152 * plain.pixel(30, 4)[1] as f32
-        + 0.0722 * plain.pixel(30, 4)[2] as f32;
-    let after = 0.2126 * p[0] as f32 + 0.7152 * p[1] as f32 + 0.0722 * p[2] as f32;
+    let highlight = toned.pixel(230, 4);
+    assert!(
+        highlight[0] as i32 > highlight[2] as i32 + 4,
+        "the highlights did not take the hue angle, got {highlight:?}"
+    );
+
+    // And the shadows are the brightness they were.
+    let level = |p: [u8; 4]| 0.2126 * p[0] as f32 + 0.7152 * p[1] as f32 + 0.0722 * p[2] as f32;
+    let before = level(plain.pixel(30, 4));
+    let after = level(shadow);
     assert!(
         (after - before).abs() < 6.0,
         "toning moved the level from {before:.0} to {after:.0}"
-    );
-    // The highlights were left alone.
-    assert!(
-        (toned.pixel(230, 4)[2] as i32 - plain.pixel(230, 4)[2] as i32).abs() <= 3,
-        "a shadow tone reached the highlights"
     );
 }

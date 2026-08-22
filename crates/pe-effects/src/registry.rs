@@ -16,7 +16,7 @@
 
 use pe_color::WorkingSpace;
 
-use crate::{EffectDef, Group, ParamDef, ParamKind};
+use crate::{EffectDef, Gate, Group, ParamDef, ParamKind, When};
 
 /// Shorthand for a bipolar slider whose neutral point is zero.
 const fn bipolar(
@@ -81,6 +81,7 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "exposure",
         spatial: false,
         derived_slots: 0,
+        gates: &[],
         params: &[bipolar("ev", "Exposure", 5.0, "EV")],
     },
     EffectDef {
@@ -92,6 +93,7 @@ pub static EFFECTS: &[EffectDef] = &[
         spatial: false,
         // r, g, b gains, computed by pe_color::white_balance.
         derived_slots: 3,
+        gates: &[],
         params: &[
             ParamDef {
                 key: "temperature",
@@ -116,6 +118,7 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "contrast",
         spatial: false,
         derived_slots: 0,
+        gates: &[],
         params: &[
             bipolar("contrast", "Contrast", 1.0, ""),
             ParamDef {
@@ -142,6 +145,7 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "curves",
         spatial: false,
         derived_slots: 0,
+        gates: &[],
         params: &[
             ParamDef {
                 key: "luma",
@@ -284,6 +288,7 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "hsl",
         spatial: false,
         derived_slots: 0,
+        gates: &[],
         params: &[
             bipolar("hue", "Hue", 180.0, "°"),
             bipolar("saturation", "Saturation", 1.0, ""),
@@ -298,6 +303,7 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "primaries",
         spatial: false,
         derived_slots: 0,
+        gates: &[],
         params: &[
             ParamDef {
                 key: "lift",
@@ -344,13 +350,27 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "split_tone",
         spatial: false,
         derived_slots: 0,
+        gates: &[Gate {
+            by: "mode",
+            when: When::Is("Custom"),
+            params: &[
+                "shadow_strength",
+                "shadow_hue",
+                "highlight_strength",
+                "highlight_hue",
+            ],
+        }],
         params: &[
+            // Resolve's panel, in Resolve's order. The Colour Space Overrides it
+            // also carries are not here and will not be: which space an effect runs
+            // in is the renderer's decision under the two-space rule, not a
+            // per-effect override.
             ParamDef {
                 key: "mode",
                 name: "Split Tone Mode",
                 kind: ParamKind::Choice {
-                    options: &["natural", "strong", "custom"],
-                    default: "natural",
+                    options: &["Natural", "Strong", "Custom"],
+                    default: "Natural",
                 },
                 unit: "",
                 section: "",
@@ -405,33 +425,11 @@ pub static EFFECTS: &[EffectDef] = &[
                 unit: "",
                 section: "",
             },
-            ParamDef {
-                key: "min_saturation",
-                name: "Minimum Saturation",
-                kind: ParamKind::Float {
-                    min: 0.0,
-                    max: 1.0,
-                    default: 0.0,
-                    neutral: 0.0,
-                },
-                unit: "",
-                section: "Protect Neutrals",
-            },
-            ParamDef {
-                key: "max_saturation",
-                name: "Maximum Saturation",
-                kind: ParamKind::Float {
-                    min: 0.0,
-                    max: 1.0,
-                    default: 1.0,
-                    neutral: 1.0,
-                },
-                unit: "",
-                section: "Protect Neutrals",
-            },
-            // Custom mode only. Resolve hides these behind the mode dropdown;
-            // we keep them present so a document round-trips whatever mode it
-            // was saved in.
+            // Custom mode only, and dimmed until it is chosen. Resolve shows
+            // nothing under Protect Neutrals and nothing under the other two
+            // modes, which is why the saturation band that used to be exposed
+            // here is now fixed in the shader: it was two controls solving a
+            // problem the checkbox already solves.
             ParamDef {
                 key: "shadow_strength",
                 name: "Shadow Strength",
@@ -490,6 +488,7 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "grain",
         spatial: true,
         derived_slots: 0,
+        gates: &[],
         // Follows Resolve's Film Grain parameter set. Notably their
         // Shadow/Midtone/Highlight Gain trio replaces the single "shadow bias"
         // slider we had: three independent controls are strictly better than
@@ -722,6 +721,28 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "halation",
         spatial: true,
         derived_slots: 0,
+        gates: &[
+            Gate {
+                by: "fine_tune_spread",
+                when: When::True,
+                params: &["relative_red", "relative_green", "relative_blue"],
+            },
+            Gate {
+                by: "secondary_strength",
+                when: When::Positive,
+                params: &["secondary_gamma", "secondary_spread", "secondary_filter"],
+            },
+            Gate {
+                by: "append_grain",
+                when: When::True,
+                params: &[
+                    "grain_strength",
+                    "grain_size",
+                    "grain_softness",
+                    "grain_saturation",
+                ],
+            },
+        ],
         // Follows Resolve's Halation structure. Two changes worth noting
         // against our M1 version: isolation is a *band* (Threshold is the low
         // clip, Normalization the high clip) rather than a single threshold,
@@ -729,8 +750,64 @@ pub static EFFECTS: &[EffectDef] = &[
         // own spread is what gives the effect a tight core and a wide falloff
         // at once, which one blur radius cannot do.
         params: &[
-            // A look effect, so it ships visible — see
-            // EFFECTS_WITH_VISIBLE_DEFAULTS.
+            // Resolve's five groups, in Resolve's order.
+            //
+            // Hue is gone. Resolve has no hue control here and it was right not to:
+            // the red-orange is not a tint someone chose, it is what light
+            // scattering back off the film base through the dye layers *is*. It is
+            // a constant in the shader now, and Saturation says how much of it
+            // reaches the picture — which is the control Resolve actually gives.
+            // ---- Isolation ----
+            // Threshold is the low clip and Normalization the high one, so the
+            // source of the glow is a band rather than everything above a level.
+            // That is what stops a bright sky glowing as hard as a specular.
+            ParamDef {
+                key: "threshold",
+                name: "Threshold",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.2,
+                    neutral: 0.2,
+                },
+                unit: "",
+                section: "Isolation",
+            },
+            ParamDef {
+                key: "normalization",
+                name: "Normalization",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Isolation",
+            },
+            // How much a colour's saturation counts towards being isolated. A
+            // saturated highlight halates harder than a neutral one of the same
+            // brightness, because the dye layer it came through is denser.
+            ParamDef {
+                key: "film_saturation_level",
+                name: "Film Saturation Level",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 10.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Isolation",
+            },
+            ParamDef {
+                key: "view_isolated",
+                name: "View Isolated Regions",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+                section: "Isolation",
+            },
+            // ---- Dye Layer Reflections ----
             ParamDef {
                 key: "strength",
                 name: "Strength",
@@ -741,106 +818,61 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "",
-                section: "",
-            },
-            // Threshold and Normalization are in *linear light*, where diffuse
-            // white is 1.0. Defaulting the threshold to 1.0 meant nothing in an
-            // SDR photograph ever exceeded it, so the effect could not fire at
-            // any strength. 0.5 to 1.0 is the top stop of an SDR image, which
-            // is exactly what should be glowing.
-            ParamDef {
-                key: "threshold",
-                name: "Threshold",
-                kind: ParamKind::Float {
-                    min: 0.0,
-                    max: 4.0,
-                    default: 0.5,
-                    neutral: 0.5,
-                },
-                unit: "",
-                section: "",
+                section: "Dye Layer Reflections",
             },
             ParamDef {
-                key: "normalization",
-                name: "Normalization",
+                key: "gamma",
+                name: "Gamma",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 8.0,
-                    default: 1.0,
+                    max: 3.0,
+                    default: 1.35,
                     neutral: 1.0,
                 },
                 unit: "",
-                section: "",
-            },
-            ParamDef {
-                key: "spread",
-                name: "Spread",
-                kind: ParamKind::Float {
-                    min: 0.0,
-                    max: 0.2,
-                    default: 0.04,
-                    neutral: 0.0,
-                },
-                // Fraction of the image's long edge. Resolution independence
-                // again: a pixel radius would shrink to a rim on export.
-                unit: "",
-                section: "",
+                section: "Dye Layer Reflections",
             },
             ParamDef {
                 key: "saturation",
                 name: "Saturation",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 2.0,
+                    max: 3.0,
                     default: 1.0,
                     neutral: 1.0,
                 },
                 unit: "",
-                section: "",
+                section: "Dye Layer Reflections",
             },
-            // Red-orange, the characteristic colour of light scattering back
-            // off the film base through the dye layers.
+            // Fraction of the frame, never pixels: a radius in pixels shrinks to
+            // a rim on export.
             ParamDef {
-                key: "hue",
-                name: "Hue",
+                key: "spread",
+                name: "Spread",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 360.0,
-                    default: 12.0,
-                    neutral: 12.0,
-                },
-                unit: "°",
-                section: "",
-            },
-            amount("secondary_strength", "Secondary Glow"),
-            ParamDef {
-                key: "secondary_spread",
-                name: "Secondary Spread",
-                kind: ParamKind::Float {
-                    min: 0.0,
-                    max: 0.4,
-                    default: 0.08,
+                    max: 1.0,
+                    default: 0.333,
                     neutral: 0.0,
                 },
                 unit: "",
-                section: "",
+                section: "Dye Layer Reflections",
             },
-            // Resolve's Fine Tune Relative Spread. With it off the glow is one
-            // radius tinted by Hue; with it on each channel scatters its own
-            // distance and the red fringe emerges from the physics instead.
-            // Defaults are ordered red > green > blue because longer
-            // wavelengths penetrate the emulsion further and scatter wider, so
-            // ticking the box immediately gives the characteristic look.
+            // With it off the glow is one radius wearing the dye colour. With it
+            // on each channel scatters its own distance and the red fringe comes
+            // out of the physics instead: longer wavelengths reach further into
+            // the emulsion and scatter wider, so red spreads past green, which
+            // spreads past blue.
             ParamDef {
                 key: "fine_tune_spread",
                 name: "Fine Tune Relative Spread",
                 kind: ParamKind::Bool { default: false },
                 unit: "",
-                section: "",
+                section: "Dye Layer Reflections",
             },
             ParamDef {
                 key: "relative_red",
-                name: "Relative Spread Red",
+                name: "Relative Red",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 2.0,
@@ -852,7 +884,7 @@ pub static EFFECTS: &[EffectDef] = &[
             },
             ParamDef {
                 key: "relative_green",
-                name: "Relative Spread Green",
+                name: "Relative Green",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 2.0,
@@ -864,7 +896,7 @@ pub static EFFECTS: &[EffectDef] = &[
             },
             ParamDef {
                 key: "relative_blue",
-                name: "Relative Spread Blue",
+                name: "Relative Blue",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 2.0,
@@ -873,6 +905,164 @@ pub static EFFECTS: &[EffectDef] = &[
                 },
                 unit: "",
                 section: "Fine Tune Spread",
+            },
+            // ---- Secondary Glow ----
+            // Wider and weaker than the primary. Together they give a bright core
+            // with a long falloff, which one radius cannot do at all.
+            ParamDef {
+                key: "secondary_strength",
+                name: "Strength",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Secondary Glow",
+            },
+            ParamDef {
+                key: "secondary_gamma",
+                name: "Gamma",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 3.0,
+                    default: 1.35,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Secondary Glow",
+            },
+            ParamDef {
+                key: "secondary_spread",
+                name: "Spread",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.6,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Secondary Glow",
+            },
+            ParamDef {
+                key: "secondary_filter",
+                name: "Filter",
+                kind: ParamKind::Rgb {
+                    default: [0.5, 0.5, 0.5],
+                },
+                unit: "",
+                section: "Secondary Glow",
+            },
+            // ---- Basic Grain ----
+            // Grain applied inside the halation rather than after it. The order
+            // matters: grain laid over a glow sits on top of it like dust on
+            // glass, where grain inside the glow is in the emulsion the glow
+            // happened in. Off by default, because most stacks already have a
+            // Grain row and two lots of grain is one too many.
+            ParamDef {
+                key: "append_grain",
+                name: "Append Grain Internally",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+                section: "Basic Grain",
+            },
+            ParamDef {
+                key: "grain_strength",
+                name: "Strength",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.25,
+                    neutral: 0.25,
+                },
+                unit: "",
+                section: "Basic Grain",
+            },
+            ParamDef {
+                key: "grain_size",
+                name: "Size",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.5,
+                },
+                unit: "",
+                section: "Basic Grain",
+            },
+            ParamDef {
+                key: "grain_softness",
+                name: "Softness",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.1,
+                    neutral: 0.1,
+                },
+                unit: "",
+                section: "Basic Grain",
+            },
+            ParamDef {
+                key: "grain_saturation",
+                name: "Saturation",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.15,
+                    neutral: 0.15,
+                },
+                unit: "",
+                section: "Basic Grain",
+            },
+            // ---- Global Adjustments ----
+            ParamDef {
+                key: "view_glow_alone",
+                name: "View Glow Alone",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+                section: "Global Adjustments",
+            },
+            // The glow adds light, so without this the picture gets brighter as
+            // well as glowier. Pulling the highlights back down is what makes the
+            // effect read as scattering rather than as exposure.
+            ParamDef {
+                key: "reduce_highlights",
+                name: "Reduce Highlights",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Global Adjustments",
+            },
+            ParamDef {
+                key: "aspect_ratio",
+                name: "Aspect Ratio",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 3.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Global Adjustments",
+            },
+            // Softens the picture under the glow, the way a halated frame loses
+            // fine detail to the scattered light.
+            ParamDef {
+                key: "detail_loss",
+                name: "Detail Loss",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Global Adjustments",
             },
         ],
     },
@@ -884,6 +1074,7 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "vignette",
         spatial: true,
         derived_slots: 0,
+        gates: &[],
         // Follows Resolve's Vignette: a Basic set (Size, Anamorphism,
         // Softness, Color) and an Advanced set (Border Shape, Rotation,
         // Center). Two of Resolve's controls are deliberately not here —
@@ -1001,6 +1192,7 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "dehaze",
         spatial: true,
         derived_slots: 0,
+        gates: &[],
         params: &[
             // Bipolar like Resolve's: above zero removes haze, below zero adds
             // it by running the same scattering model forwards.
@@ -1055,6 +1247,7 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "bloom",
         spatial: true,
         derived_slots: 0,
+        gates: &[],
         params: &[
             ParamDef {
                 key: "amount",
@@ -1104,6 +1297,7 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "film_damage",
         spatial: true,
         derived_slots: 0,
+        gates: &[],
         // Parameter order is the shader ABI — see the slot table at the top
         // of shaders/effects/film_damage.wgsl. Reordering this array quietly
         // rewires every saved document that uses the effect.
@@ -1617,6 +1811,7 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "tone",
         spatial: false,
         derived_slots: 0,
+        gates: &[],
         params: &[
             bipolar("highlights", "Highlights", 1.0, ""),
             bipolar("shadows", "Shadows", 1.0, ""),
@@ -1634,6 +1829,7 @@ pub static EFFECTS: &[EffectDef] = &[
         // frame-relative and it cannot be fused with its neighbours.
         spatial: true,
         derived_slots: 0,
+        gates: &[],
         params: &[
             bipolar("texture", "Texture", 1.0, ""),
             bipolar("clarity", "Clarity", 1.0, ""),
@@ -1647,6 +1843,7 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "colour",
         spatial: false,
         derived_slots: 0,
+        gates: &[],
         params: &[
             bipolar("vibrance", "Vibrance", 1.0, ""),
             bipolar("saturation", "Saturation", 1.0, ""),
@@ -1683,6 +1880,7 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "log_wheels",
         spatial: false,
         derived_slots: 0,
+        gates: &[],
         params: &[
             ParamDef {
                 key: "shadow",
@@ -1749,6 +1947,7 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "colour_mixer",
         spatial: false,
         derived_slots: 0,
+        gates: &[],
         // Three slots per band, in band order — the shader indexes them
         // arithmetically, so this order is load-bearing.
         params: &[
@@ -1799,6 +1998,7 @@ pub static EFFECTS: &[EffectDef] = &[
         // It reads a region rather than only the pixel under it.
         spatial: true,
         derived_slots: 0,
+        gates: &[],
         params: &[
             ParamDef {
                 key: "region",
@@ -1914,6 +2114,7 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "radial_blur",
         spatial: true,
         derived_slots: 0,
+        gates: &[],
         params: &[
             ParamDef {
                 key: "strength",
@@ -2038,6 +2239,7 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "zoom_blur",
         spatial: true,
         derived_slots: 0,
+        gates: &[],
         params: &[
             ParamDef {
                 key: "strength",
@@ -2165,6 +2367,7 @@ pub static EFFECTS: &[EffectDef] = &[
         shader: "noise_reduction",
         spatial: true,
         derived_slots: 0,
+        gates: &[],
         params: &[
             ParamDef {
                 key: "mode",
@@ -2245,22 +2448,104 @@ pub static EFFECTS: &[EffectDef] = &[
         group: Group::Film,
         space: WorkingSpace::Log,
         shader: "film_look",
-        spatial: false,
+        spatial: true,
         derived_slots: 0,
+        gates: &[
+            Gate {
+                by: "split_tone_enable",
+                when: When::True,
+                params: &[
+                    "split_tone_mode",
+                    "split_tone_amount",
+                    "split_tone_hue",
+                    "split_tone_pivot",
+                ],
+            },
+            Gate {
+                by: "vignette_enable",
+                when: When::True,
+                params: &["vignette_amount", "vignette_size"],
+            },
+            Gate {
+                by: "halation_enable",
+                when: When::True,
+                params: &[
+                    "halation_highlights_only",
+                    "halation_amount",
+                    "halation_radius",
+                    "halation_saturation",
+                    "halation_hue",
+                ],
+            },
+            Gate {
+                by: "bloom_enable",
+                when: When::True,
+                params: &["bloom_amount", "bloom_radius"],
+            },
+            Gate {
+                by: "grain_enable",
+                when: When::True,
+                params: &[
+                    "grain_preset",
+                    "grain_amount",
+                    "grain_size",
+                    "grain_softness",
+                    "grain_saturation",
+                    "image_defocus",
+                ],
+            },
+            Gate {
+                by: "gate_enable",
+                when: When::True,
+                params: &[
+                    "gate_preset",
+                    "gate_ratio_h",
+                    "gate_ratio_v",
+                    "gate_curvature",
+                    "gate_padding",
+                ],
+            },
+        ],
         params: &[
+            // Resolve's Film Look Creator, group for group.
+            //
+            // It is a *bundle*: a film response, then the five things a film print
+            // does on the way to the screen. Every one of those five is also a row
+            // of its own in this application, which was the argument for not having
+            // them here — two implementations of halation drift apart the moment one
+            // is fixed, and it is always the forgotten one that is wrong.
+            //
+            // So there is still one implementation. The gathers, the vignette
+            // falloff and the grain lattice live in common.wgsl and both callers
+            // reach for the same function. What this effect adds is Resolve's
+            // *arrangement* of them — one row that produces a coherent look,
+            // instead of five rows the user has to balance by hand.
+            //
+            // Two of Resolve's groups are missing and will stay missing. Flicker and
+            // Gate Weave describe what the frame does between exposures, and a
+            // photograph has no next frame.
             ParamDef {
-                key: "stock",
-                name: "Film Stock",
+                key: "preset",
+                name: "Presets",
                 kind: ParamKind::Choice {
-                    options: &["Colour Negative", "Consumer Colour", "Reversal"],
-                    default: "Colour Negative",
+                    options: &[
+                        "Default 65mm",
+                        "Default 35mm",
+                        "Default 16mm",
+                        "Default Super 8",
+                    ],
+                    default: "Default 65mm",
                 },
                 unit: "",
                 section: "",
             },
+            // The two halves, blended separately against the input. Colour Blend
+            // holds the response and the grade; Effects Blend holds everything
+            // spatial. Being able to keep the stock and drop the grain is most of
+            // why they are two controls and not one.
             ParamDef {
-                key: "strength",
-                name: "Strength",
+                key: "color_blend",
+                name: "Color Blend",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
@@ -2270,74 +2555,247 @@ pub static EFFECTS: &[EffectDef] = &[
                 unit: "",
                 section: "",
             },
-            // The shoulder and the toe. Film has no clipping point —
-            // density keeps rising all the way up, ever more slowly — which
-            // is why a highlight on film rolls off instead of stopping.
-            // Reproducing that is most of what makes a digital picture read
-            // as film.
             ParamDef {
-                key: "highlight_rolloff",
-                name: "Highlight Rolloff",
+                key: "effects_blend",
+                name: "Effects Blend",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 2.0,
+                    max: 1.0,
                     default: 1.0,
                     neutral: 0.0,
                 },
                 unit: "",
-                section: "Film Response",
+                section: "",
+            },
+            // A LUT is a function of one colour. Halation, bloom, vignette, grain
+            // and the gate all read *other* pixels or the pixel's position, so none
+            // of them can be baked into one. With this ticked they switch off and
+            // what remains is exactly what a 3D LUT could reproduce.
+            ParamDef {
+                key: "lut_compatible",
+                name: "3D LUT Compatible",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+                section: "",
             },
             ParamDef {
-                key: "shadow_rolloff",
-                name: "Shadow Rolloff",
+                key: "film_look_blend",
+                name: "Film Look Blend",
                 kind: ParamKind::Float {
                     min: 0.0,
-                    max: 2.0,
+                    max: 1.0,
                     default: 1.0,
                     neutral: 0.0,
                 },
                 unit: "",
-                section: "Film Response",
+                section: "Film Look",
             },
             ParamDef {
-                key: "film_contrast",
-                name: "Film Contrast",
-                kind: ParamKind::Float {
-                    min: 0.5,
-                    max: 1.5,
-                    default: 1.0,
-                    neutral: 1.0,
+                key: "core_look",
+                name: "Core Look",
+                kind: ParamKind::Choice {
+                    options: &["Cinematic", "Vintage", "Modern", "Bleach", "Neutral"],
+                    default: "Cinematic",
                 },
                 unit: "",
-                section: "Film Response",
+                section: "Film Look",
+            },
+            // How far the look is allowed to move skin. Film stocks are chosen for
+            // what they do to faces more than for anything else they do, so a
+            // control that holds skin still while the rest of the frame takes the
+            // stock is not a nicety.
+            ParamDef {
+                key: "skin_bias",
+                name: "Skin Bias",
+                kind: ParamKind::Float {
+                    min: -1.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Film Look",
             },
             ParamDef {
-                key: "film_saturation",
-                name: "Film Saturation",
+                key: "exposure",
+                name: "Exposure",
+                kind: ParamKind::Float {
+                    min: -2.0,
+                    max: 2.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "EV",
+                section: "Color Settings",
+            },
+            ParamDef {
+                key: "contrast",
+                name: "Contrast",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 2.0,
+                    default: 1.25,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Color Settings",
+            },
+            // The shoulder. Film has no clipping point — density keeps rising all
+            // the way up, ever more slowly — which is why a highlight on film rolls
+            // off instead of stopping.
+            ParamDef {
+                key: "highlights",
+                name: "Highlights",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.35,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Color Settings",
+            },
+            // And the toe, lifted: the milky black of a print that has been
+            // projected a few hundred times.
+            ParamDef {
+                key: "fade",
+                name: "Fade",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.285,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Color Settings",
+            },
+            ParamDef {
+                key: "white_balance",
+                name: "White Balance",
+                kind: ParamKind::Float {
+                    min: 2000.0,
+                    max: 20000.0,
+                    default: 6500.0,
+                    neutral: 6500.0,
+                },
+                unit: "K",
+                section: "Color Settings",
+            },
+            ParamDef {
+                key: "tint",
+                name: "Tint",
+                kind: ParamKind::Float {
+                    min: -100.0,
+                    max: 100.0,
+                    default: 10.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Color Settings",
+            },
+            // Saturation done the way a print does it — by subtracting dye rather
+            // than by pushing chroma. The difference shows in the highlights: a
+            // subtractive push darkens as it saturates, which is why film reds go
+            // deep instead of going electric.
+            ParamDef {
+                key: "subtractive_sat",
+                name: "Subtractive Sat",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 3.0,
+                    default: 1.2,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Color Settings",
+            },
+            ParamDef {
+                key: "richness",
+                name: "Richness",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 3.0,
                     default: 1.0,
                     neutral: 1.0,
                 },
                 unit: "",
-                section: "Film Response",
+                section: "Color Settings",
             },
             ParamDef {
-                key: "shadow_hue",
-                name: "Shadow Hue",
+                key: "bleach_bypass",
+                name: "Bleach Bypass",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Color Settings",
+            },
+            ParamDef {
+                key: "split_tone_enable",
+                name: "Enable Split Tone",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+                section: "Split Tone",
+            },
+            ParamDef {
+                key: "split_tone_mode",
+                name: "Split Tone Mode",
+                kind: ParamKind::Choice {
+                    options: &["Natural", "Strong", "Custom"],
+                    default: "Natural",
+                },
+                unit: "",
+                section: "Split Tone",
+            },
+            ParamDef {
+                key: "split_tone_amount",
+                name: "Amount",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Split Tone",
+            },
+            ParamDef {
+                key: "split_tone_hue",
+                name: "Hue Angle",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 360.0,
-                    default: 210.0,
-                    neutral: 210.0,
+                    default: 20.0,
+                    neutral: 20.0,
                 },
-                unit: "",
-                section: "Split Toning",
+                unit: "°",
+                section: "Split Tone",
             },
             ParamDef {
-                key: "shadow_tone",
-                name: "Shadow Tone",
+                key: "split_tone_pivot",
+                name: "Pivot",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.3,
+                    neutral: 0.3,
+                },
+                unit: "",
+                section: "Split Tone",
+            },
+            ParamDef {
+                key: "vignette_enable",
+                name: "Enable Vignette",
+                kind: ParamKind::Bool { default: true },
+                unit: "",
+                section: "Vignette",
+            },
+            ParamDef {
+                key: "vignette_amount",
+                name: "Amount",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
@@ -2345,31 +2803,259 @@ pub static EFFECTS: &[EffectDef] = &[
                     neutral: 0.0,
                 },
                 unit: "",
-                section: "Split Toning",
+                section: "Vignette",
             },
             ParamDef {
-                key: "highlight_hue",
-                name: "Highlight Hue",
-                kind: ParamKind::Float {
-                    min: 0.0,
-                    max: 360.0,
-                    default: 40.0,
-                    neutral: 40.0,
-                },
-                unit: "",
-                section: "Split Toning",
-            },
-            ParamDef {
-                key: "highlight_tone",
-                name: "Highlight Tone",
+                key: "vignette_size",
+                name: "Size",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
-                    default: 0.2,
+                    default: 0.25,
+                    neutral: 0.25,
+                },
+                unit: "",
+                section: "Vignette",
+            },
+            ParamDef {
+                key: "halation_enable",
+                name: "Enable Halation",
+                kind: ParamKind::Bool { default: true },
+                unit: "",
+                section: "Halation",
+            },
+            // Off, the whole frame contributes to the glow. On, only what is
+            // already bright does — which is what halation actually is.
+            ParamDef {
+                key: "halation_highlights_only",
+                name: "Highlights Only",
+                kind: ParamKind::Bool { default: true },
+                unit: "",
+                section: "Halation",
+            },
+            ParamDef {
+                key: "halation_amount",
+                name: "Amount",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.25,
                     neutral: 0.0,
                 },
                 unit: "",
-                section: "Split Toning",
+                section: "Halation",
+            },
+            ParamDef {
+                key: "halation_radius",
+                name: "Radius",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 10.0,
+                    default: 4.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Halation",
+            },
+            ParamDef {
+                key: "halation_saturation",
+                name: "Saturation",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Halation",
+            },
+            // The hue of the dye reflection, as a position on the wheel rather
+            // than in degrees: 0.5 is the red-orange a colour negative gives.
+            ParamDef {
+                key: "halation_hue",
+                name: "Hue",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.5,
+                },
+                unit: "",
+                section: "Halation",
+            },
+            ParamDef {
+                key: "bloom_enable",
+                name: "Enable Bloom",
+                kind: ParamKind::Bool { default: true },
+                unit: "",
+                section: "Bloom",
+            },
+            ParamDef {
+                key: "bloom_amount",
+                name: "Amount",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.25,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Bloom",
+            },
+            ParamDef {
+                key: "bloom_radius",
+                name: "Radius",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 100.0,
+                    default: 10.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Bloom",
+            },
+            ParamDef {
+                key: "grain_enable",
+                name: "Enable Grain",
+                kind: ParamKind::Bool { default: true },
+                unit: "",
+                section: "Grain",
+            },
+            ParamDef {
+                key: "grain_preset",
+                name: "Preset",
+                kind: ParamKind::Choice {
+                    options: &["16mm", "35mm", "65mm", "Custom"],
+                    default: "65mm",
+                },
+                unit: "",
+                section: "Grain",
+            },
+            ParamDef {
+                key: "grain_amount",
+                name: "Amount",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.125,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Grain",
+            },
+            ParamDef {
+                key: "grain_size",
+                name: "Size",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Grain",
+            },
+            ParamDef {
+                key: "grain_softness",
+                name: "Softness",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.1,
+                    neutral: 0.1,
+                },
+                unit: "",
+                section: "Grain",
+            },
+            ParamDef {
+                key: "grain_saturation",
+                name: "Saturation",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.3,
+                    neutral: 0.3,
+                },
+                unit: "",
+                section: "Grain",
+            },
+            // Grain sits on a picture that has already given up a little of its
+            // finest detail — that is what puts the grain *in* the image rather
+            // than on top of it. The amount is small on purpose: this is the
+            // softening of a print, not a defocus.
+            ParamDef {
+                key: "image_defocus",
+                name: "Image Defocus",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 1.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Grain",
+            },
+            ParamDef {
+                key: "gate_enable",
+                name: "Enable Film Gate",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+                section: "Film Gate",
+            },
+            ParamDef {
+                key: "gate_preset",
+                name: "Preset",
+                kind: ParamKind::Choice {
+                    options: &["35mm Silent", "35mm Academy", "16mm", "Super 8"],
+                    default: "35mm Silent",
+                },
+                unit: "",
+                section: "Film Gate",
+            },
+            ParamDef {
+                key: "gate_ratio_h",
+                name: "Ratio H",
+                kind: ParamKind::Float {
+                    min: 0.5,
+                    max: 4.0,
+                    default: 1.33,
+                    neutral: 1.33,
+                },
+                unit: "",
+                section: "Film Gate",
+            },
+            ParamDef {
+                key: "gate_ratio_v",
+                name: "Ratio V",
+                kind: ParamKind::Float {
+                    min: 0.5,
+                    max: 4.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Film Gate",
+            },
+            // A real gate is a stamped hole, not a rectangle: its corners are
+            // rounded because the punch was.
+            ParamDef {
+                key: "gate_curvature",
+                name: "Enable Curvature",
+                kind: ParamKind::Bool { default: true },
+                unit: "",
+                section: "Film Gate",
+            },
+            ParamDef {
+                key: "gate_padding",
+                name: "Padding",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Film Gate",
             },
         ],
     },
@@ -2474,6 +3160,110 @@ mod tests {
         assert_eq!(EFFECTS.len(), 23);
     }
 
+    /// A gate naming a parameter that does not exist would quietly do
+    /// nothing, and "quietly does nothing" is exactly what a gate is for —
+    /// so the typo would look like the feature working.
+    #[test]
+    fn every_gate_names_parameters_that_exist() {
+        for e in EFFECTS {
+            for gate in e.gates {
+                assert!(
+                    e.param(gate.by).is_some(),
+                    "{}: gate is driven by {}, which is not a parameter",
+                    e.key,
+                    gate.by
+                );
+                for key in gate.params {
+                    assert!(
+                        e.param(key).is_some(),
+                        "{}: gate guards {key}, which is not a parameter",
+                        e.key
+                    );
+                }
+            }
+        }
+    }
+
+    /// And the controlling parameter has to be the kind the condition can
+    /// read. `When::True` against a slider is a gate that never closes.
+    #[test]
+    fn every_gate_reads_a_control_of_the_kind_it_expects() {
+        for e in EFFECTS {
+            for gate in e.gates {
+                let kind = e.param(gate.by).unwrap().kind;
+                let ok = match gate.when {
+                    When::True => matches!(kind, ParamKind::Bool { .. }),
+                    When::Positive => matches!(kind, ParamKind::Float { .. }),
+                    When::Is(option) => match kind {
+                        ParamKind::Choice { options, .. } => options.contains(&option),
+                        _ => false,
+                    },
+                };
+                assert!(
+                    ok,
+                    "{}: {:?} cannot read {} ({:?})",
+                    e.key, gate.when, gate.by, kind
+                );
+            }
+        }
+    }
+
+    /// No parameter may be guarded twice. `is_active` stops at the first gate
+    /// that names it, so a second one would silently never apply.
+    #[test]
+    fn no_parameter_is_guarded_by_two_gates() {
+        for e in EFFECTS {
+            let mut seen: Vec<&str> = Vec::new();
+            for gate in e.gates {
+                for key in gate.params {
+                    assert!(!seen.contains(key), "{}: {key} is guarded twice", e.key);
+                    seen.push(key);
+                }
+            }
+        }
+    }
+
+    /// The behaviour itself, on the case the screenshots showed: Halation's
+    /// Basic Grain sliders are dead until Append Grain Internally is ticked.
+    #[test]
+    fn a_gate_opens_when_its_switch_is_thrown() {
+        let e = by_key("halation").unwrap();
+        let mut p = e.default_params();
+        assert!(
+            !e.is_active("grain_strength", &p),
+            "grain starts switched off"
+        );
+        assert!(
+            e.is_active("strength", &p),
+            "an ungated control is always live"
+        );
+
+        p.set("append_grain", pe_core::ParamValue::Bool(true));
+        assert!(e.is_active("grain_strength", &p));
+        assert!(e.is_active("grain_size", &p));
+    }
+
+    /// And on a slider rather than a checkbox: the Secondary Glow's shape
+    /// controls mean nothing while its Strength is zero.
+    #[test]
+    fn an_amount_of_nothing_gates_the_controls_that_shape_it() {
+        let e = by_key("halation").unwrap();
+        let mut p = e.default_params();
+        assert!(!e.is_active("secondary_spread", &p));
+        p.set("secondary_strength", pe_core::ParamValue::Float(0.4));
+        assert!(e.is_active("secondary_spread", &p));
+    }
+
+    /// And on a dropdown: Split Tone's custom hues only exist in Custom.
+    #[test]
+    fn a_mode_gates_the_controls_that_belong_to_it() {
+        let e = by_key("split_tone").unwrap();
+        let mut p = e.default_params();
+        assert!(!e.is_active("shadow_hue", &p));
+        p.set("mode", pe_core::ParamValue::Choice("Custom".into()));
+        assert!(e.is_active("shadow_hue", &p));
+    }
+
     #[test]
     fn keys_are_unique() {
         let keys: HashSet<_> = EFFECTS.iter().map(|e| e.key).collect();
@@ -2566,6 +3356,10 @@ mod tests {
                     | "radial_blur"
                     | "zoom_blur"
                     | "noise_reduction"
+                    // Film Look Creator carries Resolve's halation, bloom,
+                    // vignette and grain sections, and every one of those
+                    // reads its neighbours.
+                    | "film_look"
             );
             assert_eq!(e.spatial, expected, "{}", e.key);
         }
@@ -2726,8 +3520,8 @@ mod tests {
         }
         match e.param("mode").unwrap().kind {
             ParamKind::Choice { options, default } => {
-                assert_eq!(options, ["natural", "strong", "custom"]);
-                assert_eq!(default, "natural");
+                assert_eq!(options, ["Natural", "Strong", "Custom"]);
+                assert_eq!(default, "Natural");
             }
             _ => panic!("mode should be a choice"),
         }

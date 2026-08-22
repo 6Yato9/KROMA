@@ -39,11 +39,16 @@ Creator. Defaults read directly off the UI.
 | Pivot | slider | 0.300 | 0…1 | confirmed |
 | Hue Angle | slider | 20.0 | 0…360 | confirmed |
 | Protect Neutrals | checkbox | off | — | confirmed |
-| Minimum Saturation | slider | 0.0 | 0…1 | inferred |
-| Maximum Saturation | slider | 1.0 | 0…1 | inferred |
+
+Protect Neutrals is a bare checkbox in Resolve — no saturation band under it.
+We had exposed Minimum and Maximum Saturation as sliders; both are gone, and
+the band is fixed in the shader. They were a second way of asking the question
+the checkbox already answers.
 
 Custom mode additionally exposes Shadow Strength/Hue and Highlight
-Strength/Hue — four values replacing the single Hue Angle.
+Strength/Hue — four values replacing the single Hue Angle. Not visible in any
+screenshot we have, since a screenshot of Natural cannot show them; kept, and
+dimmed until Custom is chosen.
 
 The modes, per the manual and a colourist writeup: **Natural** is "designed to
 mimic the effect of film" and keeps the brightest point white, which is why
@@ -55,8 +60,7 @@ Pivot is "the point where highlights and shadows diverge". At its extremes of
 
 ---
 
-**Implemented:** Split Tone, Dehaze, Bloom, Film Damage, Film Grain, Halation,
-Vignette. Film Look Creator is a map for later, not a target.
+**Implemented:** all of them, Film Look Creator included.
 
 ## Dehaze
 
@@ -126,7 +130,25 @@ one slider sliding a peak around.
 | Dye Layer Reflections | Strength, Gamma, Saturation, Spread | confirmed |
 | Dye Layer Reflections | Fine Tune Relative Spread (R/G/B) | confirmed |
 | Secondary Glow | Strength, Gamma, Spread, Filter | confirmed |
-| Basic Grain | Strength, Size | confirmed |
+| Basic Grain | Append Grain Internally | confirmed |
+| Basic Grain | Strength 0.250, Size 0.500, Softness 0.100, Saturation 0.150 | confirmed |
+| Global Adjustments | View Glow Alone | confirmed |
+| Global Adjustments | Reduce Highlights 0.500, Aspect Ratio 1.000, Detail Loss 0.000 | confirmed |
+
+Values read off the panel: Threshold **0.200**, Normalization **1.000**, Film
+Saturation Level **1.00**; Dye Layer Reflections Strength **0.500**, Gamma
+**1.350**, Saturation **1.000**, Spread **0.333**; Secondary Glow Strength
+**0.000**, Gamma **1.350**, Spread **0.600**.
+
+Two ranges are inferred from handle position rather than read: Film Saturation
+Level's maximum (the handle sits far enough left to suggest something wider
+than 10, but a saturation multiplier past 10 has no use) and Aspect Ratio's.
+
+**There is no Hue control, and Resolve is right not to have one.** Ours had
+one; it is gone. The red-orange is not a tint anybody chose — it is what light
+coming back through the dye layers is. It is a constant now, and Saturation
+says how much of it reaches the picture, which is exactly the control Resolve
+gives.
 
 Structurally more interesting than our M1 version: isolation is a **band**
 (Threshold to Normalization) rather than a single threshold, and the glow has
@@ -210,3 +232,76 @@ Everything else does.
 - [DaVinci Resolve 20.1 New Features Guide](https://documents.blackmagicdesign.com/SupportNotes/DaVinci_Resolve_20.1_New_Features_Guide.pdf)
 - Split Tone Natural/Strong behaviour and the 0.3 pivot: [Ben Chan, colourist](https://www.threads.com/@benchan_colorist/post/DN-aS8vk2E-/)
 - Halation Threshold/Normalization usage: [EasyEdit](https://easyedit.pro/blog/halation-effect-in-da-vinci-resolve-18-free-and-storage-version-tips)
+
+---
+
+## Film Look Creator
+
+A bundle: a film response, then the five things a print does to the light on
+the way to the screen. Every one of those five is also a row of its own here,
+which was the argument against having them twice — so they are not written
+twice. The gathers, the vignette falloff and the grain lattice live in
+`shaders/common.wgsl` and both callers reach for the same function.
+
+All values below read off the panel.
+
+| Group | Parameter | Default | Range | Status |
+|---|---|---|---|---|
+| Main | Presets | Default 65mm | — | confirmed |
+| Main | Color Blend | 1.000 | 0…1 | confirmed |
+| Main | Effects Blend | 1.000 | 0…1 | confirmed |
+| Main | 3D LUT Compatible | off | — | confirmed |
+| Film Look | Film Look Blend | 1.000 | 0…1 | confirmed |
+| Film Look | Core Look | Cinematic | — | confirmed |
+| Film Look | Skin Bias | 0.000 | −1…1 | inferred (range) |
+| Color Settings | Exposure | 0.00 | −2…2 | inferred (range) |
+| Color Settings | Contrast | 1.250 | 0…2 | confirmed |
+| Color Settings | Highlights | 0.350 | 0…1 | confirmed |
+| Color Settings | Fade | 0.285 | 0…1 | confirmed |
+| Color Settings | White Balance | 6500 | 2000…20000 | inferred (range) |
+| Color Settings | Tint | 10.0 | −100…100 | inferred (range) |
+| Color Settings | Subtractive Sat | 1.200 | 0…3 | confirmed |
+| Color Settings | Richness | 1.000 | 0…3 | confirmed |
+| Color Settings | Bleach Bypass | 0.000 | 0…1 | confirmed |
+| Split Tone | Enable / Mode / Amount / Hue Angle / Pivot | off, Natural, 0.000, 20.0, 0.300 | | confirmed |
+| Vignette | Enable / Amount / Size | on, 0.250, 0.250 | 0…1 | confirmed |
+| Halation | Enable / Highlights Only | on, on | — | confirmed |
+| Halation | Amount / Radius / Saturation / Hue | 0.250, 4.00, 1.000, 0.500 | 0…1, 0…10, 0…1, 0…1 | confirmed |
+| Bloom | Enable / Amount / Radius | on, 0.250, 10.0 | 0…1, 0…100 | confirmed |
+| Grain | Enable / Preset | on, 65mm | — | confirmed |
+| Grain | Amount / Size / Softness / Saturation / Image Defocus | 0.125, 0.000, 0.100, 0.300, 1.000 | 0…1 | confirmed |
+| Film Gate | Enable / Preset | off, 35mm Silent | — | confirmed |
+| Film Gate | Ratio H / V, Enable Curvature, Padding | 1.33 / 1.00, on, 0.000 | | confirmed |
+
+**Deliberately absent.** Flicker and Gate Weave describe what a frame does
+between exposures, and a photograph has no next frame — the same reasoning
+that dropped Film Damage's temporal controls. Global Blend is the row's own
+Blend, and Use Alpha needs an alpha channel we do not carry. Color Space
+Overrides is the renderer's decision under the two-space rule.
+
+**Presets does not overwrite your sliders.** In Resolve it loads a whole
+configuration; here it names the *format*, and the format scales the spatial
+half — a Super 8 frame is about six times smaller than 65mm, so by the time it
+reaches the same screen its grain is six times bigger and its halation six
+times wider. That is what actually separates the formats, and it leaves the
+numbers you set as the numbers you set.
+
+**3D LUT Compatible is a real switch, not a label.** A LUT is a function of one
+colour; halation, bloom, vignette, grain and the gate all read other pixels or
+the pixel's own position. With it ticked they stop, and what remains is exactly
+what a 3D LUT could reproduce. The test suite uses it to isolate the colour
+half, which is the best evidence it works.
+
+## Gating
+
+Resolve dims controls that cannot do anything: the Basic Grain sliders inside
+Halation until Append Grain Internally is ticked, Secondary Glow's Gamma and
+Spread until its Strength leaves zero, every Split Tone control inside Film
+Look Creator until it is enabled, every Film Gate control until it is.
+
+Worth copying, and not only for the look. A panel where a third of the controls
+silently do nothing teaches the user wrong things about the effect — they move
+a slider, see no change, and conclude the slider is broken rather than switched
+off. `EffectDef::gates` carries these, and the inspector draws a gated row
+dimmed and dead rather than hiding it, because a control that vanishes takes
+the knowledge that it exists with it.
