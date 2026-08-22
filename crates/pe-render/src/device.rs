@@ -87,7 +87,17 @@ impl GpuContext {
     /// for bug reports.
     pub fn describe(&self) -> String {
         let info = self.adapter.get_info();
-        format!("{} ({:?}, {:?})", info.name, info.device_type, info.backend)
+        // The texture limit is in here because it is the one number that
+        // decides whether a given photograph will open at all, and it varies
+        // by machine and by backend. "It refused my panorama" is unanswerable
+        // without it.
+        format!(
+            "{} ({:?}, {:?}, up to {}px)",
+            info.name,
+            info.device_type,
+            info.backend,
+            self.device.limits().max_texture_dimension_2d
+        )
     }
 
     /// Whether the working texture format can be filtered and rendered to.

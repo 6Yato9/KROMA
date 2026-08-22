@@ -178,7 +178,7 @@ impl Preview {
         gpu: GpuContext,
         egui_renderer: Arc<RwLock<egui_wgpu::Renderer>>,
         image: &DecodedImage,
-    ) -> Self {
+    ) -> Result<Self, RenderError> {
         let source = ImageTexture::upload_rgba8(
             &gpu.device,
             &gpu.queue,
@@ -186,8 +186,7 @@ impl Preview {
             image.height,
             &image.pixels,
             "source",
-        )
-        .expect("source upload");
+        )?;
 
         let to_working = TransformPass::new(&gpu.device, pe_render::WORKING_FORMAT);
         let to_display = TransformPass::new(&gpu.device, pe_render::SOURCE_FORMAT);
@@ -202,7 +201,7 @@ impl Preview {
             "histogram",
         );
 
-        Self {
+        Ok(Self {
             gpu,
             egui_renderer,
             renderer,
@@ -223,7 +222,7 @@ impl Preview {
             scope_geometry: None,
             scopes: None,
             generation: 0,
-        }
+        })
     }
 
     /// Every scope, measured on the whole photograph as currently graded.

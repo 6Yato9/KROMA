@@ -108,6 +108,18 @@ impl ImageTexture {
         pixels: &[u8],
         label: &str,
     ) -> Result<Self, RenderError> {
+        // Asked here rather than left to wgpu. A texture past the device's
+        // limit is a *validation* error there, and wgpu's default answer to one
+        // of those is to take the process down — so an oversized photograph
+        // closes the window instead of being refused. Being handed a photograph
+        // bigger than the GPU can hold is an ordinary thing to happen to a photo
+        // editor, not a bug, and it has to come back as a sentence somebody can
+        // read.
+        let max = device.limits().max_texture_dimension_2d;
+        if width > max || height > max {
+            return Err(RenderError::ImageTooLarge { width, height, max });
+        }
+
         let expected = width as usize * height as usize * 4;
         if pixels.len() != expected {
             return Err(RenderError::PixelCountMismatch {

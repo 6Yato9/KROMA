@@ -134,6 +134,10 @@ pub enum RenderError {
     Surface(String),
     #[error("could not read a texture back to the CPU: {0}")]
     Readback(String),
+    #[error(
+        "this photograph is {width}x{height}, and this GPU will not hold a texture          larger than {max} on a side"
+    )]
+    ImageTooLarge { width: u32, height: u32, max: u32 },
 }
 
 /// Hash the crop and straighten settings for [`RenderContext::geometry`].

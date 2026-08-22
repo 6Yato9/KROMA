@@ -73,8 +73,33 @@ fn main() -> eframe::Result {
         }
     };
 
+    // eframe asks the GPU for a texture limit of 8192 on a side, which is a 4K
+    // display with room over and a camera from about 2015. It is not a
+    // photograph: a 45-megapixel frame is 8256 across and a stitched panorama
+    // is several times that. Past the limit wgpu refuses the texture as a
+    // validation error, and its default answer to one of those is to end the
+    // process — so the window used to vanish rather than the photograph being
+    // turned away. Desktop GPUs report 16384, so ask for what is really there.
+    let mut wgpu_options = egui_wgpu::WgpuConfiguration::default();
+    if let egui_wgpu::WgpuSetup::CreateNew(setup) = &mut wgpu_options.wgpu_setup {
+        let eframes = setup.device_descriptor.clone();
+        setup.device_descriptor = std::sync::Arc::new(move |adapter| {
+            // Everything else eframe decided stands. Only the one limit that
+            // is about pictures rather than about screens is ours to raise,
+            // and asking for the adapter's own figure can never be refused.
+            let base = eframes(adapter);
+            let mut limits = base.required_limits.clone();
+            limits.max_texture_dimension_2d = adapter.limits().max_texture_dimension_2d;
+            wgpu::DeviceDescriptor {
+                required_limits: limits,
+                ..base
+            }
+        });
+    }
+
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
+        wgpu_options,
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1500.0, 950.0])
             .with_min_inner_size([900.0, 600.0])
@@ -178,15 +203,26 @@ impl App {
             None => pe_effects::new_document("<test chart>"),
         };
 
-        let (preview, gpu_name) = match cc.wgpu_render_state.as_ref() {
+        let (preview, gpu_name, trouble) = match cc.wgpu_render_state.as_ref() {
             Some(rs) => {
                 let gpu =
                     GpuContext::from_parts(rs.adapter.clone(), rs.device.clone(), rs.queue.clone());
                 let name = gpu.describe();
-                (Some(Preview::new(gpu, rs.renderer.clone(), &image)), name)
+                match Preview::new(gpu, rs.renderer.clone(), &image) {
+                    Ok(preview) => (Some(preview), name, None),
+                    // The window still opens. There is no picture in it, but
+                    // there is a sentence saying why, which is a great deal
+                    // better than a process that went away before it drew its
+                    // first frame.
+                    Err(e) => (None, name, Some(e.to_string())),
+                }
             }
-            None => (None, "no wgpu render state".to_string()),
+            None => (None, "no wgpu render state".to_string(), None),
         };
+        let mut status = Status::default();
+        if let Some(trouble) = trouble {
+            status.problem(trouble);
+        }
 
         // Whatever the window opened with is the set, so the filmstrip and
         // the batch export have something to work with from the first frame.
@@ -210,7 +246,7 @@ impl App {
             gpu_name,
             bypass_all: false,
             last_passes: 0,
-            status: Status::default(),
+            status,
             titled: false,
             view: View::default(),
             library,

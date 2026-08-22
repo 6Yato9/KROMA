@@ -131,3 +131,48 @@ fn the_working_texture_really_is_16_bit_float() {
 
     assert_eq!(working.texture.format(), wgpu::TextureFormat::Rgba16Float);
 }
+
+/// A photograph bigger than the GPU will hold has to come back as a sentence,
+/// not as a dead process.
+///
+/// wgpu answers an oversized texture with a validation error, and its default
+/// handler for one of those ends the program — so before this check, opening a
+/// panorama closed the window. Cameras have been past 8192 pixels on a side for
+/// years, so this is an ordinary thing to be handed, not a corrupt file.
+///
+/// The allocation is deliberately one row, not a real image: the point is that
+/// the refusal happens on the *dimensions*, before anything the size of a
+/// panorama is asked for.
+#[test]
+fn an_oversized_photograph_is_refused_rather_than_fatal() {
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let max = gpu.device.limits().max_texture_dimension_2d;
+    let too_wide = max + 1;
+
+    let Err(err) = ImageTexture::upload_rgba8(
+        &gpu.device,
+        &gpu.queue,
+        too_wide,
+        1,
+        &vec![0u8; too_wide as usize * 4],
+        "oversized",
+    ) else {
+        panic!("a texture past the device limit was accepted");
+    };
+
+    match &err {
+        pe_render::RenderError::ImageTooLarge { width, max: m, .. } => {
+            assert_eq!(*width, too_wide);
+            assert_eq!(*m, max);
+        }
+        other => panic!("wrong refusal: {other}"),
+    }
+
+    // And the message has to name the numbers, because it is the only thing
+    // the person holding the panorama is going to see.
+    let text = err.to_string();
+    assert!(text.contains(&too_wide.to_string()), "unhelpful: {text}");
+    assert!(text.contains(&max.to_string()), "unhelpful: {text}");
+}
