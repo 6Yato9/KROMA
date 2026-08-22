@@ -333,9 +333,9 @@ fn tile(
             rect,
             4.0,
             if hot {
-                egui::Color32::from_gray(52)
+                crate::theme::colour::CONTROL
             } else {
-                egui::Color32::from_gray(32)
+                crate::theme::colour::PANEL
             },
         );
         painter.rect_stroke(
@@ -346,7 +346,7 @@ fn tile(
                 if hot {
                     resolve::colour::ACCENT
                 } else {
-                    egui::Color32::from_gray(58)
+                    crate::theme::colour::CONTROL_HOT
                 },
             ),
             egui::StrokeKind::Inside,
@@ -606,6 +606,15 @@ fn param_ui(
         .cloned();
     let coalesce = Some(format!("{}.{}", id.0, def.key));
     let param_id = row_id.with(def.key);
+    // Which effect this row is, so a parameter can be given the track that
+    // matches its axis. Looked up rather than passed down because every
+    // caller of this function already had to find the row to get here.
+    let effect = history
+        .document()
+        .stack
+        .get(id)
+        .map(|r| r.effect.clone())
+        .unwrap_or_default();
 
     match def.kind {
         ParamKind::Float {
@@ -623,8 +632,15 @@ fn param_ui(
             } else {
                 format!("{} ({})", def.name, def.unit)
             };
-            let edit =
-                resolve::slider_row(ui, param_id, &name, &mut v, min..=max, decimals(min, max));
+            let edit = resolve::slider_row_styled(
+                ui,
+                param_id,
+                &name,
+                &mut v,
+                min..=max,
+                decimals(min, max),
+                resolve::TrackStyle::of(&effect, def.key, min, max, neutral),
+            );
             if edit.changed {
                 set(history, id, def, ParamValue::Float(v), coalesce.clone());
             }
@@ -692,25 +708,33 @@ fn param_ui(
             resolve::section(ui, param_id, def.name, |ui| {
                 let mut edit = Edit::default();
                 for (i, label) in ["Red", "Green", "Blue"].iter().enumerate() {
-                    let e = resolve::slider_row(
+                    let e = resolve::slider_row_styled(
                         ui,
                         param_id.with(i),
                         label,
                         &mut w.rgb[i],
                         -0.5..=0.5,
                         3,
+                        resolve::TrackStyle {
+                            ramp: crate::theme::CHANNEL_AXES[i],
+                            neutral: Some(0.5),
+                        },
                     );
                     edit.changed |= e.changed;
                     edit.released |= e.released;
                     edit.reset |= e.reset;
                 }
-                let e = resolve::slider_row(
+                let e = resolve::slider_row_styled(
                     ui,
                     param_id.with("master"),
                     "Master",
                     &mut w.master,
                     -0.5..=0.5,
                     3,
+                    resolve::TrackStyle {
+                        ramp: crate::theme::Ramp::Luma,
+                        neutral: Some(0.5),
+                    },
                 );
                 edit.changed |= e.changed;
                 edit.released |= e.released;

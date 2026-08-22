@@ -1,16 +1,18 @@
-# Photo Editor
+# KROMA
 
 DaVinci's colour page, rebuilt for photographs, with a stacked reorderable
-inspector instead of a node graph.
+inspector instead of a node graph. Free and open source, MIT or Apache-2.0.
 
-**Status: M1 complete, plus the Resolve film effects.** Thirteen effects run on
-the GPU, the stack is reorderable with per-row Blend, blend mode and enable, and
-export writes a full-resolution JPEG. Scopes, wheels and curve editing are M2.
+**Status: the colour page works.** Twenty-three effects run on the GPU, ten of
+them pinned as fixed panels the way Lightroom lays them out, the rest a
+reorderable stack with per-row blend, blend mode and enable. Curves — four tone
+and six secondaries — wheels, scopes, crop and straighten, a filmstrip, batch
+export. Isolation (qualifier, power windows) is next.
 
-Effect parameters follow Resolve's own — names, ranges and defaults researched
-from the Resolve 20 manuals and recorded in
+Effect parameters follow Resolve's own — names, ranges and defaults read off
+Resolve's inspector and recorded in
 [docs/resolve-parameters.md](docs/resolve-parameters.md), which marks each value
-confirmed or inferred.
+confirmed against a screenshot or inferred.
 
 ## Running it
 
@@ -119,3 +121,11 @@ small card.
 
 **Halation is a single-pass approximation** at M1. A separable multi-pass blur
 is M2; the current version shows its seams at large radii.
+
+## Licence
+
+MIT or Apache-2.0, at your option. `LICENSE-MIT` is in the repository;
+`LICENSE-APACHE` should hold the official text from
+<https://www.apache.org/licenses/LICENSE-2.0.txt> — dropped in verbatim rather
+than retyped, because a licence that differs from the canonical text by a word
+is a licence nobody can rely on.

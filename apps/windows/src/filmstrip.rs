@@ -100,7 +100,7 @@ fn draw(
     hovered: bool,
 ) {
     let painter = ui.painter_at(cell);
-    painter.rect_filled(cell, 3.0, egui::Color32::from_gray(20));
+    painter.rect_filled(cell, 3.0, crate::theme::colour::WELL);
 
     match (&entry.thumb, entry.failed) {
         (Some(texture), _) => {

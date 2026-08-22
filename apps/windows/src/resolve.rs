@@ -32,20 +32,40 @@ const ROW_H: f32 = 22.0;
 /// column gives way instead.
 const MIN_TRACK: f32 = 40.0;
 
-pub mod colour {
-    use egui::Color32;
+use crate::theme::Ramp;
+pub use crate::theme::colour;
 
-    /// The accent. Resolve titles the open effect in it.
-    pub const ACCENT: Color32 = Color32::from_rgb(224, 106, 90);
-    pub const TITLE: Color32 = Color32::from_rgb(228, 228, 228);
-    pub const LABEL: Color32 = Color32::from_rgb(176, 176, 176);
-    pub const TRACK: Color32 = Color32::from_rgb(74, 74, 74);
-    pub const HANDLE: Color32 = Color32::from_rgb(160, 160, 160);
-    pub const HANDLE_HOT: Color32 = Color32::from_rgb(225, 225, 225);
-    pub const BOX_FILL: Color32 = Color32::from_rgb(20, 20, 20);
-    pub const BOX_EDGE: Color32 = Color32::from_rgb(70, 70, 70);
-    pub const RULE: Color32 = Color32::from_rgb(58, 58, 58);
-    pub const ICON: Color32 = Color32::from_rgb(150, 150, 150);
+/// How a track is drawn.
+///
+/// Two facts a plain grey bar cannot carry: what the parameter's axis *is*,
+/// and where on that axis it does nothing. Both are worth a few lines of
+/// painting — the second especially, since "put it back where it was" is the
+/// most common thing anyone wants from a slider they have pushed too far.
+#[derive(Clone, Copy, Default)]
+pub struct TrackStyle {
+    pub ramp: Ramp,
+    /// Where neutral sits, as a fraction along the track. `None` when the
+    /// parameter's neutral is its minimum — an exposure slider that starts at
+    /// zero needs no mark, because the left end already is one.
+    pub neutral: Option<f32>,
+}
+
+impl TrackStyle {
+    /// Work the style out from the parameter's own definition.
+    pub fn of(effect: &str, key: &str, min: f32, max: f32, neutral: f32) -> Self {
+        let span = max - min;
+        let t = if span.abs() < 1e-9 {
+            0.0
+        } else {
+            (neutral - min) / span
+        };
+        Self {
+            ramp: crate::theme::ramp_for(effect, key),
+            // Only when it is somewhere you could miss. At either end the
+            // track's own end is already the mark.
+            neutral: (0.04..0.96).contains(&t).then_some(t),
+        }
+    }
 }
 
 /// What a parameter row reports back.
@@ -133,37 +153,126 @@ fn reset_button(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id) -> bool {
     response.on_hover_text("Reset").clicked()
 }
 
-/// Draw the track and handle, and turn a drag on it into a value.
-fn track(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, t: f32) -> (Option<f32>, bool) {
+/// Half the pointer's width, which is also how far the track is inset at
+/// each end so the pointer never hangs off its own track.
+const HANDLE_HW: f32 = 5.0;
+
+/// The pointer that marks the value.
+///
+/// A house shape with its point up, not a circle. A circle marks a position;
+/// a point marks a *place on a scale*, which is what a slider has. On a
+/// coloured track that difference is the whole game — a disc covers the part
+/// of the gradient you are trying to read, and its widest part sits exactly
+/// where you want to see the colour underneath. The point is one pixel wide
+/// where it meets the track, so it can stand on a hue ramp without hiding the
+/// hue it is pointing at.
+///
+/// The dark outline is not decoration: the fill is a light grey, and against
+/// the pale end of a temperature or luma ramp it would otherwise vanish.
+fn pointer(painter: &egui::Painter, x: f32, y: f32, hot: bool) {
+    let hw = HANDLE_HW;
+    let fill = if hot {
+        colour::HANDLE_HOT
+    } else {
+        colour::HANDLE
+    };
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            egui::pos2(x, y - 7.0),
+            egui::pos2(x + hw, y - 1.5),
+            egui::pos2(x + hw, y + 5.5),
+            egui::pos2(x - hw, y + 5.5),
+            egui::pos2(x - hw, y - 1.5),
+        ],
+        fill,
+        egui::Stroke::new(1.0_f32, colour::HANDLE_EDGE),
+    ));
+}
+
+/// A gradient, drawn as a strip of coloured quads.
+///
+/// egui has no gradient brush and does not need one: a mesh with a colour per
+/// vertex is interpolated by the GPU for free. Twenty-four steps is past the
+/// point where more of them change the picture.
+fn gradient(painter: &egui::Painter, rect: egui::Rect, ramp: Ramp) {
+    const STEPS: usize = 24;
+    let mut mesh = egui::Mesh::default();
+    for i in 0..=STEPS {
+        let t = i as f32 / STEPS as f32;
+        let x = rect.min.x + t * rect.width();
+        let c = ramp.at(t);
+        mesh.colored_vertex(egui::pos2(x, rect.min.y), c);
+        mesh.colored_vertex(egui::pos2(x, rect.max.y), c);
+        if i > 0 {
+            let b = (i as u32 - 1) * 2;
+            mesh.add_triangle(b, b + 1, b + 2);
+            mesh.add_triangle(b + 1, b + 2, b + 3);
+        }
+    }
+    painter.add(egui::Shape::mesh(mesh));
+}
+
+/// Draw the track and pointer, and turn a drag on it into a value.
+fn track(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    id: egui::Id,
+    t: f32,
+    style: TrackStyle,
+) -> (Option<f32>, bool) {
     let response = ui.interact(rect, id, egui::Sense::click_and_drag());
     let mut moved = None;
     if (response.dragged() || response.clicked())
         && let Some(pos) = response.interact_pointer_pos()
     {
-        moved = Some(((pos.x - rect.min.x) / rect.width().max(1e-4)).clamp(0.0, 1.0));
+        // Measured against the inset span, so clicking where the pointer
+        // *looks* like it should go puts it there. Without this the last few
+        // points at each end cannot be reached by a click.
+        let inner = (rect.width() - HANDLE_HW * 2.0).max(1e-4);
+        moved = Some(((pos.x - rect.min.x - HANDLE_HW) / inner).clamp(0.0, 1.0));
     }
 
     if ui.is_rect_visible(rect) {
         let y = rect.center().y;
         let painter = ui.painter();
-        painter.line_segment(
-            [egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)],
-            egui::Stroke::new(2.0_f32, colour::TRACK),
-        );
-        // Inset by the handle's radius so it never hangs off the end of its
-        // own track — which is what makes a slider look loose.
-        let r = 5.0_f32;
-        let x = rect.min.x + r + t.clamp(0.0, 1.0) * (rect.width() - r * 2.0).max(0.0);
-        let hot = response.hovered() || response.dragged();
-        painter.circle_filled(
-            egui::pos2(x, y),
-            if hot { r + 0.6 } else { r },
-            if hot {
-                colour::HANDLE_HOT
-            } else {
-                colour::HANDLE
-            },
-        );
+        let span = (rect.width() - HANDLE_HW * 2.0).max(0.0);
+        let at = |v: f32| rect.min.x + HANDLE_HW + v.clamp(0.0, 1.0) * span;
+        let bar = |half: f32| {
+            egui::Rect::from_min_max(
+                egui::pos2(rect.min.x, y - half),
+                egui::pos2(rect.max.x, y + half),
+            )
+        };
+
+        if style.ramp.is_plain() {
+            painter.rect_filled(bar(2.0), 2.0, colour::TRACK);
+            // How far it has been pushed, and from where. On a slider whose
+            // neutral is the left end this is the ordinary "filled up to
+            // here"; on a bipolar one it grows out of the middle, which is
+            // the only drawing that gives you the sign at a glance.
+            let from = style.neutral.unwrap_or(0.0);
+            if (t - from).abs() > 0.002 {
+                let (a, b) = (at(from.min(t)), at(from.max(t)));
+                painter.rect_filled(
+                    egui::Rect::from_min_max(egui::pos2(a, y - 2.0), egui::pos2(b, y + 2.0)),
+                    2.0,
+                    colour::TRACK_FILL,
+                );
+            }
+        } else {
+            gradient(painter, bar(2.5), style.ramp);
+        }
+
+        // The neutral mark: where the parameter does nothing.
+        if let Some(n) = style.neutral {
+            let x = at(n);
+            painter.line_segment(
+                [egui::pos2(x, y - 4.5), egui::pos2(x, y + 4.5)],
+                egui::Stroke::new(1.0_f32, colour::HANDLE_EDGE),
+            );
+        }
+
+        pointer(painter, at(t), y, response.hovered() || response.dragged());
     }
     (moved, response.drag_stopped())
 }
@@ -185,6 +294,10 @@ fn value_box(
     speed: f32,
     range: std::ops::RangeInclusive<f32>,
 ) -> bool {
+    // Shorter than the row it sits in. A field that fills the row reads as a
+    // button, and thirty of them stacked up is a wall of boxes rather than a
+    // column of numbers.
+    let rect = egui::Rect::from_center_size(rect.center(), egui::vec2(rect.width(), 17.0));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
     let visuals = child.visuals_mut();
     visuals.widgets.inactive.weak_bg_fill = colour::BOX_FILL;
@@ -218,6 +331,20 @@ pub fn slider_row(
     range: std::ops::RangeInclusive<f32>,
     decimals: usize,
 ) -> Edit {
+    slider_row_styled(ui, id, label, value, range, decimals, TrackStyle::default())
+}
+
+/// The same row, with the track told what it is measuring.
+#[allow(clippy::too_many_arguments)]
+pub fn slider_row_styled(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    label: &str,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    decimals: usize,
+    style: TrackStyle,
+) -> Edit {
     let width = ui.available_width();
     let (label_rect, track_rect, value_rect, reset_rect) = columns(ui, width);
     label_text(ui, label_rect, label);
@@ -226,7 +353,13 @@ pub fn slider_row(
     let span = (hi - lo).max(1e-6);
     let mut out = Edit::default();
 
-    let (moved, released) = track(ui, track_rect, id.with("track"), (*value - lo) / span);
+    let (moved, released) = track(
+        ui,
+        track_rect,
+        id.with("track"),
+        (*value - lo) / span,
+        style,
+    );
     if let Some(t) = moved {
         let next = lo + t * span;
         if (next - *value).abs() > 1e-9 {
@@ -435,9 +568,9 @@ pub fn effect_header(
             pill,
             7.0,
             if enabled {
-                egui::Color32::from_rgb(70, 26, 24)
+                colour::ACCENT_DIM
             } else {
-                egui::Color32::from_gray(34)
+                colour::WELL
             },
         );
         painter.rect_stroke(
@@ -458,9 +591,9 @@ pub fn effect_header(
             egui::pos2(x, pill.center().y),
             5.0,
             if enabled {
-                egui::Color32::from_rgb(230, 70, 58)
+                colour::ACCENT
             } else {
-                egui::Color32::from_gray(120)
+                colour::ICON
             },
         );
     }

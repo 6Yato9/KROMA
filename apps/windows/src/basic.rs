@@ -54,13 +54,14 @@ pub fn slider(
     } else {
         format!("{label} ({})", def.unit)
     };
-    let edit = crate::resolve::slider_row(
+    let edit = crate::resolve::slider_row_styled(
         ui,
         ui.id().with((effect, key)),
         &title,
         &mut v,
         min..=max,
         decimals(min, max),
+        crate::resolve::TrackStyle::of(effect, key, min, max, neutral),
     );
     if edit.changed {
         let coalesce = Some(format!("{effect}.{key}"));

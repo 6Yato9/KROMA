@@ -392,8 +392,10 @@ pub fn editor(ui: &mut egui::Ui, history: &mut History, scopes: Option<&Scopes>)
         d.insert_temp(mode_id, mode);
         d.insert_temp(parametric_id, parametric_mode);
     });
+    // Just the mode. The panel it sits in is already titled "Curves", and
+    // repeating that here read as two headings for one thing.
     ui.label(
-        egui::RichText::new(mode.title())
+        egui::RichText::new(mode.title().trim_start_matches("Curves - "))
             .small()
             .color(resolve::colour::TITLE),
     );
@@ -427,9 +429,9 @@ pub fn editor(ui: &mut egui::Ui, history: &mut History, scopes: Option<&Scopes>)
 /// The colour of each channel's button and trace.
 fn channel_colour(i: usize) -> egui::Color32 {
     match i {
-        1 => egui::Color32::from_rgb(226, 68, 68),
-        2 => egui::Color32::from_rgb(64, 200, 84),
-        3 => egui::Color32::from_rgb(74, 118, 236),
+        1 => crate::theme::colour::CHANNEL[0],
+        2 => crate::theme::colour::CHANNEL[1],
+        3 => crate::theme::colour::CHANNEL[2],
         _ => egui::Color32::from_gray(210),
     }
 }
@@ -758,7 +760,7 @@ fn canvas(
         return;
     }
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 3.0, egui::Color32::from_gray(18));
+    painter.rect_filled(rect, 3.0, crate::theme::colour::WELL);
 
     histogram_behind(&painter, rect, scopes.map(|s| &s.log_histogram));
 
@@ -782,7 +784,7 @@ fn canvas(
         }
     }
 
-    let grid = egui::Stroke::new(1.0_f32, egui::Color32::from_gray(42));
+    let grid = egui::Stroke::new(1.0_f32, crate::theme::colour::GRID);
     for q in 1..4 {
         let t = q as f32 / 4.0;
         painter.line_segment(
@@ -819,13 +821,13 @@ fn canvas(
             egui::pos2(rect.min.x, rect.max.y),
             egui::pos2(rect.max.x, rect.min.y),
         ],
-        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(58)),
+        egui::Stroke::new(1.0_f32, crate::theme::colour::RULE),
     );
 
     let colour = match key {
-        "red" => egui::Color32::from_rgb(230, 90, 90),
-        "green" => egui::Color32::from_rgb(90, 210, 110),
-        "blue" => egui::Color32::from_rgb(100, 140, 245),
+        "red" => crate::theme::colour::CHANNEL[0],
+        "green" => crate::theme::colour::CHANNEL[1],
+        "blue" => crate::theme::colour::CHANNEL[2],
         _ => egui::Color32::from_gray(225),
     };
 
@@ -995,9 +997,9 @@ fn region_canvas(
         return;
     }
     let painter = ui.painter_at(rect);
-    painter.rect_filled(plot, 3.0, egui::Color32::from_gray(18));
+    painter.rect_filled(plot, 3.0, crate::theme::colour::WELL);
 
-    let grid = egui::Stroke::new(1.0_f32, egui::Color32::from_gray(42));
+    let grid = egui::Stroke::new(1.0_f32, crate::theme::colour::GRID);
     for q in 1..4 {
         let t = q as f32 / 4.0;
         painter.line_segment(
@@ -1013,7 +1015,7 @@ fn region_canvas(
             egui::pos2(plot.min.x, plot.max.y),
             egui::pos2(plot.max.x, plot.min.y),
         ],
-        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(58)),
+        egui::Stroke::new(1.0_f32, crate::theme::colour::RULE),
     );
 
     // The boundaries, drawn full height so it is plain which stretch of the
@@ -1063,9 +1065,9 @@ fn region_canvas(
 
 /// The three channel colours, for the traces.
 const CHANNEL_COLOURS: [egui::Color32; 3] = [
-    egui::Color32::from_rgb(214, 96, 96),
-    egui::Color32::from_rgb(96, 206, 116),
-    egui::Color32::from_rgb(110, 148, 236),
+    crate::theme::colour::CHANNEL[0],
+    crate::theme::colour::CHANNEL[1],
+    crate::theme::colour::CHANNEL[2],
 ];
 
 /// How far either side of a bin the smoothing reaches.
@@ -1327,8 +1329,22 @@ fn histogram_behind(painter: &egui::Painter, rect: egui::Rect, hist: Option<&His
         // The fill, as a strip of quads from the baseline. A polygon would be
         // the obvious shape, but egui only fills convex ones and a histogram
         // is the least convex outline there is.
+        //
+        // Added rather than blended. Three translucent layers painted in
+        // order leave the last one on top, so a neutral picture — where all
+        // three channels agree — came out blue, because blue is drawn last.
+        // Adding them makes agreement read as grey and disagreement as the
+        // colour that is in excess, which is the whole point of overlaying
+        // them. egui's colours are premultiplied, so an alpha of zero with a
+        // non-zero brightness *is* the additive case.
         let mut mesh = egui::Mesh::default();
-        let fill = egui::Color32::from_rgba_unmultiplied(colour.r(), colour.g(), colour.b(), 56);
+        let scale = |c: u8| ((c as f32) * 0.22) as u8;
+        let fill = egui::Color32::from_rgba_premultiplied(
+            scale(colour.r()),
+            scale(colour.g()),
+            scale(colour.b()),
+            0,
+        );
         for i in 0..BINS - 1 {
             let (x0, x1) = (x_of(i), x_of(i + 1));
             let (y0, y1) = (y_of(sample(i)), y_of(sample(i + 1)));
@@ -1345,9 +1361,21 @@ fn histogram_behind(painter: &egui::Painter, rect: egui::Rect, hist: Option<&His
         let line: Vec<egui::Pos2> = (0..BINS)
             .map(|i| egui::pos2(x_of(i), y_of(sample(i))))
             .collect();
+        // Added, like the fill under it. Where the three channels agree the
+        // outlines land on top of one another and sum to white, which is what
+        // "this picture is neutral here" should look like; where they part,
+        // each one keeps its own colour.
         painter.add(egui::Shape::line(
             line,
-            egui::Stroke::new(1.2_f32, colour.gamma_multiply(0.85)),
+            egui::Stroke::new(
+                1.2_f32,
+                egui::Color32::from_rgba_premultiplied(
+                    (colour.r() as f32 * 0.55) as u8,
+                    (colour.g() as f32 * 0.55) as u8,
+                    (colour.b() as f32 * 0.55) as u8,
+                    0,
+                ),
+            ),
         ));
     }
 }

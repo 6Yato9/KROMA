@@ -131,7 +131,7 @@ pub fn panel(ui: &mut egui::Ui, textures: &mut Textures, scopes: Option<&Scopes>
                     let x = rect.min.x + rect.width() * i as f32 / 3.0;
                     ui.painter().line_segment(
                         [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],
-                        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(52)),
+                        egui::Stroke::new(1.0_f32, crate::theme::colour::GRID),
                     );
                 }
             });
@@ -173,7 +173,7 @@ fn frame(
                 return;
             }
             ui.painter()
-                .rect_filled(rect, 3.0, egui::Color32::from_gray(14));
+                .rect_filled(rect, 3.0, crate::theme::colour::WELL);
             body(ui, rect);
             ui.painter().rect_stroke(
                 rect,

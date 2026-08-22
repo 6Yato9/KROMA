@@ -17,7 +17,8 @@ version = "0.0.1"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/local/photo-editor"
+description = "Kroma — DaVinci Resolve's colour page, rebuilt for photographs"
+repository = "https://github.com/local/kroma"
 
 # Release profile matters more than usual here: the CPU reference path in
 # pe-color is used by the golden tests, and a debug build of it is ~40x slower.

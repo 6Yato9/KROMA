@@ -21,6 +21,7 @@ mod preview;
 mod resolve;
 mod scopes;
 mod settings;
+mod theme;
 mod wheels;
 
 use std::path::{Path, PathBuf};
@@ -54,12 +55,12 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1500.0, 950.0])
             .with_min_inner_size([900.0, 600.0])
-            .with_title("Photo Editor"),
+            .with_title("KROMA"),
         ..Default::default()
     };
 
     eframe::run_native(
-        "Photo Editor",
+        "KROMA",
         options,
         Box::new(move |cc| Ok(Box::new(App::new(cc, image, path)))),
     )
@@ -141,6 +142,9 @@ impl App {
         image: pe_io::DecodedImage,
         path: Option<PathBuf>,
     ) -> Self {
+        // The scheme, before a single frame is drawn with it.
+        theme::apply(&cc.egui_ctx);
+
         let doc = match &path {
             Some(p) => pe_effects::new_document(p.to_string_lossy().to_string()),
             None => pe_effects::new_document("<test chart>"),
@@ -402,7 +406,7 @@ impl App {
             String::new()
         };
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
-            "{name}{position} — {}x{} — Photo Editor",
+            "{name}{position} — {}x{} — KROMA",
             self.image.width, self.image.height
         )));
     }
@@ -1020,7 +1024,7 @@ impl eframe::App for App {
                         // The curve carries the histogram, so there is one
                         // rather than two, and it is at the top where a
                         // histogram belongs.
-                        egui::CollapsingHeader::new("Curves - Custom")
+                        egui::CollapsingHeader::new("Curves")
                             .default_open(true)
                             .show(ui, |ui| {
                                 let scopes = self.preview.as_ref().and_then(|p| p.scopes());
@@ -1065,7 +1069,7 @@ impl eframe::App for App {
             });
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(egui::Color32::from_gray(24)))
+            .frame(egui::Frame::NONE.fill(crate::theme::colour::VIEWER))
             .show(ctx, |ui| {
                 let viewport = ui.available_size();
                 if self.preview.is_none() {
@@ -1605,7 +1609,7 @@ fn draw_compare(
             // Repaint the background over the full-size after image first, or
             // it would still be showing behind the two halves.
             ui.painter()
-                .rect_filled(rect, 0.0, egui::Color32::from_gray(24));
+                .rect_filled(rect, 0.0, crate::theme::colour::VIEWER);
             for (target, texture) in [(left, before), (right, framing.texture)] {
                 ui.painter().add(egui::Shape::image(
                     texture,

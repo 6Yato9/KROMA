@@ -40,7 +40,7 @@ impl Settings {
                 None => PathBuf::from(std::env::var_os("HOME")?).join(".config"),
             }
         };
-        Some(dir.join("PhotoEditor").join("settings.json"))
+        Some(dir.join("Kroma").join("settings.json"))
     }
 
     pub fn load() -> Self {
@@ -48,9 +48,17 @@ impl Settings {
         // A missing file, an unreadable one and a corrupt one all mean the
         // user gets the defaults, and none of them is worth interrupting a
         // launch over.
+        // The old location is read when the new one is not there yet, so
+        // the rename to Kroma does not quietly cost anyone their stars. It
+        // moves to the new path the next time anything is saved.
+        let former = Self::path()
+            .and_then(|p| p.parent()?.parent().map(|d| d.join("PhotoEditor")))
+            .map(|d| d.join("settings.json"));
         Self::path()
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .and_then(|s| serde_json::from_str(&s).ok())
+            .into_iter()
+            .chain(former)
+            .filter_map(|p| std::fs::read_to_string(p).ok())
+            .find_map(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default()
     }
 
