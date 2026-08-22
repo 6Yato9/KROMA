@@ -633,7 +633,11 @@ fn plot_image(plot: Plot, seen: Option<&Distribution>) -> egui::ColorImage {
                 Plot::Chromaticity => {
                     let (x, y) = (plot_value(u), plot_value(v));
                     crate::locus::colour_at(x, y).map(|c| {
-                        let dim = if crate::locus::inside(x, y) { 0.62 } else { 0.16 };
+                        let dim = if crate::locus::inside(x, y) {
+                            0.62
+                        } else {
+                            0.16
+                        };
                         [c[0] * dim, c[1] * dim, c[2] * dim]
                     })
                 }
@@ -797,9 +801,10 @@ fn draw_plot(ui: &mut egui::Ui, rect: egui::Rect, plot: Plot, seen: Option<&Dist
     // means something on its own, and without it the shape's edge is only
     // wherever the colour happens to stop.
     if plot == Plot::Chromaticity {
-        let points: Vec<egui::Pos2> = crate::locus::LOCUS
+        let curve = crate::locus::curve();
+        let points: Vec<egui::Pos2> = curve
             .iter()
-            .chain(crate::locus::LOCUS.first())
+            .chain(curve.first())
             .map(|p| plot_to_screen(rect, *p))
             .collect();
         ui.painter().add(egui::Shape::line(

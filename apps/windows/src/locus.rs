@@ -54,26 +54,107 @@ pub const LOCUS: [[f32; 2]; 33] = [
     [0.7347, 0.2653],
 ];
 
-/// Whether a chromaticity is a colour at all.
+/// How many points the curve is drawn and tested against.
 ///
-/// Winding rule against the closed locus. The curve is convex, so a crossing
-/// count would do — but "convex" is a property of the table rather than of the
-/// code, and a winding test does not quietly start lying if somebody edits a
-/// coefficient.
-pub fn inside(x: f32, y: f32) -> bool {
-    let mut crossings = 0;
-    let n = LOCUS.len();
-    for i in 0..n {
-        let a = LOCUS[i];
-        let b = LOCUS[(i + 1) % n];
-        if (a[1] > y) != (b[1] > y) {
-            let t = (y - a[1]) / (b[1] - a[1]);
-            if x < a[0] + t * (b[0] - a[0]) {
-                crossings += 1;
+/// The table is sampled every 10 nm, and joining those with straight lines
+/// gives a boundary you can count the corners on — which is the difference
+/// between our horseshoe and Resolve's. Sixteen steps between each pair is
+/// smooth at any size this plot is drawn.
+const SUBDIVISIONS: usize = 16;
+
+/// The locus as a smooth closed curve.
+///
+/// Catmull-Rom through the tabulated points: it passes *through* every one of
+/// them, which matters when the points are measurements rather than handles —
+/// a spline that merely approaches them would be drawing a different curve
+/// from the one the CIE published.
+///
+/// The line of purples stays straight. It is a chord, not a spectral colour:
+/// there is no wavelength anywhere along it, and rounding it off would claim
+/// colours that do not exist.
+pub fn curve() -> &'static [[f32; 2]] {
+    static CURVE: std::sync::OnceLock<Vec<[f32; 2]>> = std::sync::OnceLock::new();
+    CURVE.get_or_init(|| {
+        let n = LOCUS.len();
+        let at = |i: isize| LOCUS[i.clamp(0, n as isize - 1) as usize];
+        let mut out = Vec::with_capacity(n * SUBDIVISIONS + 1);
+        for i in 0..n - 1 {
+            let (p0, p1, p2, p3) = (
+                at(i as isize - 1),
+                at(i as isize),
+                at(i as isize + 1),
+                at(i as isize + 2),
+            );
+            for step in 0..SUBDIVISIONS {
+                let t = step as f32 / SUBDIVISIONS as f32;
+                out.push(catmull_rom(p0, p1, p2, p3, t));
             }
         }
+        out.push(LOCUS[n - 1]);
+        out
+    })
+}
+
+fn catmull_rom(p0: [f32; 2], p1: [f32; 2], p2: [f32; 2], p3: [f32; 2], t: f32) -> [f32; 2] {
+    let (t2, t3) = (t * t, t * t * t);
+    let axis = |a: f32, b: f32, c: f32, d: f32| {
+        0.5 * ((2.0 * b)
+            + (-a + c) * t
+            + (2.0 * a - 5.0 * b + 4.0 * c - d) * t2
+            + (-a + 3.0 * b - 3.0 * c + d) * t3)
+    };
+    [
+        axis(p0[0], p1[0], p2[0], p3[0]),
+        axis(p0[1], p1[1], p2[1], p3[1]),
+    ]
+}
+
+/// How finely the span table divides the y axis.
+const SPAN_ROWS: usize = 1024;
+/// The top of the table. The locus reaches 0.8338.
+const SPAN_TOP: f32 = 0.84;
+
+/// For each row of y, where the curve starts and stops.
+///
+/// The region is convex, so a horizontal line crosses its boundary exactly
+/// twice and "is this a colour" becomes a lookup and two comparisons. Built
+/// because [`inside`] is asked once per texel of the plot — a hundred and
+/// fifty thousand times per rebuild — and walking five hundred segments each
+/// time is a third of a second of somebody's slider drag.
+fn spans() -> &'static [[f32; 2]; SPAN_ROWS] {
+    static SPANS: std::sync::OnceLock<Box<[[f32; 2]; SPAN_ROWS]>> = std::sync::OnceLock::new();
+    SPANS.get_or_init(|| {
+        let mut table = Box::new([[1.0f32, -1.0f32]; SPAN_ROWS]);
+        let points = curve();
+        let n = points.len();
+        for row in 0..SPAN_ROWS {
+            let y = (row as f32 + 0.5) / SPAN_ROWS as f32 * SPAN_TOP;
+            let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+            for i in 0..n {
+                // Closed: the last point joins the first along the purple line.
+                let a = points[i];
+                let b = points[(i + 1) % n];
+                if (a[1] > y) != (b[1] > y) {
+                    let t = (y - a[1]) / (b[1] - a[1]);
+                    let x = a[0] + t * (b[0] - a[0]);
+                    lo = lo.min(x);
+                    hi = hi.max(x);
+                }
+            }
+            table[row] = if lo <= hi { [lo, hi] } else { [1.0, -1.0] };
+        }
+        table
+    })
+}
+
+/// Whether a chromaticity is a colour at all.
+pub fn inside(x: f32, y: f32) -> bool {
+    if !(0.0..SPAN_TOP).contains(&y) {
+        return false;
     }
-    crossings % 2 == 1
+    let row = ((y / SPAN_TOP) * SPAN_ROWS as f32) as usize;
+    let [lo, hi] = spans()[row.min(SPAN_ROWS - 1)];
+    x >= lo && x <= hi
 }
 
 /// The sRGB primaries as a matrix from XYZ, for asking what a chromaticity
@@ -159,6 +240,40 @@ mod tests {
         assert!(!inside(0.8, 0.8), "the far corner is not a colour");
         assert!(!inside(0.05, 0.05), "below the purple line is not a colour");
         assert!(!inside(0.6, 0.05), "under the locus is not a colour");
+    }
+
+    /// The curve has to pass through the points it was built from. A spline
+    /// that only approached them would be drawing a different boundary from
+    /// the one the CIE published.
+    #[test]
+    fn the_smooth_curve_passes_through_every_tabulated_point() {
+        let curve = curve();
+        for p in LOCUS {
+            let near = curve
+                .iter()
+                .map(|q| ((q[0] - p[0]).powi(2) + (q[1] - p[1]).powi(2)).sqrt())
+                .fold(f32::MAX, f32::min);
+            assert!(near < 1e-4, "{p:?} is not on the curve, nearest {near}");
+        }
+    }
+
+    /// And it has to actually be smoother — that is the whole point of it.
+    /// Measured as the longest step, which is what shows as a facet.
+    #[test]
+    fn the_smooth_curve_has_no_visible_corners() {
+        let curve = curve();
+        let longest = curve
+            .windows(2)
+            .map(|w| ((w[1][0] - w[0][0]).powi(2) + (w[1][1] - w[0][1]).powi(2)).sqrt())
+            .fold(0.0f32, f32::max);
+        let tabulated = LOCUS
+            .windows(2)
+            .map(|w| ((w[1][0] - w[0][0]).powi(2) + (w[1][1] - w[0][1]).powi(2)).sqrt())
+            .fold(0.0f32, f32::max);
+        assert!(
+            longest < tabulated / 8.0,
+            "steps of {longest} against the table's {tabulated} is not smoother"
+        );
     }
 
     /// Every point *on* the locus is a colour, which is the property the plot
