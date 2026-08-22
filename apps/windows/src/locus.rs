@@ -86,20 +86,27 @@ const XYZ_TO_SRGB: [[f32; 3]; 3] = [
 
 /// The colour at a chromaticity, as near as a display can put it.
 ///
-/// Returns `None` outside the locus — there is no colour there to show.
+/// Answers for the *whole plane*, not only for real colours — the caller asks
+/// [`inside`] separately and dims what is outside. Resolve fills its whole
+/// diagram this way and it is the better drawing: a black surround makes the
+/// plot a shape floating in nothing, where a dimmed one makes it a bright
+/// region of a continuous field, which is what a gamut actually is.
 ///
-/// Inside it, most of the diagram is outside what any monitor can produce, and
-/// there are two honest things to do about that: darken it, or show the nearest
-/// colour the screen has. Resolve does the second, and it is the better answer
-/// for a plot you are going to place a pin on — a region drawn black is a
-/// region you will not aim at, and those colours are perfectly real.
+/// `None` only where the arithmetic has nothing to say: at y of zero there is
+/// no colour to normalise, however the plot would like to draw it.
+///
+/// Most of the diagram is outside what any monitor can produce, and there are
+/// two honest things to do about that: darken it, or show the nearest colour
+/// the screen has. Resolve does the second, and it is the better answer for a
+/// plot you are going to place a pin on — a region drawn black is a region you
+/// will not aim at, and those colours are perfectly real.
 ///
 /// Normalised to full brightness rather than scaled by luminance, because this
 /// is a map of *chromaticity*: how bright a colour is has its own axes
 /// elsewhere, and shading the plot by luminance would make yellow look like the
 /// only colour worth having.
 pub fn colour_at(x: f32, y: f32) -> Option<[f32; 3]> {
-    if y <= 1e-4 || !inside(x, y) {
+    if y <= 1e-4 {
         return None;
     }
     let xyz = [x / y, 1.0, (1.0 - x - y) / y];
@@ -167,10 +174,17 @@ mod tests {
         }
     }
 
+    /// The plane is coloured everywhere it can be; whether a point is a real
+    /// colour is [`inside`]'s question, and the plot dims by it rather than
+    /// blacking it out.
     #[test]
-    fn there_is_no_colour_outside_the_horseshoe() {
-        assert!(colour_at(0.9, 0.9).is_none());
+    fn the_whole_plane_has_a_colour_except_where_there_is_nothing_to_ask() {
+        assert!(
+            colour_at(0.9, 0.9).is_some(),
+            "outside the locus is still drawn"
+        );
         assert!(colour_at(0.3127, 0.3290).is_some());
+        assert!(colour_at(0.4, 0.0).is_none(), "y of zero has no colour");
     }
 
     /// White comes out white, which is the one value on this diagram anybody

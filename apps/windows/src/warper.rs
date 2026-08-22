@@ -620,13 +620,23 @@ fn plot_image(plot: Plot, seen: Option<&Distribution>) -> egui::ColorImage {
             let v = 1.0 - (row as f32 + 0.5) / n as f32;
 
             let base = match plot {
-                // Dimmer than it could be, on purpose. The plot is a *map*
-                // and the photograph's colours are what you came to look at —
-                // at full brightness the map wins, and Resolve's is noticeably
-                // darker than a chromaticity diagram usually gets drawn for
-                // exactly this reason.
-                Plot::Chromaticity => crate::locus::colour_at(plot_value(u), plot_value(v))
-                    .map(|c| [c[0] * 0.5, c[1] * 0.5, c[2] * 0.5]),
+                // The whole square is coloured and what is *outside* the
+                // locus is dimmed, rather than the outside being black. A
+                // black surround makes the plot a shape floating in nothing;
+                // a dimmed one makes it a bright region of a continuous
+                // field, which is what a gamut actually is — and it is how
+                // Resolve draws it.
+                //
+                // The bright half is still well under full: the plot is a map
+                // and the photograph's colours are what you came to look at,
+                // and at full brightness the map wins.
+                Plot::Chromaticity => {
+                    let (x, y) = (plot_value(u), plot_value(v));
+                    crate::locus::colour_at(x, y).map(|c| {
+                        let dim = if crate::locus::inside(x, y) { 0.62 } else { 0.16 };
+                        [c[0] * dim, c[1] * dim, c[2] * dim]
+                    })
+                }
                 Plot::HueSat => {
                     // The square the hue/saturation grid is stored in: the disc
                     // of radius one, and nothing outside it.
@@ -655,11 +665,14 @@ fn plot_image(plot: Plot, seen: Option<&Distribution>) -> egui::ColorImage {
                 }
             };
 
-            // Outside the plot's own shape there is nothing to describe, and
-            // the blur above happily spreads counts past the boundary — which
-            // drew a grey smear along the outside of the horseshoe, a haze
-            // over a region that has no colours in it by definition.
-            let inside = base.is_some();
+            // The haze belongs only where colours can be. The blur above
+            // happily spreads counts past the boundary, which drew a smear
+            // along the outside of the horseshoe — a cloud over a region that
+            // has no colours in it by definition.
+            let inside = match plot {
+                Plot::Chromaticity => crate::locus::inside(plot_value(u), plot_value(v)),
+                _ => base.is_some(),
+            };
             let mut rgb = base.unwrap_or([0.03, 0.03, 0.035]);
 
             // The photograph's colours, added rather than mixed: the haze
