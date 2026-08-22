@@ -803,16 +803,10 @@ pub static EFFECTS: &[EffectDef] = &[
         params: &[
             // Bipolar like Resolve's: above zero removes haze, below zero adds
             // it by running the same scattering model forwards.
+            // Declaration order is the order the panel draws them, so it
+            // follows Resolve's: strength, the colour being removed, the depth
+            // view, then the two tonal trims.
             bipolar("strength", "Dehaze Strength", 1.0, ""),
-            ParamDef {
-                key: "display_depth",
-                name: "Display Depth",
-                kind: ParamKind::Bool { default: false },
-                unit: "",
-                section: "",
-            },
-            bipolar("shadow", "Shadow", 1.0, ""),
-            bipolar("highlight", "Highlight", 1.0, ""),
             ParamDef {
                 key: "haze_color",
                 name: "Haze Color",
@@ -824,6 +818,15 @@ pub static EFFECTS: &[EffectDef] = &[
                 unit: "",
                 section: "",
             },
+            ParamDef {
+                key: "display_depth",
+                name: "Display Depth",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+                section: "",
+            },
+            bipolar("shadow", "Shadow", 1.0, ""),
+            bipolar("highlight", "Highlight", 1.0, ""),
         ],
     },
     EffectDef {
