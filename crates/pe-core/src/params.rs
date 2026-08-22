@@ -34,8 +34,27 @@ impl Default for Wheel {
 }
 
 impl Wheel {
+    /// Every component at the same value — which is what a wheel's default
+    /// is, whatever that value happens to be. Lift's is zero and Gain's is
+    /// one, and Offset's is twenty-five.
+    pub fn uniform(v: f32) -> Self {
+        Self {
+            rgb: [v; 3],
+            master: v,
+        }
+    }
+
+    pub fn is_uniform(&self, v: f32) -> bool {
+        self.rgb.iter().all(|c| *c == v) && self.master == v
+    }
+
+    /// True when every component is zero.
+    ///
+    /// Only meaningful for a wheel whose neutral *is* zero. Prefer
+    /// [`Self::is_uniform`] against the wheel's declared default, which is the
+    /// question the registry actually asks.
     pub fn is_neutral(&self) -> bool {
-        self.rgb.iter().all(|c| *c == 0.0) && self.master == 0.0
+        self.is_uniform(0.0)
     }
 }
 

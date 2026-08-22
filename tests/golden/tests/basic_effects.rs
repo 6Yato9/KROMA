@@ -29,11 +29,23 @@ fn look(effect: &str, params: &[(&str, ParamValue)]) -> Document {
     doc
 }
 
-fn wheel(master: f32) -> ParamValue {
+/// An achromatic push on a log wheel.
+///
+/// Written into the three channels rather than into the master, because a log
+/// wheel has no master ring — Resolve draws these with three boxes, not four,
+/// and the bands are already tonally separated. The primaries wheels are the
+/// ones with a master.
+fn wheel(amount: f32) -> ParamValue {
     ParamValue::Wheel(Wheel {
-        rgb: [0.0; 3],
-        master,
+        rgb: [amount; 3],
+        master: 0.0,
     })
+}
+
+/// The Offset wheel, which sits at 25 rather than at zero and reads in the
+/// units Resolve's box shows.
+fn offset(from_neutral: f32) -> ParamValue {
+    ParamValue::Wheel(Wheel::uniform(25.0 + from_neutral))
 }
 
 /// A black-to-white ramp across x, so a tonal control's reach can be read off
@@ -364,7 +376,7 @@ fn the_offset_wheel_moves_everything() {
         return;
     };
     let src = ramp();
-    let out = render(gpu, &src, &look("log_wheels", &[("offset", wheel(0.1))]));
+    let out = render(gpu, &src, &look("log_wheels", &[("offset", offset(50.0))]));
 
     // Unweighted by design, which is why colourists reach for it first.
     for x in [20u32, 128, 200] {

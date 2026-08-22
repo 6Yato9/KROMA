@@ -21,7 +21,7 @@
 //! needs an insertion indicator and autoscroll, and it is not what makes the
 //! panel usable.
 
-use pe_core::{BlendMode, Curve, History, ParamValue, RowId, RowIdGenerator, StackRow, Wheel};
+use pe_core::{BlendMode, Curve, History, ParamValue, RowId, RowIdGenerator, StackRow};
 use pe_effects::{EffectDef, Group, ParamDef, ParamKind};
 
 use crate::resolve::{self, Edit};
@@ -694,10 +694,13 @@ fn param_row(
             if edit.released {
                 history.break_coalescing();
             }
-            // Reset means *neutral*, not default. For a look effect those
-            // differ, and reset should always mean "do nothing".
+            // The value the effect arrives with, not the value at which it
+            // does nothing. See the note in `basic::slider`: the reset arrow
+            // on the title bar has always restored defaults, and one icon
+            // meaning two things depending on which row it sits in is worse
+            // than either meaning on its own.
             if edit.reset {
-                set(history, id, def, ParamValue::Float(neutral), None);
+                set(history, id, def, ParamValue::Float(default), None);
             }
         }
         ParamKind::Bool { default } => {
@@ -750,12 +753,17 @@ fn param_row(
             // Drawn by the panel, not by a row. A lattice is not a control
             // with a value beside it, and the three views share one plot.
         }
-        ParamKind::Wheel => {
+        ParamKind::Wheel {
+            min,
+            max,
+            default,
+            master,
+        } => {
             let mut w = current
                 .as_ref()
                 .and_then(ParamValue::as_wheel)
                 .copied()
-                .unwrap_or_default();
+                .unwrap_or_else(|| pe_core::Wheel::uniform(default));
             resolve::section(ui, param_id, def.name, |ui| {
                 let mut edit = Edit::default();
                 for (i, label) in ["Red", "Green", "Blue"].iter().enumerate() {
@@ -764,8 +772,8 @@ fn param_row(
                         param_id.with(i),
                         label,
                         &mut w.rgb[i],
-                        -0.5..=0.5,
-                        3,
+                        min..=max,
+                        decimals(min, max),
                         resolve::TrackStyle {
                             ramp: crate::theme::CHANNEL_AXES[i],
                             neutral: Some(0.5),
@@ -775,21 +783,27 @@ fn param_row(
                     edit.released |= e.released;
                     edit.reset |= e.reset;
                 }
-                let e = resolve::slider_row_styled(
-                    ui,
-                    param_id.with("master"),
-                    "Master",
-                    &mut w.master,
-                    -0.5..=0.5,
-                    3,
-                    resolve::TrackStyle {
-                        ramp: crate::theme::Ramp::Luma,
-                        neutral: Some(0.5),
-                    },
-                );
-                edit.changed |= e.changed;
-                edit.released |= e.released;
-                edit.reset |= e.reset;
+                // Only where there is one. Resolve's Offset wheel has three
+                // channels and no achromatic ring, because an achromatic
+                // offset is an exposure change and there is a control for
+                // that already.
+                if master {
+                    let e = resolve::slider_row_styled(
+                        ui,
+                        param_id.with("master"),
+                        "Master",
+                        &mut w.master,
+                        min..=max,
+                        decimals(min, max),
+                        resolve::TrackStyle {
+                            ramp: crate::theme::Ramp::Luma,
+                            neutral: Some(0.5),
+                        },
+                    );
+                    edit.changed |= e.changed;
+                    edit.released |= e.released;
+                    edit.reset |= e.reset;
+                }
 
                 if edit.changed {
                     set(history, id, def, ParamValue::Wheel(w), coalesce.clone());
@@ -798,7 +812,13 @@ fn param_row(
                     history.break_coalescing();
                 }
                 if edit.reset {
-                    set(history, id, def, ParamValue::Wheel(Wheel::default()), None);
+                    set(
+                        history,
+                        id,
+                        def,
+                        ParamValue::Wheel(pe_core::Wheel::uniform(default)),
+                        None,
+                    );
                 }
             });
         }
@@ -955,10 +975,11 @@ mod tests {
             .and_then(|r| r.params.get("amount"))
             .and_then(ParamValue::as_float)
             .expect("set");
-        // Neutral, not the default: Resolve ships Sharpen at 1.8 and reset
-        // means "do nothing", which is the distinction this whole list of
-        // visible defaults rests on.
-        assert_eq!(now, 0.0, "the reset arrow left the value where it was");
+        // Resolve ships Sharpen at 1.8, and reset means *default* — the value
+        // the effect arrives with. It used to mean neutral, which put this at
+        // zero and made the same icon mean something different from the one
+        // on the effect's own title bar.
+        assert_eq!(now, 1.8, "the reset arrow did not restore the default");
     }
 
     /// A heading with one control under it is a heading that costs a click and

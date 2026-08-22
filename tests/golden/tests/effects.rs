@@ -452,15 +452,13 @@ fn the_primaries_offset_wheel_shifts_everything() {
     let Some(mut h) = Harness::new(&src) else {
         return;
     };
+    // Offset sits at 25 and has no master ring, both of which are Resolve's:
+    // an achromatic offset is an exposure change, and there is a control for
+    // that already. So the push goes into the three channels, measured from
+    // where the panel says the wheel already is.
     let doc = doc_with(&[(
         "primaries",
-        &[(
-            "offset",
-            ParamValue::Wheel(Wheel {
-                rgb: [0.0; 3],
-                master: 0.1,
-            }),
-        )],
+        &[("offset", ParamValue::Wheel(Wheel::uniform(75.0)))],
     )]);
     let out = h.render(&doc);
     assert!(

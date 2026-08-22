@@ -582,3 +582,54 @@ The values under Pin in the screenshot — Chroma Range 0.040, Tonal Range Low
 and High 1.000, Tonal Range Pivot 0.500, Exposure 0.000 — are recorded here so
 they are not lost, and they are greyed in the screenshot because no pin was
 selected.
+
+---
+
+## Primaries — Colour Wheels and Log Wheels
+
+| Wheel | Default | Range | Master ring | Status |
+|---|---|---|---|---|
+| Lift | 0.00 | −1…1 | yes | confirmed / inferred range |
+| Gamma | 0.00 | −1…1 | yes | confirmed / inferred range |
+| Gain | 1.00 | 0…4 | yes | confirmed / inferred range |
+| Offset | **25.00** | **−175…255** | **no** | confirmed |
+| Log Shadow / Midtone / Highlights | 0.00 | −1…1 | no | confirmed |
+| Log Offset | 25.00 | −175…255 | no | confirmed |
+| ↓ Range | 0.333 | 0…1 | — | confirmed |
+| ↑ Range | 0.550 | 0…1 | — | confirmed |
+
+**The stored number is the number in the box.** Gain reads 1.00 when it is
+doing nothing and Offset reads 25.00, so that is what the document holds — the
+value in the box is what a colourist checks against a reference, and a panel
+reading 0.00 where Resolve reads 1.00 would be lying about what it is. The
+conversion happens in the shader: gain multiplies, and offset is measured from
+25 and scaled.
+
+**Offset has no master ring**, on any of the wheels, and neither do the log
+wheels. That is Resolve's design and not an oversight: an achromatic offset is
+an exposure change, and there is a control for that already. The panel draws
+three boxes where there are three channels and four where there is a master.
+
+Offset's range is lopsided on purpose — more room to lift than to crush,
+because crushing past black does nothing anyone wants.
+
+**One value deliberately not matched.** Resolve's Pivot reads 0.435; ours is
+0.4136. Theirs is mid grey in *their* log space and ours is mid grey in
+ACEScct, where 18% scene grey lands at 0.413589. Copying the number would put
+our pivot slightly above mid grey for no reason at all, so the meaning is
+matched instead of the digits. There is a test pinning it.
+
+## Reset
+
+Reset restores the parameter's **default** — the value the effect arrives
+with — everywhere in the application.
+
+It used to restore *neutral* for individual parameters, on the argument that a
+reset should always mean "do nothing". That argument lost to a simpler one: the
+reset arrow on an effect's title bar has always restored defaults, so the same
+icon meant two different things depending on which row of the panel it sat in.
+Radial Blur was where it showed — resetting Smooth Strength gave 0.000 where
+resetting the whole effect gave 0.400.
+
+`neutral` is still what a slider draws its fill from, which is the question it
+actually answers: where does this control stop doing anything.

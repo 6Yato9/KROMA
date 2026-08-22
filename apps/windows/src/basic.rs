@@ -92,12 +92,23 @@ pub fn slider(
     if edit.released {
         history.break_coalescing();
     }
-    // Reset means *neutral*, not the default — for a look effect those differ,
-    // and reset should always mean "do nothing".
+    // Reset puts the parameter back to its **default** — the value the effect
+    // arrives with — not to its neutral.
+    //
+    // Those differ for a look effect, and this used to choose neutral on the
+    // argument that a reset should always mean "do nothing". That argument was
+    // wrong for one decisive reason: the reset arrow on the effect's own title
+    // bar already restored defaults, so the same icon meant two things
+    // depending on which row of the panel it sat in. Resolve's means default
+    // everywhere, and one meaning beats a defensible second one.
+    //
+    // `neutral` is still what the slider draws its fill from, which is the
+    // question it actually answers: where does this control stop doing
+    // anything.
     if edit.reset {
         history.edit(label.to_string(), None, |doc| {
             if let Some(row) = doc.stack.get_mut(id) {
-                row.params.set(key, ParamValue::Float(neutral));
+                row.params.set(key, ParamValue::Float(default));
             }
         });
     }
@@ -152,7 +163,12 @@ pub fn panel(ui: &mut egui::Ui, history: &mut History) {
     ui.add_space(4.0);
 }
 
-/// Reset every parameter of the Basic panel's rows to neutral.
+/// Reset every parameter of the Basic panel's rows to its default.
+///
+/// The same meaning as every other reset in the application. For these rows
+/// the two coincide — a corrective panel arrives doing nothing — but saying
+/// "default" here keeps the one rule readable rather than leaving a reader to
+/// work out whether this one is an exception.
 pub fn reset(history: &mut History) {
     let targets = [
         "white_balance",
@@ -174,8 +190,8 @@ pub fn reset(history: &mut History) {
                 continue;
             };
             for param in def.params {
-                if let ParamKind::Float { neutral, .. } = param.kind {
-                    row.params.set(param.key, ParamValue::Float(neutral));
+                if let ParamKind::Float { default, .. } = param.kind {
+                    row.params.set(param.key, ParamValue::Float(default));
                 }
             }
         }

@@ -560,8 +560,8 @@ fn float_param(history: &History, id: RowId, key: &str, fallback: f32) -> f32 {
 /// What one of the curve panel's own sliders reports, applied.
 ///
 /// All three parts of an `Edit`, which is the point: this used to take the
-/// neutral value and ignore it — the argument was even spelled `_neutral` —
-/// so the reset arrow on every slider in this panel drew, hovered, and did
+/// reset value and ignore it — the argument was even spelled `_neutral` — so
+/// the reset arrow on every slider in this panel drew, hovered, and did
 /// nothing at all. Dragging the slider back by hand worked, which is exactly
 /// what makes that kind of bug survive: the control it broke is the one you
 /// reach for *instead of* the thing that still works.
@@ -571,7 +571,7 @@ fn apply(
     key: &'static str,
     value: f32,
     edit: resolve::Edit,
-    neutral: f32,
+    default: f32,
 ) {
     if edit.changed {
         history.edit(key, Some(format!("curve.{key}")), move |doc| {
@@ -586,7 +586,7 @@ fn apply(
     if edit.reset {
         history.edit(key, None, move |doc| {
             if let Some(row) = doc.stack.get_mut(id) {
-                row.params.set(key, ParamValue::Float(neutral));
+                row.params.set(key, ParamValue::Float(default));
             }
         });
     }

@@ -100,7 +100,12 @@ fn hue_colour(hue: f32) -> egui::Color32 {
 }
 
 /// The hue disc, the master arc around it, and the puck.
-fn disc(ui: &mut egui::Ui, size: f32, wheel: Wheel) -> Option<Wheel> {
+///
+/// `home` is where this wheel's channels sit when it is doing nothing, and
+/// `range` is how far they may go. The puck measures *from* home, so a Gain
+/// wheel's puck sits in the middle at 1.00 exactly as a Lift wheel's does at
+/// 0.00 — the two read the same because they mean the same thing.
+fn disc(ui: &mut egui::Ui, size: f32, wheel: Wheel, home: f32, range: (f32, f32)) -> Option<Wheel> {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::click_and_drag());
     let centre = rect.center();
@@ -117,14 +122,22 @@ fn disc(ui: &mut egui::Ui, size: f32, wheel: Wheel) -> Option<Wheel> {
         if v.length() > 1.0 {
             v /= v.length();
         }
+        // The puck's travel is a fraction of whichever side of home is
+        // shorter, so it can never ask for a value the box would refuse.
+        let reach = (range.1 - home).min(home - range.0).abs().clamp(1e-4, 1.0);
+        let rgb = xy_to_rgb(v);
         moved = Some(Wheel {
-            rgb: xy_to_rgb(v),
+            rgb: [
+                home + rgb[0] * reach,
+                home + rgb[1] * reach,
+                home + rgb[2] * reach,
+            ],
             master: wheel.master,
         });
     }
     if response.double_clicked() {
         moved = Some(Wheel {
-            rgb: [0.0; 3],
+            rgb: [home; 3],
             master: wheel.master,
         });
     }
@@ -213,16 +226,26 @@ fn disc(ui: &mut egui::Ui, size: f32, wheel: Wheel) -> Option<Wheel> {
     moved
 }
 
-/// The four numbers under a wheel: master, then the three channels, each with
-/// its own coloured underline.
-fn readouts(ui: &mut egui::Ui, width: f32, wheel: Wheel) -> Option<Wheel> {
+/// The numbers under a wheel, each with its own coloured underline.
+///
+/// Four of them where there is a master and three where there is not, which
+/// is how Resolve draws Offset: three channels and no achromatic ring.
+fn readouts(
+    ui: &mut egui::Ui,
+    width: f32,
+    wheel: Wheel,
+    range: (f32, f32),
+    master: bool,
+) -> Option<Wheel> {
     let mut next = wheel;
     let mut changed = false;
-    let cell = (width / 4.0).max(26.0);
+    let count = if master { 4 } else { 3 };
+    let cell = (width / count as f32).max(26.0);
+    let first = if master { 0 } else { 1 };
 
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        for i in 0..4 {
+        for i in first..4 {
             let mut v = if i == 0 {
                 wheel.master
             } else {
@@ -239,12 +262,14 @@ fn readouts(ui: &mut egui::Ui, width: f32, wheel: Wheel) -> Option<Wheel> {
             child.add_sized(
                 egui::vec2(cell - 2.0, 18.0),
                 egui::DragValue::new(&mut v)
+                    // Two everywhere, as Resolve shows them: Lift reads 0.00
+                    // and Offset reads 25.00.
                     .fixed_decimals(2)
-                    .range(-1.0..=1.0)
-                    .speed(0.002),
+                    .range(range.0..=range.1)
+                    .speed((range.1 - range.0) / 500.0),
             );
             if (before - v).abs() > 1e-9 {
-                let v = v.clamp(-1.0, 1.0);
+                let v = v.clamp(range.0, range.1);
                 if i == 0 {
                     next.master = v;
                 } else {
@@ -274,13 +299,16 @@ fn readouts(ui: &mut egui::Ui, width: f32, wheel: Wheel) -> Option<Wheel> {
 /// Relative, not absolute — push it and the value moves, let go and the bar
 /// stays where it was. That is what makes it usable without looking at it,
 /// which is the whole reason it is separate from the numbers above.
-fn master_bar(ui: &mut egui::Ui, width: f32, master: f32) -> Option<f32> {
+fn master_bar(ui: &mut egui::Ui, width: f32, master: f32, range: (f32, f32)) -> Option<f32> {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(width, 13.0), egui::Sense::click_and_drag());
     let mut moved = None;
     if response.dragged() {
         // A full sweep of the bar is a full sweep of the range.
-        moved = Some((master + response.drag_delta().x / width.max(1e-4)).clamp(-0.5, 0.5));
+        // A full sweep of the bar crosses the wheel's own range, whatever
+        // that range happens to be.
+        let per_point = (range.1 - range.0) / width.max(1e-4);
+        moved = Some((master + response.drag_delta().x * per_point).clamp(range.0, range.1));
     }
     if response.double_clicked() {
         moved = Some(0.0);
@@ -311,15 +339,38 @@ fn master_bar(ui: &mut egui::Ui, width: f32, master: f32) -> Option<f32> {
     moved
 }
 
-/// One complete wheel: title, reset, disc, readouts, master bar.
+/// One complete wheel: title, reset, disc, readouts, and a master bar where
+/// there is a master.
+///
+/// The shape comes from the registry rather than from here, because the four
+/// wheels are not interchangeable: Lift sits at zero and Gain at one, and
+/// Offset has three channels where the others have four. Assuming otherwise
+/// gave a Gain wheel that read 0.00 when it was doing nothing.
 fn wheel_column(
     ui: &mut egui::Ui,
     history: &mut History,
     id: RowId,
+    effect: &str,
     key: &'static str,
     title: &'static str,
     width: f32,
 ) {
+    let Some(kind) = pe_effects::by_key(effect)
+        .and_then(|e| e.param(key))
+        .map(|p| p.kind)
+    else {
+        return;
+    };
+    let pe_effects::ParamKind::Wheel {
+        min,
+        max,
+        default,
+        master,
+    } = kind
+    else {
+        return;
+    };
+
     let wheel = history
         .document()
         .stack
@@ -327,7 +378,7 @@ fn wheel_column(
         .and_then(|r| r.params.get(key))
         .and_then(ParamValue::as_wheel)
         .copied()
-        .unwrap_or_default();
+        .unwrap_or_else(|| Wheel::uniform(default));
 
     let mut next: Option<Wheel> = None;
     ui.vertical(|ui| {
@@ -342,17 +393,17 @@ fn wheel_column(
                 ),
             );
             if ui.small_button("R").on_hover_text("Reset").clicked() {
-                next = Some(Wheel::default());
+                next = Some(Wheel::uniform(default));
             }
         });
-        if let Some(w) = disc(ui, width, wheel) {
+        if let Some(w) = disc(ui, width, wheel, default, (min, max)) {
             next = Some(w);
         }
         ui.add_space(2.0);
-        if let Some(w) = readouts(ui, width, wheel) {
+        if let Some(w) = readouts(ui, width, wheel, (min, max), master) {
             next = Some(w);
         }
-        if let Some(m) = master_bar(ui, width, wheel.master) {
+        if master && let Some(m) = master_bar(ui, width, wheel.master, (min, max)) {
             next = Some(Wheel {
                 rgb: wheel.rgb,
                 master: m,
@@ -378,6 +429,7 @@ fn wheel_grid(
     ui: &mut egui::Ui,
     history: &mut History,
     id: RowId,
+    effect: &str,
     wheels: [(&'static str, &'static str); 4],
 ) {
     let width = ((ui.available_width() - 14.0) / 2.0).clamp(90.0, 200.0);
@@ -385,7 +437,7 @@ fn wheel_grid(
         ui.horizontal_top(|ui| {
             for column in 0..2 {
                 let (key, title) = wheels[row * 2 + column];
-                wheel_column(ui, history, id, key, title, width);
+                wheel_column(ui, history, id, effect, key, title, width);
                 ui.add_space(6.0);
             }
         });
@@ -409,6 +461,7 @@ pub fn primaries(ui: &mut egui::Ui, history: &mut History) {
         ui,
         history,
         id,
+        "primaries",
         [
             ("lift", "Lift"),
             ("gamma", "Gamma"),
@@ -436,6 +489,7 @@ pub fn log_wheels(ui: &mut egui::Ui, history: &mut History) {
         ui,
         history,
         id,
+        "log_wheels",
         [
             ("shadow", "Shadow"),
             ("midtone", "Midtone"),

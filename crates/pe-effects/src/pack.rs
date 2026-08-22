@@ -31,7 +31,7 @@ pub const fn slot_width(kind: &ParamKind) -> usize {
     match kind {
         ParamKind::Float { .. } | ParamKind::Bool { .. } | ParamKind::Choice { .. } => 1,
         ParamKind::Rgb { .. } => 3,
-        ParamKind::Wheel => 4,
+        ParamKind::Wheel { .. } => 4,
         ParamKind::Curve { .. } | ParamKind::Warp => 0,
     }
 }
@@ -107,11 +107,14 @@ pub fn pack(effect: &EffectDef, params: &ParamMap) -> [f32; PARAM_SLOTS] {
                 out[at + 1] = v[1];
                 out[at + 2] = v[2];
             }
-            ParamKind::Wheel => {
+            ParamKind::Wheel { default, .. } => {
+                // Falls back to the wheel's *own* default, not to zero. A Gain
+                // wheel missing from a document is 1.0 in every channel, and
+                // filling it with zeros would black the picture out.
                 let w = value
                     .and_then(ParamValue::as_wheel)
                     .copied()
-                    .unwrap_or_default();
+                    .unwrap_or_else(|| pe_core::Wheel::uniform(default));
                 out[at] = w.rgb[0];
                 out[at + 1] = w.rgb[1];
                 out[at + 2] = w.rgb[2];

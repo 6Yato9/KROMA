@@ -308,31 +308,60 @@ pub static EFFECTS: &[EffectDef] = &[
             ParamDef {
                 key: "lift",
                 name: "Lift",
-                kind: ParamKind::Wheel,
+                kind: ParamKind::Wheel {
+                    min: -1.0,
+                    max: 1.0,
+                    default: 0.0,
+                    master: true,
+                },
                 unit: "",
                 section: "",
             },
             ParamDef {
                 key: "gamma",
                 name: "Gamma",
-                kind: ParamKind::Wheel,
+                kind: ParamKind::Wheel {
+                    min: -1.0,
+                    max: 1.0,
+                    default: 0.0,
+                    master: true,
+                },
                 unit: "",
                 section: "",
             },
+            // Gain multiplies, so its neutral is one. Storing it as a
+            // zero-centred nudge would have made the panel read 0.00 where
+            // Resolve reads 1.00, and the number in the box is the thing a
+            // colourist checks against a reference.
             ParamDef {
                 key: "gain",
                 name: "Gain",
-                kind: ParamKind::Wheel,
+                kind: ParamKind::Wheel {
+                    min: 0.0,
+                    max: 4.0,
+                    default: 1.0,
+                    master: true,
+                },
                 unit: "",
                 section: "",
             },
-            // The fourth wheel. Resolve has it and it is the one people
-            // actually reach for; leaving it out is the most common way a
-            // clone of these controls feels wrong.
+            // Offset has no master ring, only the three channels — which is how
+            // Resolve draws it, and it is not an oversight on their part: an
+            // achromatic offset is an exposure change, and there is a control
+            // for that already.
+            //
+            // Twenty-five is its neutral, not zero. The range is Resolve's,
+            // and it is lopsided on purpose: there is more room to lift than
+            // to crush, because crushing past black does nothing anyone wants.
             ParamDef {
                 key: "offset",
                 name: "Offset",
-                kind: ParamKind::Wheel,
+                kind: ParamKind::Wheel {
+                    min: -175.0,
+                    max: 255.0,
+                    default: 25.0,
+                    master: false,
+                },
                 unit: "",
                 section: "",
             },
@@ -2839,28 +2868,51 @@ pub static EFFECTS: &[EffectDef] = &[
             ParamDef {
                 key: "shadow",
                 name: "Shadow",
-                kind: ParamKind::Wheel,
+                kind: ParamKind::Wheel {
+                    min: -1.0,
+                    max: 1.0,
+                    default: 0.0,
+                    master: false,
+                },
                 unit: "",
                 section: "",
             },
             ParamDef {
                 key: "midtone",
                 name: "Midtone",
-                kind: ParamKind::Wheel,
+                kind: ParamKind::Wheel {
+                    min: -1.0,
+                    max: 1.0,
+                    default: 0.0,
+                    master: false,
+                },
                 unit: "",
                 section: "",
             },
             ParamDef {
                 key: "highlight",
                 name: "Highlight",
-                kind: ParamKind::Wheel,
+                kind: ParamKind::Wheel {
+                    min: -1.0,
+                    max: 1.0,
+                    default: 0.0,
+                    master: false,
+                },
                 unit: "",
                 section: "",
             },
+            // The log wheels show three channels each, no master. Resolve's
+            // do too: these are already tonally separated, and an achromatic
+            // push on one band is what the band above it is for.
             ParamDef {
                 key: "offset",
                 name: "Offset",
-                kind: ParamKind::Wheel,
+                kind: ParamKind::Wheel {
+                    min: -175.0,
+                    max: 255.0,
+                    default: 25.0,
+                    master: false,
+                },
                 unit: "",
                 section: "",
             },
@@ -2873,8 +2925,8 @@ pub static EFFECTS: &[EffectDef] = &[
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
-                    default: 0.30,
-                    neutral: 0.30,
+                    default: 0.333,
+                    neutral: 0.333,
                 },
                 unit: "",
                 section: "",
@@ -2885,8 +2937,8 @@ pub static EFFECTS: &[EffectDef] = &[
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
-                    default: 0.48,
-                    neutral: 0.48,
+                    default: 0.550,
+                    neutral: 0.550,
                 },
                 unit: "",
                 section: "",

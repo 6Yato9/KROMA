@@ -15,16 +15,28 @@
 // Weighted against the ACEScct anchors, not 0/0.5/1 — an SDR image only spans
 // about 0.073 to 0.555 in log.
 
+/// What Offset reads when it is doing nothing, and how much of the range a
+/// unit of it is worth. Shared with primaries.wgsl by convention rather than
+/// by inclusion, because WGSL has no way to say it once — if one moves, so
+/// must the other.
+const OFFSET_NEUTRAL: f32 = 25.0;
+const OFFSET_SCALE: f32 = 500.0;
+
+/// A log wheel's three channels.
+///
+/// No master ring on any of them, which is how Resolve draws these: the bands
+/// are already tonally separated, and an achromatic push on one of them is
+/// what the band above it is for.
 fn wheel_offset(base: u32) -> vec3<f32> {
-    // rgb plus the master, which applies to all three channels.
-    return slot3(base) + vec3<f32>(slot(base + 3u));
+    return slot3(base);
 }
 
 fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let shadow = wheel_offset(0u);
     let midtone = wheel_offset(4u);
     let highlight = wheel_offset(8u);
-    let offset = wheel_offset(12u);
+    // The numbers here are the ones the panel shows. See primaries.wgsl.
+    let offset = (slot3(12u) - vec3<f32>(OFFSET_NEUTRAL)) / OFFSET_SCALE;
     let low = slot(16u);
     let high = slot(17u);
 

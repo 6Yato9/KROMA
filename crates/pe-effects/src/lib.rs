@@ -70,7 +70,19 @@ pub enum ParamKind {
         default: [f32; 3],
     },
     /// A four-way colour wheel.
-    Wheel,
+    ///
+    /// Carries its own shape because the four are not interchangeable.
+    /// Lift and Gamma sit at zero, Gain at one, Offset at twenty-five — and
+    /// Offset has no master ring at all, only the three channels, which is
+    /// how Resolve draws it. A single `Wheel` with none of that would have
+    /// meant a Gain wheel that reads 0.00 when it is doing nothing.
+    Wheel {
+        min: f32,
+        max: f32,
+        default: f32,
+        /// Whether there is a fourth, achromatic control on the wheel.
+        master: bool,
+    },
     /// An editable curve.
     /// A drawn curve, baked into the LUT texture.
     ///
@@ -133,7 +145,7 @@ impl ParamDef {
             ParamKind::Float { default, .. } => ParamValue::Float(default),
             ParamKind::Bool { default } => ParamValue::Bool(default),
             ParamKind::Rgb { default } => ParamValue::Rgb(default),
-            ParamKind::Wheel => ParamValue::Wheel(Default::default()),
+            ParamKind::Wheel { default, .. } => ParamValue::Wheel(pe_core::Wheel::uniform(default)),
             ParamKind::Curve { flat } => ParamValue::Curve(if flat {
                 pe_core::Curve::flat()
             } else {
@@ -275,10 +287,10 @@ impl EffectDef {
                     _ => None,
                 })
                 .is_none_or(|c| c == default),
-            ParamKind::Wheel => params
+            ParamKind::Wheel { default, .. } => params
                 .get(def.key)
                 .and_then(ParamValue::as_wheel)
-                .is_none_or(|w| w.is_neutral()),
+                .is_none_or(|w| w.is_uniform(default)),
             ParamKind::Curve { flat } => params
                 .get(def.key)
                 .and_then(ParamValue::as_curve)
