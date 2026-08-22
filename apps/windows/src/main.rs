@@ -903,8 +903,12 @@ impl eframe::App for App {
         });
 
         if self.show_strip && !self.library.is_empty() {
-            egui::TopBottomPanel::bottom("filmstrip")
-                .exact_height(92.0)
+            // Down the left rather than across the bottom. The window is wider
+            // than it is tall and a photograph is not, so a horizontal strip
+            // costs height — the dimension the picture is already short of.
+            egui::SidePanel::left("filmstrip")
+                .exact_width(124.0)
+                .resizable(false)
                 .show(ctx, |ui| {
                     ui.add_space(2.0);
                     action = filmstrip::strip(ui, &mut self.library);
@@ -1388,8 +1392,14 @@ fn file_page(ui: &mut egui::Ui, app: &App) {
             ),
         ),
     ];
+    // Measured before the row, because inside a horizontal layout the
+    // available width is whatever the content asks for — which is the whole
+    // problem. A label told to wrap with no width to wrap *to* does not wrap.
+    let full = ui.available_width();
+    let value_width = (full - resolve::LABEL_WIDTH - 10.0).max(60.0);
+
     for (label, value) in rows {
-        ui.horizontal(|ui| {
+        ui.horizontal_top(|ui| {
             ui.add_sized(
                 [resolve::LABEL_WIDTH, 18.0],
                 egui::Label::new(
@@ -1398,8 +1408,15 @@ fn file_page(ui: &mut egui::Ui, app: &App) {
                         .color(resolve::colour::LABEL),
                 ),
             );
-            ui.label(egui::RichText::new(value).small().monospace());
+            // Wrapped and held to the column. A folder path is as long as it
+            // is, and a side panel that grows to fit one takes the space from
+            // the picture — the one thing on screen that cannot be scrolled
+            // to.
+            ui.allocate_ui(egui::vec2(value_width, 0.0), |ui| {
+                ui.add(egui::Label::new(egui::RichText::new(value).small().monospace()).wrap());
+            });
         });
+        ui.add_space(2.0);
     }
 }
 

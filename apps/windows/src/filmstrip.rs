@@ -1,4 +1,9 @@
-//! The filmstrip.
+//! The filmstrip: a column of thumbnails down the left of the window.
+//!
+//! Down rather than across, because the window is wider than it is tall and a
+//! photograph is not. A horizontal strip costs height, which is the dimension
+//! the picture is already short of; a vertical one costs width, of which there
+//! is more to spare — and it holds more frames at the same cell size.
 //!
 //! Only the cells actually on screen are laid out, hit-tested or drawn, and
 //! only those have their thumbnails asked for. A folder of a thousand
@@ -19,17 +24,18 @@ const GAP: f32 = 6.0;
 /// of decodes for photographs nobody has looked at.
 const LOOKAHEAD: usize = 8;
 
-/// Which cells a horizontal scroll offset puts on screen.
+/// Which cells a scroll offset puts on screen.
 ///
-/// Pulled out because it is the part that decides how much work the strip does
-/// per frame, and it is much easier to be sure of as arithmetic than by
-/// scrolling and watching.
-fn visible(x0: f32, x1: f32, stride: f32, count: usize) -> std::ops::Range<usize> {
+/// Written against a bare offset rather than a direction, so it says the same
+/// thing whichever way the strip runs. It is the part that decides how much
+/// work the strip does per frame, and it is much easier to be sure of as
+/// arithmetic than by scrolling and watching.
+fn visible(from: f32, to: f32, stride: f32, count: usize) -> std::ops::Range<usize> {
     if count == 0 || stride <= 0.0 {
         return 0..0;
     }
-    let first = (x0 / stride).floor().max(0.0) as usize;
-    let last = ((x1 / stride).ceil().max(0.0) as usize + 1).min(count);
+    let first = (from / stride).floor().max(0.0) as usize;
+    let last = ((to / stride).ceil().max(0.0) as usize + 1).min(count);
     first.min(count)..last
 }
 
@@ -45,23 +51,23 @@ pub enum Action {
 /// Draw the strip. Returns what the user did, if anything.
 pub fn strip(ui: &mut egui::Ui, library: &mut Library) -> Option<Action> {
     let mut clicked = None;
-    let stride = CELL.x + GAP;
+    let stride = CELL.y + GAP;
     let count = library.len();
     let current = library.current();
 
-    egui::ScrollArea::horizontal()
-        .auto_shrink([false, true])
+    egui::ScrollArea::vertical()
+        .auto_shrink([true, false])
         .show_viewport(ui, |ui, viewport| {
             let (rect, _) = ui.allocate_exact_size(
-                egui::vec2(stride * count as f32, CELL.y),
+                egui::vec2(CELL.x, stride * count as f32),
                 egui::Sense::hover(),
             );
-            let range = visible(viewport.min.x, viewport.max.x, stride, count);
+            let range = visible(viewport.min.y, viewport.max.y, stride, count);
             library.request(range.start..range.end + LOOKAHEAD);
 
             for i in range {
                 let cell = egui::Rect::from_min_size(
-                    egui::pos2(rect.min.x + i as f32 * stride, rect.min.y),
+                    egui::pos2(rect.min.x, rect.min.y + i as f32 * stride),
                     CELL,
                 );
                 let response = ui.interact(cell, ui.id().with(i), egui::Sense::click());
