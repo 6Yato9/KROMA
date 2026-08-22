@@ -18,6 +18,24 @@ use pe_effects::ParamKind;
 /// Shared with the mixer and curve panels: they all want the same double-
 /// click-to-neutral and the same coalescing key, and a second copy of this
 /// is a second place for those to drift.
+/// The same row, for a parameter on a row we already have the id of.
+///
+/// `slider` finds its row by effect key, which is what a pinned panel wants —
+/// there is exactly one White Balance. The Colour Warper is an ordinary
+/// effect, so there can be several, and the panel has to say *which*.
+pub fn slider_of(
+    ui: &mut egui::Ui,
+    history: &mut History,
+    id: pe_core::RowId,
+    effect: &str,
+    key: &'static str,
+) {
+    let Some(def) = pe_effects::by_key(effect).and_then(|e| e.param(key)) else {
+        return;
+    };
+    crate::inspector::param_ui(ui, history, id, def, ui.id().with(("warper", key)));
+}
+
 pub fn slider(
     ui: &mut egui::Ui,
     history: &mut History,

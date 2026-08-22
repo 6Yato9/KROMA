@@ -22,6 +22,7 @@ mod resolve;
 mod scopes;
 mod settings;
 mod theme;
+mod warper;
 mod wheels;
 
 use std::path::{Path, PathBuf};

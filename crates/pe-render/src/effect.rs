@@ -33,7 +33,16 @@ const LUT_WIDTH: u32 = 256;
 /// Rows in the curve LUT: four tone curves, then six secondaries.
 ///
 /// `curves.wgsl` indexes these by number, so the order here is load-bearing.
-const LUT_ROWS: u32 = 10;
+const LUT_ROWS: u32 = 16;
+
+/// Where the Colour Warper's lattices start, and how many rows each takes.
+///
+/// A lattice is at most 16 by 16, which is 256 vertices — exactly one LUT row
+/// per component, so two rows each and six for the three grids. Riding the
+/// curve LUT rather than adding a texture keeps the bind group at one
+/// sampled resource, which every effect pays for whether it uses it or not.
+const WARP_ROW: u32 = 10;
+const WARP_ROWS_EACH: u32 = 2;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -393,7 +402,16 @@ impl EffectRenderer {
         gpu.queue
             .write_buffer(&stage.uniform, 0, bytemuck::bytes_of(&uniform));
 
-        if effect.key == "curves" {
+        // Any effect carrying a curve or a lattice, rather than the one that
+        // happened to be first. Named-effect checks are how a second effect
+        // with the same need comes to render with an empty LUT and no error
+        // anywhere — the picture simply does not change.
+        if effect.params.iter().any(|p| {
+            matches!(
+                p.kind,
+                pe_effects::ParamKind::Curve { .. } | pe_effects::ParamKind::Warp
+            )
+        }) {
             self.upload_lut(gpu, stage, row);
         }
 
@@ -467,6 +485,38 @@ impl EffectRenderer {
                 None => data.extend(std::iter::repeat_n(0.5, LUT_WIDTH as usize)),
             }
         }
+
+        // The Colour Warper's three lattices, two rows apiece: every vertex's
+        // displacement along the first axis, then along the second. Laid out
+        // row-major so the shader's index arithmetic is the obvious one.
+        // The shader has its own copy of where these rows start, because a
+        // WGSL constant cannot be imported from Rust. Asserting the two agree
+        // here is the next best thing: get it wrong and the warper reads the
+        // secondary curves instead, which is a picture that looks plausible
+        // and is completely wrong.
+        debug_assert_eq!(
+            data.len() as u32,
+            WARP_ROW * LUT_WIDTH,
+            "the lattices must begin at the row colour_warper.wgsl reads"
+        );
+        for key in ["hue_sat", "chroma_luma_1", "chroma_luma_2"] {
+            let warp = row.params.get(key).and_then(ParamValue::as_warp);
+            for axis in 0..WARP_ROWS_EACH as usize {
+                match warp {
+                    Some(w) => {
+                        let count = (w.cols() * w.rows()) as usize;
+                        data.extend(w.offsets().iter().map(|o| o[axis]));
+                        data.extend(std::iter::repeat_n(0.0, LUT_WIDTH as usize - count));
+                    }
+                    None => data.extend(std::iter::repeat_n(0.0, LUT_WIDTH as usize)),
+                }
+            }
+        }
+        debug_assert_eq!(
+            data.len() as u32,
+            LUT_WIDTH * LUT_ROWS,
+            "the LUT is not the size the texture expects"
+        );
 
         gpu.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
@@ -583,6 +633,7 @@ fn effect_source(name: &str) -> &'static str {
         "contrast" => include_str!("../../../shaders/effects/contrast.wgsl"),
         "curves" => include_str!("../../../shaders/effects/curves.wgsl"),
         "hsl" => include_str!("../../../shaders/effects/hsl.wgsl"),
+        "colour_warper" => include_str!("../../../shaders/effects/colour_warper.wgsl"),
         "split_tone" => include_str!("../../../shaders/effects/split_tone.wgsl"),
         "primaries" => include_str!("../../../shaders/effects/primaries.wgsl"),
         "grain" => include_str!("../../../shaders/effects/grain.wgsl"),

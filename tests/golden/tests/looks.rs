@@ -230,3 +230,77 @@ fn grain_tonal_gains_are_independent() {
     assert!(a > 0.3, "shadow-only grain barely fired ({a:.2})");
     assert!(b > 0.3, "highlight-only grain barely fired ({b:.2})");
 }
+
+// ---------------------------------------------------------------------------
+// Colour Warper
+// ---------------------------------------------------------------------------
+
+/// A grid nobody has touched must leave the picture exactly alone.
+///
+/// Worth its own test rather than leaning on the neutrality sweep: the warper
+/// is the first effect whose parameter is a hundred numbers instead of one,
+/// and "all of them are zero" has to survive the trip through the LUT texture
+/// as well as through the registry.
+#[test]
+fn an_untouched_warp_leaves_the_picture_alone() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = chart();
+    let out = render(gpu, &src, &look("colour_warper", &[]));
+    let delta = out.max_channel_delta(&src).unwrap();
+    assert!(delta <= 2, "an identity warp moved the picture by {delta}");
+}
+
+/// Dragging a vertex has to move the hue it sits on, and leave the far side
+/// of the wheel where it was.
+///
+/// This is the whole promise of the tool. A warp that moved everything would
+/// be a hue slider with extra steps.
+#[test]
+fn a_dragged_vertex_moves_its_own_hue_and_not_the_opposite_one() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = chart();
+
+    // Vertex zero on a six-column grid is red; column three is cyan.
+    let mut warp = pe_core::Warp::identity(6, 6);
+    for row in 1..6 {
+        warp.set(0, row, [0.08, 0.0]);
+    }
+    let out = render(
+        gpu,
+        &src,
+        &look("colour_warper", &[("hue_sat", ParamValue::Warp(warp))]),
+    );
+
+    // The chart's colour band: find the most-changed and least-changed pixels
+    // by hue rather than trusting a fixed coordinate.
+    let mut moved_red = 0i32;
+    let mut moved_cyan = 0i32;
+    for y in (src.height / 2)..src.height {
+        for x in 0..src.width {
+            let a = src.pixel(x, y);
+            let b = out.pixel(x, y);
+            let d = (a[0] as i32 - b[0] as i32).abs()
+                + (a[1] as i32 - b[1] as i32).abs()
+                + (a[2] as i32 - b[2] as i32).abs();
+            // Red-dominant against cyan-dominant, crudely but unambiguously.
+            if a[0] > a[1] + 60 && a[0] > a[2] + 60 {
+                moved_red = moved_red.max(d);
+            }
+            if a[1] > a[0] + 60 && a[2] > a[0] + 60 {
+                moved_cyan = moved_cyan.max(d);
+            }
+        }
+    }
+    assert!(
+        moved_red > 12,
+        "the vertex sitting on red did not move red: {moved_red}"
+    );
+    assert!(
+        moved_cyan * 2 < moved_red,
+        "the far side of the wheel moved nearly as much: cyan {moved_cyan}, red {moved_red}"
+    );
+}

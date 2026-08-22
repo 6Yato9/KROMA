@@ -86,6 +86,11 @@ pub enum ParamKind {
         options: &'static [&'static str],
         default: &'static str,
     },
+    /// A lattice of displacements, dragged by hand — the Colour Warper's
+    /// grids. Like a curve it takes no uniform slots: it travels to the GPU
+    /// inside the LUT texture, because a hundred control points read through
+    /// a uniform buffer per pixel is not a thing worth doing.
+    Warp,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -135,6 +140,7 @@ impl ParamDef {
                 pe_core::Curve::default()
             }),
             ParamKind::Choice { default, .. } => ParamValue::Choice(default.into()),
+            ParamKind::Warp => ParamValue::Warp(pe_core::Warp::default()),
         }
     }
 }
@@ -277,6 +283,10 @@ impl EffectDef {
                 .get(def.key)
                 .and_then(ParamValue::as_curve)
                 .is_none_or(|c| if flat { c.is_flat() } else { c.is_identity() }),
+            ParamKind::Warp => params
+                .get(def.key)
+                .and_then(ParamValue::as_warp)
+                .is_none_or(|w| w.is_identity()),
         })
     }
 }

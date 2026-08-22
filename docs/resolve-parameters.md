@@ -542,3 +542,43 @@ control under it costs a click and buys nothing.
 It is deliberately **not** a visible-default effect even though it opens at 0.9
 — on a photograph with no dirt in it that is correctly no change at all, and
 "visible at its defaults" has to mean visible on any picture.
+
+---
+
+## Colour Warper
+
+Three windows onto one object. Resolve draws hue against saturation as a
+hexagonal web, and chroma against luma as two rectangular grids about two
+chromaticity axes — the axes change, the lattice does not. That is why the
+views switch on an icon rather than being three tools, and why there is one
+`pe_core::Warp` behind all of them.
+
+| Parameter | Default | Range | Status |
+|---|---|---|---|
+| Hue Divisions | 6 | 4 / 6 / 8 / 12 / 16 | confirmed |
+| Saturation Divisions | 6 | as above | confirmed |
+| Chroma Divisions | 6 | as above | confirmed |
+| Luma Divisions | 6 | as above | confirmed |
+| Axis Angle | 0.00 | −180…180 | confirmed / inferred range |
+
+**The lattice is not a slider set.** It is stored as a displacement per vertex
+— zero for an untouched grid — and travels to the GPU inside the curve LUT,
+two rows per grid from row 10. A 16 by 16 grid is 256 vertices, which is
+exactly one LUT row per component, and that is where the 16 comes from.
+
+**Hue wraps and chroma does not.** The vertex at the far right of the hue grid
+*is* the one at the far left; treating it as an edge leaves a seam at red no
+amount of dragging can smooth. Chroma's two ends are grey and full colour,
+which are as far apart as two colours get. The interpolation is written twice —
+`Warp::sample` and `colour_warper.wgsl` — and each says so.
+
+**Chroma Warp is not built.** It is the one view that is not the same object:
+it places *pins* on the gamut, each with its own chroma range, tonal range and
+exposure, rather than dragging a fixed grid. The icon is there and says so
+rather than pretending; building it needs a sparse pin model, which is a
+different parameter type again.
+
+The values under Pin in the screenshot — Chroma Range 0.040, Tonal Range Low
+and High 1.000, Tonal Range Pivot 0.500, Exposure 0.000 — are recorded here so
+they are not lost, and they are greyed in the screenshot because no pin was
+selected.

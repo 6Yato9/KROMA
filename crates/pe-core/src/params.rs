@@ -104,6 +104,8 @@ pub enum ParamValue {
     Curve(Curve),
     /// One of an effect's enumerated options, stored by key.
     Choice(String),
+    /// A lattice of displacements — the Colour Warper's grids.
+    Warp(crate::warp::Warp),
 }
 
 impl ParamValue {
@@ -118,6 +120,13 @@ impl ParamValue {
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             ParamValue::Bool(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    pub fn as_warp(&self) -> Option<&crate::warp::Warp> {
+        match self {
+            ParamValue::Warp(w) => Some(w),
             _ => None,
         }
     }
@@ -154,6 +163,7 @@ impl ParamValue {
             ParamValue::Wheel(_) => "wheel",
             ParamValue::Curve(_) => "curve",
             ParamValue::Choice(_) => "choice",
+            ParamValue::Warp(_) => "warp",
         }
     }
 }

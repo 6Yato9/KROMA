@@ -343,6 +343,107 @@ pub static EFFECTS: &[EffectDef] = &[
     // read off the Resolve UI, so this effect is deliberately *not* neutral at
     // its defaults; see `EFFECTS_WITH_VISIBLE_DEFAULTS`.
     EffectDef {
+        key: "colour_warper",
+        name: "Colour Warper",
+        group: Group::Color,
+        space: WorkingSpace::Log,
+        shader: "colour_warper",
+        spatial: false,
+        derived_slots: 0,
+        gates: &[],
+        params: &[
+            // Resolve's Colour Warper. Three views of one idea — a grid laid over a
+            // two-dimensional slice of colour, with a control point at each
+            // intersection you can drag — and the views differ only in which two
+            // axes the slice is cut along.
+            //
+            // That is why there is one effect here rather than three, and why the
+            // views switch on an icon: they are not separate tools, they are
+            // separate windows onto the same object. The lattice itself lives in
+            // pe_core::Warp and is shared by both.
+            // ---- Hue against saturation ----
+            ParamDef {
+                key: "hue_divisions",
+                name: "Hue Divisions",
+                kind: ParamKind::Choice {
+                    options: &["4", "6", "8", "12", "16"],
+                    default: "6",
+                },
+                unit: "",
+                section: "Hue - Saturation",
+            },
+            ParamDef {
+                key: "sat_divisions",
+                name: "Saturation Divisions",
+                kind: ParamKind::Choice {
+                    options: &["4", "6", "8", "12", "16"],
+                    default: "6",
+                },
+                unit: "",
+                section: "Hue - Saturation",
+            },
+            ParamDef {
+                key: "hue_sat",
+                name: "Hue - Saturation",
+                kind: ParamKind::Warp,
+                unit: "",
+                section: "Hue - Saturation",
+            },
+            // ---- Chroma against luma ----
+            // Two grids, as Resolve has. One is not two halves of a control: they
+            // are the same warp applied about two different chromaticity axes, and
+            // Axis Angle is what separates them. Warping chroma against luma on one
+            // axis alone can only push colour along that axis, which is a line
+            // through the picture's colour rather than a region of it.
+            ParamDef {
+                key: "chroma_divisions",
+                name: "Chroma Divisions",
+                kind: ParamKind::Choice {
+                    options: &["4", "6", "8", "12", "16"],
+                    default: "6",
+                },
+                unit: "",
+                section: "Chroma - Luma",
+            },
+            ParamDef {
+                key: "luma_divisions",
+                name: "Luma Divisions",
+                kind: ParamKind::Choice {
+                    options: &["4", "6", "8", "12", "16"],
+                    default: "6",
+                },
+                unit: "",
+                section: "Chroma - Luma",
+            },
+            ParamDef {
+                key: "axis_angle",
+                name: "Axis Angle",
+                kind: ParamKind::Float {
+                    min: -180.0,
+                    max: 180.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "°",
+                section: "Chroma - Luma",
+            },
+            ParamDef {
+                key: "chroma_luma_1",
+                name: "Grid 1",
+                kind: ParamKind::Warp,
+                unit: "",
+                section: "Chroma - Luma",
+            },
+            ParamDef {
+                key: "chroma_luma_2",
+                name: "Grid 2",
+                kind: ParamKind::Warp,
+                unit: "",
+                section: "Chroma - Luma",
+            },
+        ],
+    },
+    EffectDef {
         key: "split_tone",
         name: "Split Tone",
         group: Group::Color,
@@ -4113,7 +4214,7 @@ mod tests {
     fn the_registry_is_the_expected_size() {
         // Nine at M1, plus Split Tone once the Resolve parameter research
         // landed. Pinned so an accidental duplicate or deletion is visible.
-        assert_eq!(EFFECTS.len(), 29);
+        assert_eq!(EFFECTS.len(), 30);
     }
 
     /// A gate naming a parameter that does not exist would quietly do
@@ -4294,6 +4395,10 @@ mod tests {
             ("hsl", WorkingSpace::Log),
             ("primaries", WorkingSpace::Log),
             ("split_tone", WorkingSpace::Log),
+            // Hue, saturation, chroma and luma are all constructs of how a
+            // picture reads. A grid the user drags has to move the colour
+            // where they put it, which is a statement about perception.
+            ("colour_warper", WorkingSpace::Log),
             // Density in the negative, not light.
             ("grain", WorkingSpace::Log),
         ];
@@ -4413,7 +4518,10 @@ mod tests {
 
     #[test]
     fn unknown_keys_are_not_found() {
-        assert!(by_key("colour_warper").is_none(), "the colour warper is M2");
+        // The colour warper used to be the example here, which is a good sign
+        // for the roadmap and a bad one for the test. Power windows are the
+        // next thing this will have to give up.
+        assert!(by_key("power_window").is_none(), "power windows are M3");
     }
 
     /// A fresh document must cost nothing to render.
