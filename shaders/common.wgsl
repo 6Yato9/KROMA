@@ -72,6 +72,16 @@ fn frame_uv(uv: vec2<f32>) -> vec2<f32> {
     return u.region.xy + uv * u.region.zw;
 }
 
+// The inverse of frame_uv: a point in the whole frame, back to this pass's uv.
+//
+// Needed by any effect that samples somewhere it has *named* in frame terms —
+// a blur sweeping about a centre point, a region being averaged. The effects
+// that only offset from where they already are get by with frame_to_uv on the
+// distance alone.
+fn uv_from_frame(f: vec2<f32>) -> vec2<f32> {
+    return (f - u.region.xy) / max(u.region.zw, vec2<f32>(1e-6));
+}
+
 // A distance expressed as a fraction of the frame, converted to this pass's uv.
 // Without it a halation radius would shrink as you zoom in, because the texture
 // covers less of the frame.

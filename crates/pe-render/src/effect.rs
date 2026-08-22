@@ -560,6 +560,11 @@ fn effect_source(name: &str) -> &'static str {
         "colour" => include_str!("../../../shaders/effects/colour.wgsl"),
         "log_wheels" => include_str!("../../../shaders/effects/log_wheels.wgsl"),
         "colour_mixer" => include_str!("../../../shaders/effects/colour_mixer.wgsl"),
+        "color_stabilizer" => {
+            include_str!("../../../shaders/effects/color_stabilizer.wgsl")
+        }
+        "radial_blur" => include_str!("../../../shaders/effects/radial_blur.wgsl"),
+        "zoom_blur" => include_str!("../../../shaders/effects/zoom_blur.wgsl"),
         other => panic!("no shader source embedded for {other:?}"),
     }
 }

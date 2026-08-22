@@ -1690,6 +1690,373 @@ pub static EFFECTS: &[EffectDef] = &[
             bipolar("magenta_luminance", "Magenta Luminance", 1.0, ""),
         ],
     },
+    // Resolve's Color Stabilizer, less the half that needs a second frame.
+    // What is left — measure a region, correct it to neutral — is the
+    // eyedropper every editor has, with the region and the strength exposed
+    // instead of hidden.
+    EffectDef {
+        key: "color_stabilizer",
+        name: "Color Stabilizer",
+        group: Group::Color,
+        space: WorkingSpace::Linear,
+        shader: "color_stabilizer",
+        // It reads a region rather than only the pixel under it.
+        spatial: true,
+        derived_slots: 0,
+        params: &[
+            ParamDef {
+                key: "region",
+                name: "Region Of Analysis",
+                kind: ParamKind::Choice {
+                    options: &["Selected Area", "Entire Frame"],
+                    default: "Entire Frame",
+                },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "source_x",
+                name: "Source X Position",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.5,
+                },
+                unit: "",
+                section: "Analysis Region",
+            },
+            ParamDef {
+                key: "source_y",
+                name: "Source Y Position",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.5,
+                },
+                unit: "",
+                section: "Analysis Region",
+            },
+            ParamDef {
+                key: "source_width",
+                name: "Source Width",
+                kind: ParamKind::Float {
+                    min: 0.01,
+                    max: 1.0,
+                    default: 0.2,
+                    neutral: 0.2,
+                },
+                unit: "",
+                section: "Analysis Region",
+            },
+            ParamDef {
+                key: "source_height",
+                name: "Source Height",
+                kind: ParamKind::Float {
+                    min: 0.01,
+                    max: 1.0,
+                    default: 0.25,
+                    neutral: 0.25,
+                },
+                unit: "",
+                section: "Analysis Region",
+            },
+            ParamDef {
+                key: "stabilize_wb",
+                name: "Stabilize White Balance",
+                kind: ParamKind::Bool { default: true },
+                unit: "",
+                section: "Stabilization",
+            },
+            ParamDef {
+                key: "stabilize_brightness",
+                name: "Stabilize Brightness",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+                section: "Stabilization",
+            },
+            ParamDef {
+                key: "stabilize",
+                name: "Stabilize",
+                kind: ParamKind::Choice {
+                    options: &["Levels", "Levels and Contrast"],
+                    default: "Levels",
+                },
+                unit: "",
+                section: "Stabilization",
+            },
+            // Starts at zero, and that is the gate.
+            //
+            // Resolve does nothing until you press Analyze Now. Our
+            // measurement is live, so there is nothing to press — but a
+            // corrective tool that changes the picture the moment it is added
+            // is surprising, and every other corrective effect here starts
+            // neutral. Dragging this up applies the correction gradually,
+            // which is a better control than a button anyway.
+            ParamDef {
+                key: "strength",
+                name: "Strength",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Stabilization",
+            },
+        ],
+    },
+    // A rotational blur: every pixel smeared along the arc it would sweep if
+    // the picture spun about a point.
+    EffectDef {
+        key: "radial_blur",
+        name: "Radial Blur",
+        group: Group::Optics,
+        space: WorkingSpace::Linear,
+        shader: "radial_blur",
+        spatial: true,
+        derived_slots: 0,
+        params: &[
+            ParamDef {
+                key: "strength",
+                name: "Smooth Strength",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.4,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "blur_type",
+                name: "Blur Type",
+                kind: ParamKind::Choice {
+                    options: &["Realistic", "Even"],
+                    default: "Realistic",
+                },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "symmetry",
+                name: "Blur Symmetry",
+                kind: ParamKind::Choice {
+                    options: &["Symmetric", "Asymmetric"],
+                    default: "Symmetric",
+                },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "quality",
+                name: "Quality",
+                kind: ParamKind::Choice {
+                    options: &["Faster", "Better", "Best"],
+                    default: "Better",
+                },
+                unit: "",
+                section: "Advanced Controls",
+            },
+            ParamDef {
+                key: "border",
+                name: "Border Type",
+                kind: ParamKind::Choice {
+                    options: &["Replicate", "Mirror", "Wrap", "Black"],
+                    default: "Replicate",
+                },
+                unit: "",
+                section: "Advanced Controls",
+            },
+            ParamDef {
+                key: "center_x",
+                name: "Position X",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.5,
+                },
+                unit: "",
+                section: "Center Position",
+            },
+            ParamDef {
+                key: "center_y",
+                name: "Position Y",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.5,
+                },
+                unit: "",
+                section: "Center Position",
+            },
+            ParamDef {
+                key: "red",
+                name: "Red",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Channel Adjustment",
+            },
+            ParamDef {
+                key: "green",
+                name: "Green",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Channel Adjustment",
+            },
+            ParamDef {
+                key: "blue",
+                name: "Blue",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Channel Adjustment",
+            },
+        ],
+    },
+    // The same idea along the radius instead of the arc.
+    EffectDef {
+        key: "zoom_blur",
+        name: "Zoom Blur",
+        group: Group::Optics,
+        space: WorkingSpace::Linear,
+        shader: "zoom_blur",
+        spatial: true,
+        derived_slots: 0,
+        params: &[
+            ParamDef {
+                key: "strength",
+                name: "Smooth Strength",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.4,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "blur_type",
+                name: "Blur Type",
+                kind: ParamKind::Choice {
+                    options: &["Realistic", "Even"],
+                    default: "Realistic",
+                },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "symmetry",
+                name: "Blur Symmetry",
+                kind: ParamKind::Choice {
+                    options: &["Symmetric", "Asymmetric"],
+                    default: "Symmetric",
+                },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "quality",
+                name: "Quality",
+                kind: ParamKind::Choice {
+                    options: &["Faster", "Better", "Best"],
+                    default: "Better",
+                },
+                unit: "",
+                section: "Advanced Controls",
+            },
+            ParamDef {
+                key: "border",
+                name: "Border Type",
+                kind: ParamKind::Choice {
+                    options: &["Replicate", "Mirror", "Wrap", "Black"],
+                    default: "Replicate",
+                },
+                unit: "",
+                section: "Advanced Controls",
+            },
+            ParamDef {
+                key: "center_x",
+                name: "Position X",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.5,
+                },
+                unit: "",
+                section: "Center Position",
+            },
+            ParamDef {
+                key: "center_y",
+                name: "Position Y",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.5,
+                },
+                unit: "",
+                section: "Center Position",
+            },
+            ParamDef {
+                key: "red",
+                name: "Red",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Channel Adjustment",
+            },
+            ParamDef {
+                key: "green",
+                name: "Green",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Channel Adjustment",
+            },
+            ParamDef {
+                key: "blue",
+                name: "Blue",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Channel Adjustment",
+            },
+        ],
+    },
 ];
 
 /// Effects whose registry defaults deliberately change the image.
@@ -1720,6 +2087,10 @@ pub const EFFECTS_WITH_VISIBLE_DEFAULTS: &[&str] = &[
     "grain",
     "vignette",
     "film_damage",
+    // You add a blur because you want a blur. Resolve ships both at 0.4 for
+    // the same reason a Grain row arrives with grain in it.
+    "radial_blur",
+    "zoom_blur",
 ];
 
 /// The fixed panels, in the order they are applied.
@@ -1780,7 +2151,7 @@ mod tests {
     fn the_registry_is_the_expected_size() {
         // Nine at M1, plus Split Tone once the Resolve parameter research
         // landed. Pinned so an accidental duplicate or deletion is visible.
-        assert_eq!(EFFECTS.len(), 18);
+        assert_eq!(EFFECTS.len(), 21);
     }
 
     #[test]
@@ -1829,6 +2200,12 @@ mod tests {
             // Tonal bands of a log-encoded signal, by definition.
             ("log_wheels", WorkingSpace::Log),
             ("colour_mixer", WorkingSpace::Log),
+            // Channel gains and an exposure scale: light, both of them.
+            ("color_stabilizer", WorkingSpace::Linear),
+            // A blur is an average of light. Averaged anywhere else it
+            // comes out dark, the same way a downscale does.
+            ("radial_blur", WorkingSpace::Linear),
+            ("zoom_blur", WorkingSpace::Linear),
             // Perception: pivoting, shaping, drawing.
             ("contrast", WorkingSpace::Log),
             ("curves", WorkingSpace::Log),
@@ -1853,7 +2230,16 @@ mod tests {
         for e in EFFECTS {
             let expected = matches!(
                 e.key,
-                "grain" | "halation" | "vignette" | "bloom" | "dehaze" | "film_damage" | "presence"
+                "grain"
+                    | "halation"
+                    | "vignette"
+                    | "bloom"
+                    | "dehaze"
+                    | "film_damage"
+                    | "presence"
+                    | "color_stabilizer"
+                    | "radial_blur"
+                    | "zoom_blur"
             );
             assert_eq!(e.spatial, expected, "{}", e.key);
         }
