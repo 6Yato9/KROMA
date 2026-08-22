@@ -434,6 +434,121 @@ fn film_damage_reference() {
     pe_golden::assert_matches("film_damage_worn_print", &out, TOLERANCE);
 }
 
+/// A flat mid-grey frame, so a scratch is the only thing in it.
+fn flat(w: u32, h: u32) -> DecodedImage {
+    let px: Vec<u8> = std::iter::repeat_n([120u8, 120, 120, 255], (w * h) as usize)
+        .flatten()
+        .collect();
+    DecodedImage::new(w, h, px).unwrap()
+}
+
+/// Each scratch carries its own colour, which is the reason Resolve gives
+/// them one each. A strip of film that has been through a projector has a
+/// sharp black gouge on the negative and a soft white one on the print, and
+/// one shared colour cannot say both.
+#[test]
+fn each_scratch_uses_its_own_colour() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = flat(256, 64);
+    let out = render(
+        gpu,
+        &src,
+        &look(
+            "film_damage",
+            &[
+                ("scratch1_position", ParamValue::Float(0.25)),
+                ("scratch1_width", ParamValue::Float(0.03)),
+                ("scratch1_strength", ParamValue::Float(1.0)),
+                ("scratch1_blur", ParamValue::Float(0.0)),
+                ("scratch1_color", ParamValue::Rgb([1.0, 1.0, 1.0])),
+                ("scratch2_position", ParamValue::Float(0.75)),
+                ("scratch2_width", ParamValue::Float(0.03)),
+                ("scratch2_strength", ParamValue::Float(1.0)),
+                ("scratch2_blur", ParamValue::Float(0.0)),
+                ("scratch2_color", ParamValue::Rgb([0.0, 0.0, 0.0])),
+            ],
+        ),
+    );
+
+    let white = out.pixel(64, 32)[0] as i32;
+    let black = out.pixel(192, 32)[0] as i32;
+    let clean = out.pixel(128, 32)[0] as i32;
+    assert!(
+        white > clean + 40,
+        "the first scratch should be white ({white} against {clean})"
+    );
+    assert!(
+        black < clean - 40,
+        "the second should be black ({black} against {clean})"
+    );
+}
+
+/// Enable silences a scratch you have set up. Without it the only way to turn
+/// one off is to zero its strength, which loses the setting.
+#[test]
+fn disabling_a_scratch_removes_it_without_touching_its_settings() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = flat(256, 64);
+    let settings = |enabled: bool| {
+        look(
+            "film_damage",
+            &[
+                ("scratch1_position", ParamValue::Float(0.5)),
+                ("scratch1_width", ParamValue::Float(0.04)),
+                ("scratch1_strength", ParamValue::Float(1.0)),
+                ("scratch1_enable", ParamValue::Bool(enabled)),
+            ],
+        )
+    };
+    let on = render(gpu, &src, &settings(true));
+    let off = render(gpu, &src, &settings(false));
+
+    assert!(
+        on.pixel(128, 32)[0] as i32 > src.pixel(128, 32)[0] as i32 + 40,
+        "the scratch was not drawn when enabled"
+    );
+    assert!(
+        (off.pixel(128, 32)[0] as i32 - src.pixel(128, 32)[0] as i32).abs() <= 2,
+        "a disabled scratch still drew"
+    );
+}
+
+/// Pins the two shifts to their slots. They sit at 1 and 2, ahead of the
+/// vignetting group, and reading one off its neighbour would tint the picture
+/// when the user asked for a vignette.
+#[test]
+fn the_temperature_shift_warms_the_picture_and_the_tint_shift_does_not() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = flat(64, 64);
+    let warm = render(
+        gpu,
+        &src,
+        &look("film_damage", &[("temp_shift", ParamValue::Float(1.0))]),
+    );
+    let p = warm.pixel(32, 32);
+    assert!(
+        p[0] as i32 > p[2] as i32 + 6,
+        "a positive temperature shift should warm the picture, got {p:?}"
+    );
+
+    let tinted = render(
+        gpu,
+        &src,
+        &look("film_damage", &[("tint_shift", ParamValue::Float(1.0))]),
+    );
+    let q = tinted.pixel(32, 32);
+    assert!(
+        (q[0] as i32 - q[2] as i32).abs() < 6,
+        "a tint shift should move green against magenta, not red against blue, got {q:?}"
+    );
+}
+
 #[test]
 fn dehaze_reference() {
     let Some(gpu) = pe_golden::shared_gpu() else {

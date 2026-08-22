@@ -48,7 +48,7 @@ struct EffectUniform {
     // helpers below, or it will drift as you pan.
     region: vec4<f32>,
     // Parameters, packed by pe_effects::pack. Slot n is p[n / 4][n % 4].
-    p: array<vec4<f32>, 12>,
+    p: array<vec4<f32>, 16>,
 }
 
 @group(0) @binding(0) var src_texture: texture_2d<f32>;

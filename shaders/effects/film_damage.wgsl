@@ -3,9 +3,10 @@
 //    3 focal_factor   4 geometry_factor 5 tilt_amount   6 tilt_angle
 //    7 dirt_density   8 dirt_size      9 dirt_blur     10 dirt_seed
 //   11 dirt_colour (3)
-//   14 scratch_blur  15 scratch_colour (3)
-//   18 scratch 1 (position, width, strength)
-//   21 scratch 2     24 scratch 3     27 scratch 4    30 scratch 5
+//   14 + 8n for scratch n: enable, colour (3), position, width, strength, blur
+//
+// Slots follow the order the parameters are declared in the registry, so that
+// order is load-bearing and this comment has to move with it.
 //
 // Everything here is physical — a projector bulb running warm, dye layers
 // failing, dirt occluding light, emulsion gouged away — so it runs in linear.
@@ -47,8 +48,6 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let dirt_blur = slot(9u);
     let dirt_seed = slot(10u);
     let dirt_colour = slot3(11u);
-    let scratch_blur = slot(14u);
-    let scratch_colour = slot3(15u);
 
     let aspect = frame_aspect();
     // Damage belongs to the film, not to the viewport, so every position below
@@ -126,14 +125,21 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     }
 
     // --- Scratches ---------------------------------------------------------
-    var scratch = 0.0;
+    // Composited one at a time rather than accumulated into a single mask,
+    // because each carries its own colour now. Taking the strongest and then
+    // picking one colour for all of them would make a white scratch crossing a
+    // black one come out whichever was written last.
     for (var i = 0u; i < 5u; i = i + 1u) {
-        let base = 18u + i * 3u;
-        let m = scratch_mask(fuv, slot(base), slot(base + 1u), scratch_blur);
-        scratch = max(scratch, m * slot(base + 2u));
-    }
-    if scratch > 0.0 {
-        out = mix(out, scratch_colour, clamp(scratch, 0.0, 1.0));
+        let base = 14u + i * 8u;
+        if slot(base) < 0.5 {
+            continue;
+        }
+        let colour = slot3(base + 1u);
+        let m = scratch_mask(fuv, slot(base + 4u), slot(base + 5u), slot(base + 7u));
+        let amount = clamp(m * slot(base + 6u), 0.0, 1.0);
+        if amount > 0.0 {
+            out = mix(out, colour, amount);
+        }
     }
 
     return out;

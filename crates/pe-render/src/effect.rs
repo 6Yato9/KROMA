@@ -44,7 +44,7 @@ struct EffectUniform {
     seed: f32,
     _pad: [f32; 3],
     region: [f32; 4],
-    p: [[f32; 4]; 12],
+    p: [[f32; 4]; PARAM_ROWS],
 }
 
 /// The per-pass resources an effect needs beyond its input and output
@@ -513,8 +513,12 @@ fn new_scratch(device: &wgpu::Device) -> Scratch {
     }
 }
 
-fn to_vec4s(slots: [f32; PARAM_SLOTS]) -> [[f32; 4]; 12] {
-    let mut out = [[0.0f32; 4]; 12];
+/// The rows the shader reads. Derived from `PARAM_SLOTS` rather than written
+/// out, so raising the budget is one edit in one place.
+const PARAM_ROWS: usize = PARAM_SLOTS / 4;
+
+fn to_vec4s(slots: [f32; PARAM_SLOTS]) -> [[f32; 4]; PARAM_ROWS] {
+    let mut out = [[0.0f32; 4]; PARAM_ROWS];
     for (i, chunk) in slots.as_chunks::<4>().0.iter().enumerate() {
         out[i].copy_from_slice(chunk);
     }
@@ -615,8 +619,13 @@ mod tests {
 
     #[test]
     fn the_uniform_matches_the_shader_layout() {
-        // Three 16-byte blocks of scalars, the region, then twelve vec4s.
-        assert_eq!(std::mem::size_of::<EffectUniform>(), 48 + 16 + 16 * 12);
+        // Three 16-byte blocks of scalars, the region, then the parameter
+        // rows. `common.wgsl` declares the same array; if one moves without
+        // the other, every effect reads its parameters off the end.
+        assert_eq!(
+            std::mem::size_of::<EffectUniform>(),
+            48 + 16 + 16 * PARAM_ROWS
+        );
         assert_eq!(std::mem::align_of::<EffectUniform>(), 4);
     }
 

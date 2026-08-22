@@ -934,7 +934,7 @@ pub static EFFECTS: &[EffectDef] = &[
             },
             // Positive warms, simulating a projector bulb running hot;
             // positive tint yellows, simulating dye failure.
-            bipolar("temp_shift", "Temp Shift", 1.0, ""),
+            bipolar("temp_shift", "Temp. Shift", 1.0, ""),
             bipolar("tint_shift", "Tint Shift", 1.0, ""),
             ParamDef {
                 key: "focal_factor",
@@ -1042,33 +1042,44 @@ pub static EFFECTS: &[EffectDef] = &[
                 unit: "",
                 section: "Add Dirt",
             },
+            // Five independent scratches, matching Resolve. A count
+            // parameter could not place them, and placement is most of
+            // what makes damage read as real rather than procedural.
+            //
+            // Each carries its own colour and blur. Resolve does the same,
+            // and it is not decoration: a strip of film that has been
+            // through a projector has a sharp black gouge on the negative
+            // and a soft white one on the print, and one shared colour
+            // cannot say both.
             ParamDef {
-                key: "scratch_blur",
-                name: "Scratch Blur",
-                kind: ParamKind::Float {
-                    min: 0.0,
-                    max: 2.0,
-                    default: 0.3,
-                    neutral: 0.3,
-                },
+                key: "scratch1_enable",
+                name: "Enable",
+                // All five are enabled; strength is what decides whether one
+                // is visible, and it starts at zero for all but the first.
+                //
+                // The alternative — four of them switched off — means turning
+                // up Scratch 3's strength does nothing, with no hint as to
+                // why. Enable is for silencing a scratch you have set up, not
+                // for gating one you have not.
+                kind: ParamKind::Bool { default: true },
                 unit: "",
-                section: "Scratches",
+                section: "Add Scratch 1",
             },
             ParamDef {
-                key: "scratch_color",
+                key: "scratch1_color",
                 name: "Scratch Color",
+                // White reads as emulsion gouged off a print, black as a
+                // scratch on the negative. Per scratch, because a real strip
+                // of film has both.
                 kind: ParamKind::Rgb {
                     default: [1.0, 1.0, 1.0],
                 },
                 unit: "",
-                section: "Scratches",
+                section: "Add Scratch 1",
             },
-            // Five independent scratches, matching Resolve. A count
-            // parameter could not place them, and placement is most of
-            // what makes damage read as real rather than procedural.
             ParamDef {
                 key: "scratch1_position",
-                name: "Scratch 1 Position",
+                name: "Scratch Position",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
@@ -1080,7 +1091,7 @@ pub static EFFECTS: &[EffectDef] = &[
             },
             ParamDef {
                 key: "scratch1_width",
-                name: "Scratch 1 Width",
+                name: "Scratch Width",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 0.05,
@@ -1092,7 +1103,7 @@ pub static EFFECTS: &[EffectDef] = &[
             },
             ParamDef {
                 key: "scratch1_strength",
-                name: "Scratch 1 Strength",
+                name: "Scratch Strength",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
@@ -1103,8 +1114,39 @@ pub static EFFECTS: &[EffectDef] = &[
                 section: "Add Scratch 1",
             },
             ParamDef {
+                key: "scratch1_blur",
+                name: "Scratch Blur",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 0.3,
+                    neutral: 0.3,
+                },
+                unit: "",
+                section: "Add Scratch 1",
+            },
+            ParamDef {
+                key: "scratch2_enable",
+                name: "Enable",
+                kind: ParamKind::Bool { default: true },
+                unit: "",
+                section: "Add Scratch 2",
+            },
+            ParamDef {
+                key: "scratch2_color",
+                name: "Scratch Color",
+                // White reads as emulsion gouged off a print, black as a
+                // scratch on the negative. Per scratch, because a real strip
+                // of film has both.
+                kind: ParamKind::Rgb {
+                    default: [1.0, 1.0, 1.0],
+                },
+                unit: "",
+                section: "Add Scratch 2",
+            },
+            ParamDef {
                 key: "scratch2_position",
-                name: "Scratch 2 Position",
+                name: "Scratch Position",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
@@ -1116,7 +1158,7 @@ pub static EFFECTS: &[EffectDef] = &[
             },
             ParamDef {
                 key: "scratch2_width",
-                name: "Scratch 2 Width",
+                name: "Scratch Width",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 0.05,
@@ -1128,7 +1170,7 @@ pub static EFFECTS: &[EffectDef] = &[
             },
             ParamDef {
                 key: "scratch2_strength",
-                name: "Scratch 2 Strength",
+                name: "Scratch Strength",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
@@ -1139,8 +1181,39 @@ pub static EFFECTS: &[EffectDef] = &[
                 section: "Add Scratch 2",
             },
             ParamDef {
+                key: "scratch2_blur",
+                name: "Scratch Blur",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 0.3,
+                    neutral: 0.3,
+                },
+                unit: "",
+                section: "Add Scratch 2",
+            },
+            ParamDef {
+                key: "scratch3_enable",
+                name: "Enable",
+                kind: ParamKind::Bool { default: true },
+                unit: "",
+                section: "Add Scratch 3",
+            },
+            ParamDef {
+                key: "scratch3_color",
+                name: "Scratch Color",
+                // White reads as emulsion gouged off a print, black as a
+                // scratch on the negative. Per scratch, because a real strip
+                // of film has both.
+                kind: ParamKind::Rgb {
+                    default: [1.0, 1.0, 1.0],
+                },
+                unit: "",
+                section: "Add Scratch 3",
+            },
+            ParamDef {
                 key: "scratch3_position",
-                name: "Scratch 3 Position",
+                name: "Scratch Position",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
@@ -1152,7 +1225,7 @@ pub static EFFECTS: &[EffectDef] = &[
             },
             ParamDef {
                 key: "scratch3_width",
-                name: "Scratch 3 Width",
+                name: "Scratch Width",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 0.05,
@@ -1164,7 +1237,7 @@ pub static EFFECTS: &[EffectDef] = &[
             },
             ParamDef {
                 key: "scratch3_strength",
-                name: "Scratch 3 Strength",
+                name: "Scratch Strength",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
@@ -1175,8 +1248,39 @@ pub static EFFECTS: &[EffectDef] = &[
                 section: "Add Scratch 3",
             },
             ParamDef {
+                key: "scratch3_blur",
+                name: "Scratch Blur",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 0.3,
+                    neutral: 0.3,
+                },
+                unit: "",
+                section: "Add Scratch 3",
+            },
+            ParamDef {
+                key: "scratch4_enable",
+                name: "Enable",
+                kind: ParamKind::Bool { default: true },
+                unit: "",
+                section: "Add Scratch 4",
+            },
+            ParamDef {
+                key: "scratch4_color",
+                name: "Scratch Color",
+                // White reads as emulsion gouged off a print, black as a
+                // scratch on the negative. Per scratch, because a real strip
+                // of film has both.
+                kind: ParamKind::Rgb {
+                    default: [1.0, 1.0, 1.0],
+                },
+                unit: "",
+                section: "Add Scratch 4",
+            },
+            ParamDef {
                 key: "scratch4_position",
-                name: "Scratch 4 Position",
+                name: "Scratch Position",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
@@ -1188,7 +1292,7 @@ pub static EFFECTS: &[EffectDef] = &[
             },
             ParamDef {
                 key: "scratch4_width",
-                name: "Scratch 4 Width",
+                name: "Scratch Width",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 0.05,
@@ -1200,7 +1304,7 @@ pub static EFFECTS: &[EffectDef] = &[
             },
             ParamDef {
                 key: "scratch4_strength",
-                name: "Scratch 4 Strength",
+                name: "Scratch Strength",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
@@ -1211,8 +1315,39 @@ pub static EFFECTS: &[EffectDef] = &[
                 section: "Add Scratch 4",
             },
             ParamDef {
+                key: "scratch4_blur",
+                name: "Scratch Blur",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 0.3,
+                    neutral: 0.3,
+                },
+                unit: "",
+                section: "Add Scratch 4",
+            },
+            ParamDef {
+                key: "scratch5_enable",
+                name: "Enable",
+                kind: ParamKind::Bool { default: true },
+                unit: "",
+                section: "Add Scratch 5",
+            },
+            ParamDef {
+                key: "scratch5_color",
+                name: "Scratch Color",
+                // White reads as emulsion gouged off a print, black as a
+                // scratch on the negative. Per scratch, because a real strip
+                // of film has both.
+                kind: ParamKind::Rgb {
+                    default: [1.0, 1.0, 1.0],
+                },
+                unit: "",
+                section: "Add Scratch 5",
+            },
+            ParamDef {
                 key: "scratch5_position",
-                name: "Scratch 5 Position",
+                name: "Scratch Position",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
@@ -1224,7 +1359,7 @@ pub static EFFECTS: &[EffectDef] = &[
             },
             ParamDef {
                 key: "scratch5_width",
-                name: "Scratch 5 Width",
+                name: "Scratch Width",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 0.05,
@@ -1236,12 +1371,24 @@ pub static EFFECTS: &[EffectDef] = &[
             },
             ParamDef {
                 key: "scratch5_strength",
-                name: "Scratch 5 Strength",
+                name: "Scratch Strength",
                 kind: ParamKind::Float {
                     min: 0.0,
                     max: 1.0,
                     default: 0.0,
                     neutral: 0.0,
+                },
+                unit: "",
+                section: "Add Scratch 5",
+            },
+            ParamDef {
+                key: "scratch5_blur",
+                name: "Scratch Blur",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 0.3,
+                    neutral: 0.3,
                 },
                 unit: "",
                 section: "Add Scratch 5",

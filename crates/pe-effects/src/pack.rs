@@ -20,7 +20,7 @@ use crate::{EffectDef, ParamKind};
 /// of its five scratches independent position, width and strength — and one
 /// scratch control with a count would not let you place them. Raising this
 /// costs a little uniform bandwidth per pass and nothing else.
-pub const PARAM_SLOTS: usize = 48;
+pub const PARAM_SLOTS: usize = 64;
 
 /// How many `f32` slots a parameter kind occupies.
 ///
