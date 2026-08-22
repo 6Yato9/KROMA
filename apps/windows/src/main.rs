@@ -1227,10 +1227,65 @@ fn inspector_header(ui: &mut egui::Ui, name: &str, size: (u32, u32)) {
     );
 }
 
+/// One tab's glyph, drawn rather than typed — the bundled fonts have no
+/// dingbats, and four icons are not worth shipping a font for.
+fn tab_icon(painter: &egui::Painter, at: egui::Pos2, tab: Tab, tint: egui::Color32) {
+    let stroke = egui::Stroke::new(1.3_f32, tint);
+    match tab {
+        // A colour wheel: a ring with a puck off centre.
+        Tab::Colour => {
+            painter.circle_stroke(at, 6.0, stroke);
+            painter.circle_filled(at + egui::vec2(2.4, -1.6), 2.0, tint);
+        }
+        // A wand throwing sparks, which is the icon Resolve uses.
+        Tab::Effects => {
+            painter.line_segment(
+                [at + egui::vec2(-5.0, 5.0), at + egui::vec2(3.0, -3.0)],
+                stroke,
+            );
+            for (dx, dy, r) in [(4.5, -4.5, 2.0), (1.0, -6.0, 1.2), (6.5, -1.5, 1.2)] {
+                painter.circle_filled(at + egui::vec2(dx, dy), r, tint);
+            }
+        }
+        // A frame with a horizon in it.
+        Tab::Image => {
+            let r = egui::Rect::from_center_size(at, egui::vec2(13.0, 10.0));
+            painter.rect_stroke(r, 1.5, stroke, egui::StrokeKind::Inside);
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    egui::pos2(r.min.x + 2.0, r.max.y - 2.0),
+                    egui::pos2(r.min.x + 6.0, r.min.y + 4.0),
+                    egui::pos2(r.max.x - 2.0, r.max.y - 2.0),
+                ],
+                tint,
+                egui::Stroke::NONE,
+            ));
+        }
+        // A sheet with a folded corner.
+        Tab::File => {
+            let r = egui::Rect::from_center_size(at, egui::vec2(10.0, 12.0));
+            painter.add(egui::Shape::closed_line(
+                vec![
+                    r.left_top(),
+                    egui::pos2(r.max.x - 3.5, r.min.y),
+                    egui::pos2(r.max.x, r.min.y + 3.5),
+                    r.right_bottom(),
+                    r.left_bottom(),
+                ],
+                stroke,
+            ));
+        }
+    }
+}
+
 /// Resolve's tab row: an underline under the one you are on, nothing else.
+///
+/// Drawn before the scroll area, so it stays put while the page under it
+/// moves. A tab strip that scrolls away is a tab strip you have to scroll back
+/// to in order to leave the page.
 fn tab_row(ui: &mut egui::Ui, current: &mut Tab) {
     let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), egui::Sense::hover());
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 44.0), egui::Sense::hover());
     let width = rect.width() / Tab::ALL.len() as f32;
     for (i, tab) in Tab::ALL.iter().enumerate() {
         let cell = egui::Rect::from_min_size(
@@ -1245,19 +1300,26 @@ fn tab_row(ui: &mut egui::Ui, current: &mut Tab) {
             continue;
         }
         let active = *current == *tab;
+        let tint = if active {
+            resolve::colour::TITLE
+        } else if response.hovered() {
+            resolve::colour::HANDLE
+        } else {
+            resolve::colour::LABEL
+        };
         let painter = ui.painter();
+        tab_icon(
+            painter,
+            egui::pos2(cell.center().x, cell.min.y + 13.0),
+            *tab,
+            tint,
+        );
         painter.text(
-            cell.center(),
+            egui::pos2(cell.center().x, cell.max.y - 10.0),
             egui::Align2::CENTER_CENTER,
             tab.label(),
-            egui::FontId::proportional(12.0),
-            if active {
-                resolve::colour::TITLE
-            } else if response.hovered() {
-                resolve::colour::HANDLE
-            } else {
-                resolve::colour::LABEL
-            },
+            egui::FontId::proportional(10.5),
+            tint,
         );
         if active {
             painter.line_segment(

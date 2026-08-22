@@ -626,56 +626,61 @@ fn canvas(
         ]
     };
 
-    let low = float_param(history, id, "soft_clip_low", 0.0);
-    let high = float_param(history, id, "soft_clip_high", 0.0);
-    let (low_knee, high_knee) = knee_positions(low, high);
+    // The two levels the curve arrives at: black out at the left end, white
+    // out at the right. Resolve shows them as an arrow on the left edge with a
+    // line across, which is the right way round for a *level* — you are saying
+    // how bright white should be, not where along the range it sits.
+    let black_out = curve.points.first().map_or(0.0, |p| p[1]);
+    let white_out = curve.points.last().map_or(1.0, |p| p[1]);
 
     let drag_id = ui.make_persistent_id(("curve_drag", key));
     let mut dragging: Option<usize> = ui.data_mut(|d| d.get_temp(drag_id).unwrap_or(None));
-    let knee_id = ui.make_persistent_id("soft_clip_drag");
-    // 0 is the low limit, 1 the high one.
-    let mut knee: Option<usize> = ui.data_mut(|d| d.get_temp(knee_id).unwrap_or(None));
+    let end_id = ui.make_persistent_id(("curve_end_drag", key));
+    // 0 is the black end, 1 the white one.
+    let mut end: Option<usize> = ui.data_mut(|d| d.get_temp(end_id).unwrap_or(None));
 
     // --- interaction ---------------------------------------------------------
-    // The soft clip handles are checked first and only near the left edge.
-    // Anywhere else on the line would fight with adding a control point, and
-    // the point is what the plot is mostly for.
+    // The end handles are checked first and only near the left edge. Anywhere
+    // else would fight with adding a control point, and the point is what the
+    // plot is mostly for.
     if response.drag_started()
         && let Some(pos) = response.interact_pointer_pos()
         && pos.x < rect.min.x + HANDLE_GRAB
     {
-        for (i, t) in [(0usize, low_knee), (1, high_knee)] {
+        for (i, t) in [(0usize, black_out), (1, white_out)] {
             if (pos.y - (rect.max.y - t * rect.height())).abs() <= GRAB_RADIUS {
-                knee = Some(i);
+                end = Some(i);
             }
         }
-        ui.data_mut(|d| d.insert_temp(knee_id, knee));
+        ui.data_mut(|d| d.insert_temp(end_id, end));
     }
     if response.dragged()
-        && let Some(i) = knee
+        && let Some(i) = end
         && let Some(pos) = response.interact_pointer_pos()
     {
-        let t = ((rect.max.y - pos.y) / rect.height().max(1e-4)).clamp(0.0, 1.0);
-        let (key, v) = if i == 0 {
-            ("soft_clip_low", (t - LOG_BLACK) / (LOG_GREY - LOG_BLACK))
-        } else {
-            ("soft_clip_high", (LOG_WHITE - t) / (LOG_WHITE - LOG_GREY))
-        };
-        let v = v.clamp(0.0, 1.0);
-        history.edit("Soft Clip", Some(format!("curve.{key}")), move |doc| {
-            if let Some(row) = doc.stack.get_mut(id) {
-                row.params.set(key, ParamValue::Float(v));
-            }
-        });
+        let v = ((rect.max.y - pos.y) / rect.height().max(1e-4)).clamp(0.0, 1.0);
+        // Deliberately not clamped against the other end. Dragging white below
+        // black inverts the picture, and that is a real thing to want — it is
+        // how a negative is made, and refusing it would be the editor deciding
+        // what the user meant.
+        let at = if i == 0 { 0 } else { curve.points.len() - 1 };
+        curve.points[at][1] = v;
+        set(
+            history,
+            id,
+            key,
+            curve.clone(),
+            Some(format!("curve.{key}.end{i}")),
+        );
     }
     if response.drag_stopped() {
-        ui.data_mut(|d| d.insert_temp(knee_id, None::<usize>));
+        ui.data_mut(|d| d.insert_temp(end_id, None::<usize>));
         history.break_coalescing();
     }
     // A drag that has hold of a limit is not also placing a control point,
     // which is what `knee.is_none()` guards below.
     if response.drag_started()
-        && knee.is_none()
+        && end.is_none()
         && let Some(pos) = response.interact_pointer_pos()
     {
         dragging = nearest(&curve.points, pos, &to_screen);
@@ -683,7 +688,7 @@ fn canvas(
     }
 
     if response.dragged()
-        && knee.is_none()
+        && end.is_none()
         && let (Some(index), Some(pos)) = (dragging, response.interact_pointer_pos())
     {
         let mut p = to_curve(pos);
@@ -716,7 +721,7 @@ fn canvas(
     }
 
     if response.clicked()
-        && knee.is_none()
+        && end.is_none()
         && pos_is_clear(&response, rect)
         && let Some(pos) = response.interact_pointer_pos()
         && nearest(&curve.points, pos, &to_screen).is_none()
@@ -757,24 +762,9 @@ fn canvas(
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 3.0, egui::Color32::from_gray(18));
 
-    // Where the photograph actually lives inside the curve's domain. The rest
-    // is real headroom, not empty space, so it is shaded rather than hidden.
-    for band in [
-        egui::Rect::from_min_max(
-            rect.min,
-            egui::pos2(rect.min.x + rect.width() * LOG_BLACK, rect.max.y),
-        ),
-        egui::Rect::from_min_max(
-            egui::pos2(rect.min.x + rect.width() * LOG_WHITE, rect.min.y),
-            rect.max,
-        ),
-    ] {
-        painter.rect_filled(band, 0.0, egui::Color32::from_black_alpha(70));
-    }
-
     histogram_behind(&painter, rect, scopes.map(|s| &s.log_histogram));
 
-    soft_clip_lines(&painter, rect, low_knee, high_knee, knee.is_some());
+    end_handles(&painter, rect, black_out, white_out, end);
 
     // Clipping, at the end it is happening, from the *display* histogram.
     //
@@ -812,6 +802,19 @@ fn canvas(
             grid,
         );
     }
+    // Mid grey, which is the tone a colourist is nearly always working
+    // relative to. Log puts more of the range below 18% than above it, so it
+    // does not land in the middle of the plot and there is no reading it off
+    // the quarter lines.
+    let grey_x = rect.min.x + rect.width() * (LOG_GREY - LOG_BLACK) / (LOG_WHITE - LOG_BLACK);
+    painter.line_segment(
+        [
+            egui::pos2(grey_x, rect.min.y),
+            egui::pos2(grey_x, rect.max.y),
+        ],
+        egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(46)),
+    );
+
     // The identity, so how far the curve has been bent is readable at a glance.
     painter.line_segment(
         [
@@ -1311,7 +1314,15 @@ fn histogram_behind(painter: &egui::Painter, rect: egui::Rect, hist: Option<&His
         (&hist.green, CHANNEL_COLOURS[1]),
         (&hist.blue, CHANNEL_COLOURS[2]),
     ] {
+        // The plot spans black to diffuse white, not the whole log domain, so
+        // the bins are read through that range rather than laid out edge to
+        // edge. Drawing them straight across would put every tone about a
+        // seventh of the plot to the left of where the curve acts on it.
         let heights = trace(bins, peak);
+        let sample = |i: usize| {
+            let t = LOG_BLACK + (i as f32 / (BINS - 1) as f32) * (LOG_WHITE - LOG_BLACK);
+            heights[((t * (BINS - 1) as f32).round() as usize).min(BINS - 1)]
+        };
         let x_of = |i: usize| rect.min.x + rect.width() * (i as f32 / (BINS - 1) as f32);
         let y_of = |v: f32| rect.max.y - v * height;
 
@@ -1322,7 +1333,7 @@ fn histogram_behind(painter: &egui::Painter, rect: egui::Rect, hist: Option<&His
         let fill = egui::Color32::from_rgba_unmultiplied(colour.r(), colour.g(), colour.b(), 56);
         for i in 0..BINS - 1 {
             let (x0, x1) = (x_of(i), x_of(i + 1));
-            let (y0, y1) = (y_of(heights[i]), y_of(heights[i + 1]));
+            let (y0, y1) = (y_of(sample(i)), y_of(sample(i + 1)));
             let base = mesh.vertices.len() as u32;
             mesh.colored_vertex(egui::pos2(x0, y0), fill);
             mesh.colored_vertex(egui::pos2(x1, y1), fill);
@@ -1334,7 +1345,7 @@ fn histogram_behind(painter: &egui::Painter, rect: egui::Rect, hist: Option<&His
         painter.add(egui::Shape::mesh(mesh));
 
         let line: Vec<egui::Pos2> = (0..BINS)
-            .map(|i| egui::pos2(x_of(i), y_of(heights[i])))
+            .map(|i| egui::pos2(x_of(i), y_of(sample(i))))
             .collect();
         painter.add(egui::Shape::line(
             line,
@@ -1360,48 +1371,48 @@ const HANDLE_GRAB: f32 = 22.0;
 /// 18% grey in the curve's domain, the anchor both limits measure in from.
 const LOG_GREY: f32 = 0.413_588_67;
 
-/// Where the soft clip knees sit in the plot, as fractions of its height.
+/// The two end handles: an arrow on the left edge and, once moved, a line
+/// across the plot at that level.
 ///
-/// The same arithmetic the shader does: Low measures in from black towards
-/// grey, High measures in from white towards grey. Drawing them anywhere else
-/// would put a handle where the effect is not.
-fn knee_positions(low: f32, high: f32) -> (f32, f32) {
-    let low_at = LOG_BLACK + low.clamp(0.0, 1.0) * (LOG_GREY - LOG_BLACK);
-    let high_at = LOG_WHITE - high.clamp(0.0, 1.0) * (LOG_WHITE - LOG_GREY);
-    (low_at, high_at)
-}
-
-/// Resolve draws the soft clip limits as two horizontal lines across the plot
-/// with a handle on the left edge, and it is the right place for them: the
-/// limit is a level, and a level is a horizontal line. Dragging the bottom one
-/// up lifts the black point; dragging the top one down brings the white in.
-fn soft_clip_lines(painter: &egui::Painter, rect: egui::Rect, low: f32, high: f32, dragging: bool) {
-    for (t, pointing_up) in [(low, true), (high, false)] {
+/// Only the white end shows at rest. The black end sits on the bottom frame
+/// where there is nothing to see, and drawing an arrow on top of the border
+/// would read as part of it. Both lines appear as soon as their end has been
+/// moved off where it started, and stay — a level you have set is worth being
+/// able to see without holding it.
+fn end_handles(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    black_out: f32,
+    white_out: f32,
+    dragging: Option<usize>,
+) {
+    for (i, t, default) in [(0usize, black_out, 0.0f32), (1, white_out, 1.0)] {
+        let moved = (t - default).abs() > 1e-4;
+        let held = dragging == Some(i);
+        // The black end only once it has been moved; the white end always,
+        // because it is the one people reach for.
+        if i == 0 && !moved && !held {
+            continue;
+        }
         let y = rect.max.y - t * rect.height();
-        // The line only while a limit is in hand. At rest the arrows are
-        // enough — two lines across the plot at all times would read as part
-        // of the grid, and the plot already has one line in it that matters.
-        //
-        // Both are drawn, not only the one being dragged: they are the two
-        // ends of one range, and seeing where the far end sits is most of
-        // what tells you how much room is left.
-        if dragging {
+        if moved || held {
             painter.line_segment(
                 [egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)],
                 egui::Stroke::new(1.4_f32, egui::Color32::from_white_alpha(190)),
             );
         }
-        // A triangle on the left edge, so it reads as something to take hold
-        // of rather than as a grid line.
         let w = 5.5_f32;
-        let dy = if pointing_up { -w } else { w };
         painter.add(egui::Shape::convex_polygon(
             vec![
                 egui::pos2(rect.min.x, y - w),
                 egui::pos2(rect.min.x, y + w),
-                egui::pos2(rect.min.x + w * 1.6, y + dy * 0.1),
+                egui::pos2(rect.min.x + w * 1.7, y),
             ],
-            egui::Color32::from_gray(235),
+            if held {
+                egui::Color32::WHITE
+            } else {
+                egui::Color32::from_gray(225)
+            },
             egui::Stroke::NONE,
         ));
     }
@@ -1430,43 +1441,28 @@ fn nearest(
 mod tests {
     use super::*;
 
-    /// The handles are drawn from one arithmetic and dragged through its
-    /// inverse. If the two disagree the handle crawls away from the pointer,
-    /// which is the kind of bug that looks like a rendering glitch.
+    /// The plot spans black to diffuse white, so the histogram behind it has
+    /// to be read through that range. Laid out edge to edge instead, every
+    /// tone would sit about a seventh of the plot to the left of where the
+    /// curve acts on it — close enough to look plausible and wrong everywhere.
     #[test]
-    fn a_soft_clip_handle_lands_where_it_was_dragged() {
-        for v in [0.0f32, 0.15, 0.5, 0.85, 1.0] {
-            let (low_at, high_at) = knee_positions(v, v);
-            let low_back = (low_at - LOG_BLACK) / (LOG_GREY - LOG_BLACK);
-            let high_back = (LOG_WHITE - high_at) / (LOG_WHITE - LOG_GREY);
-            assert!(
-                (low_back - v).abs() < 1e-4,
-                "low {v} came back as {low_back}"
-            );
-            assert!(
-                (high_back - v).abs() < 1e-4,
-                "high {v} came back as {high_back}"
-            );
-        }
-    }
-
-    /// With both limits off they sit exactly on black and white, so an
-    /// untouched panel shows them at the ends of the plot rather than
-    /// somewhere arbitrary inside it.
-    #[test]
-    fn the_limits_start_at_the_ends_of_the_range() {
-        let (low, high) = knee_positions(0.0, 0.0);
-        assert!((low - LOG_BLACK).abs() < 1e-6);
-        assert!((high - LOG_WHITE).abs() < 1e-6);
-    }
-
-    /// Both limits meet at mid grey when fully closed, which is as far as
-    /// either can reach — past each other would be an inverted range.
-    #[test]
-    fn the_limits_meet_at_mid_grey_and_go_no_further() {
-        let (low, high) = knee_positions(1.0, 1.0);
-        assert!((low - LOG_GREY).abs() < 1e-6);
-        assert!((high - LOG_GREY).abs() < 1e-6);
+    fn the_plot_covers_black_to_diffuse_white() {
+        let span = LOG_WHITE - LOG_BLACK;
+        assert!(
+            (span - 0.4819).abs() < 1e-3,
+            "an SDR frame spans {span} of the log domain"
+        );
+        // The left edge of the plot is black and the right edge is white.
+        let at = |u: f32| LOG_BLACK + u * span;
+        assert!((at(0.0) - LOG_BLACK).abs() < 1e-6);
+        assert!((at(1.0) - LOG_WHITE).abs() < 1e-6);
+        // And mid grey lands where a colourist expects it: a little above the
+        // middle, because log puts more of the range below 18% than above it.
+        let grey = (LOG_GREY - LOG_BLACK) / span;
+        assert!(
+            (0.6..0.75).contains(&grey),
+            "mid grey landed at {grey} of the way across"
+        );
     }
 
     fn spike() -> [u32; BINS] {

@@ -163,6 +163,26 @@ fn secondaries(c: vec3<f32>) -> vec3<f32> {
     return out + vec3<f32>(lum_shift / 17.52);
 }
 
+/// A tone curve, over the range a photograph actually occupies.
+///
+/// The LUT is indexed 0..1 and the curve is drawn 0..1, but ACEScct runs from
+/// well below black to well above diffuse white — an SDR frame sits between
+/// about 0.073 and 0.555 of it. Handing the raw log value to the LUT would
+/// squeeze the whole picture into the left half of the curve editor and leave
+/// the right half addressing headroom nobody has.
+///
+/// So the curve spans black to diffuse white, and signal outside that range
+/// carries the endpoint's offset rather than being clamped onto it. That is
+/// what keeps a recovered highlight recoverable: pull the white point down and
+/// everything above it comes with it, instead of fusing into one flat value.
+fn tone_lut(row: i32, v: f32) -> f32 {
+    let span = CCT_WHITE - CCT_BLACK;
+    let u = (v - CCT_BLACK) / span;
+    let inside = clamp(u, 0.0, 1.0);
+    let overflow = (u - inside) * span;
+    return CCT_BLACK + lut(row, inside) * span + overflow;
+}
+
 fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let p = parametric(c);
 
@@ -173,10 +193,10 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     // The intensities mix each curve against the signal that went into it, so
     // dialling one back is dialling back that curve rather than the whole
     // chain — which is why there are four of them and not one.
-    let per = vec3<f32>(lut(1, p.r), lut(2, p.g), lut(3, p.b));
+    let per = vec3<f32>(tone_lut(1, p.r), tone_lut(2, p.g), tone_lut(3, p.b));
     var o = mix(p, per, vec3<f32>(slot(1u), slot(2u), slot(3u)) * 0.01);
 
-    let luma_curved = vec3<f32>(lut(0, o.r), lut(0, o.g), lut(0, o.b));
+    let luma_curved = vec3<f32>(tone_lut(0, o.r), tone_lut(0, o.g), tone_lut(0, o.b));
     o = mix(o, luma_curved, slot(0u) * 0.01);
 
     return apply_soft_clip(secondaries(o));
