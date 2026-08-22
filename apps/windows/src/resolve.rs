@@ -168,8 +168,23 @@ fn track(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, t: f32) -> (Option<f
     (moved, response.drag_stopped())
 }
 
-/// The boxed number. Typed into or dragged, like Resolve's.
-fn value_box(ui: &mut egui::Ui, rect: egui::Rect, value: &mut f32, decimals: usize) -> bool {
+/// How much finer dragging the number is than dragging the track.
+///
+/// The track crosses its whole range in the width of the panel; the box takes
+/// four times as far. That ratio is the point of having both — the slider is
+/// for finding roughly the right value and the box is for settling on one, and
+/// a box that moved at the same rate would just be a second slider.
+const FINE: f32 = 4.0;
+
+/// The boxed number. Typed into, or dragged for a fine adjustment.
+fn value_box(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    value: &mut f32,
+    decimals: usize,
+    speed: f32,
+    range: std::ops::RangeInclusive<f32>,
+) -> bool {
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
     let visuals = child.visuals_mut();
     visuals.widgets.inactive.weak_bg_fill = colour::BOX_FILL;
@@ -183,17 +198,18 @@ fn value_box(ui: &mut egui::Ui, rect: egui::Rect, value: &mut f32, decimals: usi
             rect.size(),
             egui::DragValue::new(value)
                 .fixed_decimals(decimals)
-                .speed(0.0),
+                .range(range)
+                .speed(speed),
         )
         .changed()
 }
 
 /// One float parameter, laid out Resolve's way.
 ///
-/// `speed` of zero on the number box is deliberate: dragging the *track* is
-/// the coarse control and typing is the precise one, and a box that also
-/// dragged would give two controls with different sensitivities for the same
-/// number.
+/// Three ways to set it, which is not redundancy: drag the track to find a
+/// value, drag the number to settle on one, type into it to say one exactly.
+/// The box moves four times slower than the track, and that difference is
+/// what makes it a second control rather than a second copy of the first.
 pub fn slider_row(
     ui: &mut egui::Ui,
     id: egui::Id,
@@ -220,10 +236,15 @@ pub fn slider_row(
     }
     out.released = released;
 
-    if value_box(ui, value_rect, value, decimals) {
+    // Derived from the track's own width, so the ratio holds at any panel
+    // size rather than being tuned for one.
+    let speed = span / (track_rect.width().max(40.0) * FINE);
+    if value_box(ui, value_rect, value, decimals, speed, lo..=hi) {
         *value = value.clamp(lo, hi);
         out.changed = true;
-        out.released = true;
+        // Not `released`: a drag on the box is still in progress, and breaking
+        // the coalescing here would put one undo entry per pixel moved.
+        out.released = ui.input(|i| i.pointer.any_released());
     }
     out.reset = reset_button(ui, reset_rect, id.with("reset"));
     out
@@ -612,6 +633,37 @@ mod tests {
             (reset.max.x - label.min.x - 420.0).abs() < 1.0,
             "the row does not use its width"
         );
+    }
+
+    /// The box exists to be finer than the track. If it were not, it would be
+    /// a second slider in a smaller box — and the whole reason for having both
+    /// is that finding a value and settling on one want different rates.
+    #[test]
+    fn dragging_the_number_is_finer_than_dragging_the_track() {
+        let (_, track, _, _) = rects(420.0);
+        // Value units per pixel, for a 0..1 parameter.
+        let by_track = 1.0 / track.width();
+        let by_box = 1.0 / (track.width() * FINE);
+        assert!(
+            by_box < by_track,
+            "the box moves at {by_box} against the track's {by_track}"
+        );
+        assert!(
+            (by_track / by_box - FINE).abs() < 1e-4,
+            "the ratio drifted from the constant that documents it"
+        );
+    }
+
+    /// And the ratio has to hold at any panel size, or the box would be four
+    /// times finer on a wide window and barely finer on a narrow one.
+    #[test]
+    fn the_fine_ratio_holds_at_any_panel_width() {
+        for width in [240.0, 420.0, 620.0] {
+            let (_, track, _, _) = rects(width);
+            let speed = 1.0 / (track.width() * FINE);
+            let coarse = 1.0 / track.width();
+            assert!((coarse / speed - FINE).abs() < 1e-4, "at {width} points");
+        }
     }
 
     /// A narrow panel must not give the track a negative width, which egui

@@ -234,9 +234,14 @@ fn readouts(ui: &mut egui::Ui, width: f32, wheel: Wheel) -> Option<Wheel> {
                 egui::UiBuilder::new()
                     .max_rect(egui::Rect::from_min_size(rect.min, egui::vec2(cell, 18.0))),
             );
+            // Draggable, and finely: the puck is the coarse control and this
+            // is how you settle on a number without it.
             child.add_sized(
                 egui::vec2(cell - 2.0, 18.0),
-                egui::DragValue::new(&mut v).fixed_decimals(2).speed(0.0),
+                egui::DragValue::new(&mut v)
+                    .fixed_decimals(2)
+                    .range(-1.0..=1.0)
+                    .speed(0.002),
             );
             if (before - v).abs() > 1e-9 {
                 let v = v.clamp(-1.0, 1.0);

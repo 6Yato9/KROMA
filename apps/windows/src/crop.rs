@@ -278,11 +278,15 @@ fn xy_row(
         for (i, axis) in ["X", "Y"].iter().enumerate() {
             ui.label(egui::RichText::new(*axis).small().weak());
             let before = next[i];
+            // Draggable, at a rate that takes eight hundred pixels to cross
+            // the range. Zoom and Position are read to three decimals and
+            // nudged rather than swept.
             ui.add_sized(
                 [58.0, 18.0],
                 egui::DragValue::new(&mut next[i])
                     .fixed_decimals(3)
-                    .speed(0.0),
+                    .range(lo..=hi)
+                    .speed((hi - lo) / 800.0),
             );
             if (before - next[i]).abs() > 1e-9 {
                 next[i] = next[i].clamp(lo, hi);
