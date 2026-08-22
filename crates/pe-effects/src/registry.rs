@@ -950,7 +950,22 @@ pub static EFFECTS: &[EffectDef] = &[
             // Declaration order is the order the panel draws them, so it
             // follows Resolve's: strength, the colour being removed, the depth
             // view, then the two tonal trims.
-            bipolar("strength", "Dehaze Strength", 1.0, ""),
+            //
+            // Arrives at 0.8, because you add a Dehaze row to remove haze.
+            // Neutral is still zero, so reset means "do nothing" as it does
+            // everywhere else.
+            ParamDef {
+                key: "strength",
+                name: "Dehaze Strength",
+                kind: ParamKind::Float {
+                    min: -1.0,
+                    max: 1.0,
+                    default: 0.8,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "",
+            },
             ParamDef {
                 key: "haze_color",
                 name: "Haze Color",
@@ -2314,6 +2329,7 @@ pub const EFFECTS_WITH_VISIBLE_DEFAULTS: &[&str] = &[
     // A Film Look row with no film look in it would be a strange thing to
     // add on purpose.
     "film_look",
+    "dehaze",
 ];
 
 /// The fixed panels, in the order they are applied.

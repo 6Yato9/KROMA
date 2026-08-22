@@ -92,6 +92,10 @@ fn add_effect_menu(ui: &mut egui::Ui, history: &mut History, ids: &mut RowIdGene
                                 row.params = def.default_params();
                                 doc.stack.push(row);
                             });
+                            // Open it. You added it to change something, and
+                            // a row that arrives shut costs a click to say so.
+                            let open = ui.make_persistent_id(("fx", id.0)).with("open");
+                            ui.data_mut(|d| d.insert_temp(open, true));
                             ui.close();
                         }
                     }

@@ -143,68 +143,6 @@ fn channel_button(ui: &mut egui::Ui, i: usize, label: &str, selected: bool) -> b
     response.clicked()
 }
 
-/// A compact slider row for the narrow right-hand column.
-///
-/// Not `resolve::slider_row`: that one reserves a label column wide enough for
-/// "Geometry Factor", and here the label is a single letter or two words in a
-/// column a third the width.
-fn narrow_row(
-    ui: &mut egui::Ui,
-    id: egui::Id,
-    lead: Option<(usize, &str)>,
-    label: &str,
-    value: &mut f32,
-    range: std::ops::RangeInclusive<f32>,
-    decimals: usize,
-) -> resolve::Edit {
-    let width = ui.available_width();
-    ui.horizontal(|ui| {
-        let mut out = resolve::Edit::default();
-        if let Some((i, text)) = lead
-            && channel_button(ui, i, text, false)
-        {
-            // The lead swatch is decoration here; selection lives in the row
-            // of buttons above.
-        }
-        if !label.is_empty() {
-            ui.add_sized(
-                [56.0, 16.0],
-                egui::Label::new(
-                    egui::RichText::new(label)
-                        .small()
-                        .color(resolve::colour::LABEL),
-                ),
-            );
-        }
-        let track_w = (width - 56.0 - 44.0 - 26.0).max(30.0);
-        let (lo, hi) = (*range.start(), *range.end());
-        let r = ui.add_sized(
-            [track_w, 16.0],
-            egui::Slider::new(value, lo..=hi).show_value(false),
-        );
-        out.changed = r.changed();
-        out.released = r.drag_stopped();
-        // Every value in the panel is typeable. A slider is for finding a
-        // number and a box is for saying one, and a control that only offers
-        // the first cannot be told "exactly 50".
-        let before = *value;
-        ui.add_sized(
-            [42.0, 16.0],
-            egui::DragValue::new(value)
-                .fixed_decimals(decimals)
-                .speed(0.0),
-        );
-        if (before - *value).abs() > 1e-6 {
-            *value = value.clamp(lo, hi);
-            out.changed = true;
-            out.released = true;
-        }
-        let _ = id;
-        out
-    })
-    .inner
-}
-
 /// Resolve's Edit and Soft Clip column.
 fn edit_column(ui: &mut egui::Ui, history: &mut History, id: RowId, channel: &mut usize) {
     ui.horizontal(|ui| {
@@ -231,11 +169,13 @@ fn edit_column(ui: &mut egui::Ui, history: &mut History, id: RowId, channel: &mu
     ];
     for (key, i) in INTENSITY {
         let mut v = float_param(history, id, key, 100.0);
-        let edit = narrow_row(
+        // Through the same row as every other parameter in the application, so
+        // the tracks line up with the panel above and below rather than
+        // starting wherever this label happened to end.
+        let edit = resolve::slider_row(
             ui,
             ui.id().with(key),
-            Some((i, "")),
-            "",
+            ["Y", "R", "G", "B"][i],
             &mut v,
             0.0..=100.0,
             0,
@@ -260,7 +200,7 @@ fn edit_column(ui: &mut egui::Ui, history: &mut History, id: RowId, channel: &mu
         ("soft_clip_high_soft", "High Soft"),
     ] {
         let mut v = float_param(history, id, key, 0.0);
-        let edit = narrow_row(ui, ui.id().with(key), None, label, &mut v, 0.0..=1.0, 2);
+        let edit = resolve::slider_row(ui, ui.id().with(key), label, &mut v, 0.0..=1.0, 3);
         apply(history, id, key, v, edit, 0.0);
     }
 
@@ -365,11 +305,56 @@ fn canvas(
         ]
     };
 
+    let low = float_param(history, id, "soft_clip_low", 0.0);
+    let high = float_param(history, id, "soft_clip_high", 0.0);
+    let (low_knee, high_knee) = knee_positions(low, high);
+
     let drag_id = ui.make_persistent_id(("curve_drag", key));
     let mut dragging: Option<usize> = ui.data_mut(|d| d.get_temp(drag_id).unwrap_or(None));
+    let knee_id = ui.make_persistent_id("soft_clip_drag");
+    // 0 is the low limit, 1 the high one.
+    let mut knee: Option<usize> = ui.data_mut(|d| d.get_temp(knee_id).unwrap_or(None));
 
     // --- interaction ---------------------------------------------------------
+    // The soft clip handles are checked first and only near the left edge.
+    // Anywhere else on the line would fight with adding a control point, and
+    // the point is what the plot is mostly for.
     if response.drag_started()
+        && let Some(pos) = response.interact_pointer_pos()
+        && pos.x < rect.min.x + HANDLE_GRAB
+    {
+        for (i, t) in [(0usize, low_knee), (1, high_knee)] {
+            if (pos.y - (rect.max.y - t * rect.height())).abs() <= GRAB_RADIUS {
+                knee = Some(i);
+            }
+        }
+        ui.data_mut(|d| d.insert_temp(knee_id, knee));
+    }
+    if response.dragged()
+        && let Some(i) = knee
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        let t = ((rect.max.y - pos.y) / rect.height().max(1e-4)).clamp(0.0, 1.0);
+        let (key, v) = if i == 0 {
+            ("soft_clip_low", (t - LOG_BLACK) / (LOG_GREY - LOG_BLACK))
+        } else {
+            ("soft_clip_high", (LOG_WHITE - t) / (LOG_WHITE - LOG_GREY))
+        };
+        let v = v.clamp(0.0, 1.0);
+        history.edit("Soft Clip", Some(format!("curve.{key}")), move |doc| {
+            if let Some(row) = doc.stack.get_mut(id) {
+                row.params.set(key, ParamValue::Float(v));
+            }
+        });
+    }
+    if response.drag_stopped() {
+        ui.data_mut(|d| d.insert_temp(knee_id, None::<usize>));
+        history.break_coalescing();
+    }
+    // A drag that has hold of a limit is not also placing a control point,
+    // which is what `knee.is_none()` guards below.
+    if response.drag_started()
+        && knee.is_none()
         && let Some(pos) = response.interact_pointer_pos()
     {
         dragging = nearest(&curve.points, pos, &to_screen);
@@ -377,6 +362,7 @@ fn canvas(
     }
 
     if response.dragged()
+        && knee.is_none()
         && let (Some(index), Some(pos)) = (dragging, response.interact_pointer_pos())
     {
         let mut p = to_curve(pos);
@@ -409,6 +395,8 @@ fn canvas(
     }
 
     if response.clicked()
+        && knee.is_none()
+        && pos_is_clear(&response, rect)
         && let Some(pos) = response.interact_pointer_pos()
         && nearest(&curve.points, pos, &to_screen).is_none()
     {
@@ -464,6 +452,8 @@ fn canvas(
     }
 
     histogram_behind(&painter, rect, scopes.map(|s| &s.log_histogram));
+
+    soft_clip_lines(&painter, rect, low_knee, high_knee);
 
     // Clipping, at the end it is happening, from the *display* histogram.
     //
@@ -749,69 +739,152 @@ fn region_canvas(
     }
 }
 
-/// The three channel colours.
-///
-/// Chosen so that all three together come to white and any two come to a clean
-/// secondary. That is what makes the shape readable: the white core is where
-/// the channels agree, and a coloured fringe is exactly where one of them has
-/// drifted away from the others.
-const CHANNEL_COLOURS: [[u16; 3]; 3] = [[160, 48, 48], [48, 158, 56], [56, 68, 160]];
+/// The three channel colours, for the traces.
+const CHANNEL_COLOURS: [egui::Color32; 3] = [
+    egui::Color32::from_rgb(214, 96, 96),
+    egui::Color32::from_rgb(96, 206, 116),
+    egui::Color32::from_rgb(110, 148, 236),
+];
 
-/// Add channel colours, saturating.
-fn additive(channels: &[(f32, usize)]) -> egui::Color32 {
-    let mut sum = [0u16; 3];
-    for (_, which) in channels {
-        for c in 0..3 {
-            sum[c] += CHANNEL_COLOURS[*which][c];
-        }
-    }
-    egui::Color32::from_rgb(
-        sum[0].min(255) as u8,
-        sum[1].min(255) as u8,
-        sum[2].min(255) as u8,
-    )
+/// How far either side of a bin the smoothing reaches.
+///
+/// A histogram of a photograph is spiky — real images have runs of identical
+/// values, and every one of them is a bin standing alone. Drawn raw that reads
+/// as a bar chart, which is a picture of the sampling rather than of the
+/// photograph. Three bins either side is enough to make it a curve and short
+/// enough that a genuine spike is still a spike.
+const SMOOTH: usize = 3;
+
+/// Smooth and normalise one channel into 0..1 heights.
+fn trace(bins: &[u32; BINS], peak: f32) -> Vec<f32> {
+    (0..BINS)
+        .map(|i| {
+            let mut sum = 0.0;
+            let mut weight = 0.0;
+            for d in -(SMOOTH as i32)..=(SMOOTH as i32) {
+                let j = i as i32 + d;
+                if !(0..BINS as i32).contains(&j) {
+                    continue;
+                }
+                // Triangular, which is a box filter applied twice and quite
+                // smooth enough for something drawn a few hundred pixels wide.
+                let w = 1.0 - (d.abs() as f32 / (SMOOTH as f32 + 1.0));
+                sum += bins[j as usize] as f32 * w;
+                weight += w;
+            }
+            let v = sum / weight.max(1e-4) / peak;
+            // The same compression the panel histogram used: one flat area of
+            // sky can hold a fifth of the frame in a single bin, and against
+            // that everything else would be a pixel high.
+            v.clamp(0.0, 1.0).powf(0.42)
+        })
+        .collect()
 }
 
 /// The picture's tones, in the curve's own domain, behind the curve.
 ///
-/// Dimmer than the panel histogram and additive the same way: the white core
-/// is where the channels agree and a coloured fringe is where one has drifted.
-/// It is a reference, not a scope, so it gives way to the curve on top of it.
+/// One filled area per channel with a line along its top: the fills are
+/// translucent so where the channels agree they build into a pale grey, and
+/// the lines say which channel each edge belongs to. That is the reading a
+/// colourist wants — the grey mass is the picture, and a coloured edge showing
+/// out of it is a channel that has drifted from the others.
 fn histogram_behind(painter: &egui::Painter, rect: egui::Rect, hist: Option<&Histogram>) {
     let Some(hist) = hist else {
         return;
     };
     let peak = hist.peak().max(1) as f32;
-    let scale = |v: u32| (v as f32 / peak).clamp(0.0, 1.0).powf(0.42);
+    let height = rect.height() * 0.92;
 
-    let mut mesh = egui::Mesh::default();
-    let step = rect.width() / BINS as f32;
-    for i in 0..BINS {
-        let x0 = rect.min.x + i as f32 * step;
-        let x1 = (x0 + step + 0.5).min(rect.max.x);
-        let mut heights = [
-            (scale(hist.red[i]), 0usize),
-            (scale(hist.green[i]), 1),
-            (scale(hist.blue[i]), 2),
-        ];
-        heights.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for (bins, colour) in [
+        (&hist.red, CHANNEL_COLOURS[0]),
+        (&hist.green, CHANNEL_COLOURS[1]),
+        (&hist.blue, CHANNEL_COLOURS[2]),
+    ] {
+        let heights = trace(bins, peak);
+        let x_of = |i: usize| rect.min.x + rect.width() * (i as f32 / (BINS - 1) as f32);
+        let y_of = |v: f32| rect.max.y - v * height;
 
-        let mut base = 0.0f32;
-        for k in 0..3 {
-            let top = heights[k].0;
-            if top > base {
-                mesh.add_colored_rect(
-                    egui::Rect::from_min_max(
-                        egui::pos2(x0, rect.max.y - top * rect.height() * 0.92),
-                        egui::pos2(x1, rect.max.y - base * rect.height() * 0.92),
-                    ),
-                    additive(&heights[k..]).gamma_multiply(0.55),
-                );
-                base = top;
-            }
+        // The fill, as a strip of quads from the baseline. A polygon would be
+        // the obvious shape, but egui only fills convex ones and a histogram
+        // is the least convex outline there is.
+        let mut mesh = egui::Mesh::default();
+        let fill = egui::Color32::from_rgba_unmultiplied(colour.r(), colour.g(), colour.b(), 56);
+        for i in 0..BINS - 1 {
+            let (x0, x1) = (x_of(i), x_of(i + 1));
+            let (y0, y1) = (y_of(heights[i]), y_of(heights[i + 1]));
+            let base = mesh.vertices.len() as u32;
+            mesh.colored_vertex(egui::pos2(x0, y0), fill);
+            mesh.colored_vertex(egui::pos2(x1, y1), fill);
+            mesh.colored_vertex(egui::pos2(x1, rect.max.y), fill);
+            mesh.colored_vertex(egui::pos2(x0, rect.max.y), fill);
+            mesh.add_triangle(base, base + 1, base + 2);
+            mesh.add_triangle(base, base + 2, base + 3);
         }
+        painter.add(egui::Shape::mesh(mesh));
+
+        let line: Vec<egui::Pos2> = (0..BINS)
+            .map(|i| egui::pos2(x_of(i), y_of(heights[i])))
+            .collect();
+        painter.add(egui::Shape::line(
+            line,
+            egui::Stroke::new(1.2_f32, colour.gamma_multiply(0.85)),
+        ));
     }
-    painter.add(egui::Shape::mesh(mesh));
+}
+
+/// Whether a click landed clear of the soft clip handles.
+///
+/// Without this, clicking a handle to nudge it would drop a control point
+/// underneath it, and the point would then be in the way of every later drag.
+fn pos_is_clear(response: &egui::Response, rect: egui::Rect) -> bool {
+    response
+        .interact_pointer_pos()
+        .is_none_or(|p| p.x >= rect.min.x + HANDLE_GRAB)
+}
+
+/// How close to the left edge a drag has to start to be taking hold of a soft
+/// clip limit rather than placing a control point.
+const HANDLE_GRAB: f32 = 22.0;
+
+/// 18% grey in the curve's domain, the anchor both limits measure in from.
+const LOG_GREY: f32 = 0.413_588_67;
+
+/// Where the soft clip knees sit in the plot, as fractions of its height.
+///
+/// The same arithmetic the shader does: Low measures in from black towards
+/// grey, High measures in from white towards grey. Drawing them anywhere else
+/// would put a handle where the effect is not.
+fn knee_positions(low: f32, high: f32) -> (f32, f32) {
+    let low_at = LOG_BLACK + low.clamp(0.0, 1.0) * (LOG_GREY - LOG_BLACK);
+    let high_at = LOG_WHITE - high.clamp(0.0, 1.0) * (LOG_WHITE - LOG_GREY);
+    (low_at, high_at)
+}
+
+/// Resolve draws the soft clip limits as two horizontal lines across the plot
+/// with a handle on the left edge, and it is the right place for them: the
+/// limit is a level, and a level is a horizontal line. Dragging the bottom one
+/// up lifts the black point; dragging the top one down brings the white in.
+fn soft_clip_lines(painter: &egui::Painter, rect: egui::Rect, low: f32, high: f32) {
+    for (t, pointing_up) in [(low, true), (high, false)] {
+        let y = rect.max.y - t * rect.height();
+        painter.line_segment(
+            [egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)],
+            egui::Stroke::new(1.4_f32, egui::Color32::from_white_alpha(190)),
+        );
+        // A triangle on the left edge, so it reads as something to take hold
+        // of rather than as a grid line.
+        let w = 5.5_f32;
+        let dy = if pointing_up { -w } else { w };
+        painter.add(egui::Shape::convex_polygon(
+            vec![
+                egui::pos2(rect.min.x, y - w),
+                egui::pos2(rect.min.x, y + w),
+                egui::pos2(rect.min.x + w * 1.6, y + dy * 0.1),
+            ],
+            egui::Color32::from_gray(235),
+            egui::Stroke::NONE,
+        ));
+    }
 }
 
 fn clip_mark(painter: &egui::Painter, at: egui::Pos2) {
@@ -831,4 +904,86 @@ fn nearest(
         .filter(|(_, d)| *d <= GRAB_RADIUS)
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(i, _)| i)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The handles are drawn from one arithmetic and dragged through its
+    /// inverse. If the two disagree the handle crawls away from the pointer,
+    /// which is the kind of bug that looks like a rendering glitch.
+    #[test]
+    fn a_soft_clip_handle_lands_where_it_was_dragged() {
+        for v in [0.0f32, 0.15, 0.5, 0.85, 1.0] {
+            let (low_at, high_at) = knee_positions(v, v);
+            let low_back = (low_at - LOG_BLACK) / (LOG_GREY - LOG_BLACK);
+            let high_back = (LOG_WHITE - high_at) / (LOG_WHITE - LOG_GREY);
+            assert!(
+                (low_back - v).abs() < 1e-4,
+                "low {v} came back as {low_back}"
+            );
+            assert!(
+                (high_back - v).abs() < 1e-4,
+                "high {v} came back as {high_back}"
+            );
+        }
+    }
+
+    /// With both limits off they sit exactly on black and white, so an
+    /// untouched panel shows them at the ends of the plot rather than
+    /// somewhere arbitrary inside it.
+    #[test]
+    fn the_limits_start_at_the_ends_of_the_range() {
+        let (low, high) = knee_positions(0.0, 0.0);
+        assert!((low - LOG_BLACK).abs() < 1e-6);
+        assert!((high - LOG_WHITE).abs() < 1e-6);
+    }
+
+    /// Both limits meet at mid grey when fully closed, which is as far as
+    /// either can reach — past each other would be an inverted range.
+    #[test]
+    fn the_limits_meet_at_mid_grey_and_go_no_further() {
+        let (low, high) = knee_positions(1.0, 1.0);
+        assert!((low - LOG_GREY).abs() < 1e-6);
+        assert!((high - LOG_GREY).abs() < 1e-6);
+    }
+
+    fn spike() -> [u32; BINS] {
+        let mut bins = [0u32; BINS];
+        bins[100] = 1000;
+        bins
+    }
+
+    /// A histogram of a photograph is spiky — real images have runs of
+    /// identical values, and drawn raw that reads as a bar chart rather than
+    /// as a picture of the photograph.
+    #[test]
+    fn smoothing_spreads_a_spike_into_a_curve() {
+        let t = trace(&spike(), 1000.0);
+        assert!(t[100] > 0.0, "the spike vanished");
+        for d in 1..=SMOOTH {
+            assert!(
+                t[100 - d] > 0.0 && t[100 + d] > 0.0,
+                "the spike did not reach {d} bins out"
+            );
+            assert!(
+                t[100 - d] < t[100 - d + 1],
+                "the shoulder should fall away from the peak"
+            );
+        }
+        assert!(
+            t[100 - SMOOTH - 1] == 0.0,
+            "the smoothing reached further than it should"
+        );
+    }
+
+    #[test]
+    fn a_trace_never_leaves_the_plot() {
+        let mut bins = [0u32; BINS];
+        // Everything in one bin, which is what a flat frame gives.
+        bins[10] = u32::MAX / 2;
+        let t = trace(&bins, 1.0);
+        assert!(t.iter().all(|v| (0.0..=1.0).contains(v)), "{:?}", t[10]);
+    }
 }

@@ -410,20 +410,36 @@ pub fn effect_header(
     }
     if ui.is_rect_visible(pill) {
         let painter = ui.painter();
-        painter.rect_filled(pill, 7.0, egui::Color32::from_gray(34));
+        painter.rect_filled(
+            pill,
+            7.0,
+            if enabled {
+                egui::Color32::from_rgb(70, 26, 24)
+            } else {
+                egui::Color32::from_gray(34)
+            },
+        );
         painter.rect_stroke(
             pill,
             7.0,
             egui::Stroke::new(1.0_f32, colour::BOX_EDGE),
             egui::StrokeKind::Inside,
         );
+        // The knob moves. A switch that only changes colour is a light, and a
+        // light does not say which way to push it — the position is what makes
+        // the state readable without knowing the convention.
+        let x = if enabled {
+            pill.max.x - 7.0
+        } else {
+            pill.min.x + 7.0
+        };
         painter.circle_filled(
-            egui::pos2(pill.min.x + 7.0, pill.center().y),
+            egui::pos2(x, pill.center().y),
             5.0,
             if enabled {
-                egui::Color32::from_rgb(226, 62, 50)
+                egui::Color32::from_rgb(230, 70, 58)
             } else {
-                egui::Color32::from_gray(90)
+                egui::Color32::from_gray(120)
             },
         );
     }

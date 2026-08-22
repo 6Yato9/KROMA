@@ -388,153 +388,18 @@ fn wheel_grid(
     }
 }
 
-/// One of the small labelled numbers in the rows above and below the wheels.
-///
-/// `display` maps the stored value into the units Resolve shows and `store`
-/// maps it back. For most controls both are the identity; for Saturation, Hue
-/// and Lum Mix they are not, and keeping the pair together in one struct is
-/// what stops the two directions drifting apart.
-struct Field {
-    label: &'static str,
-    effect: &'static str,
-    key: &'static str,
-    display: fn(f32) -> f32,
-    store: fn(f32) -> f32,
-    decimals: usize,
-}
-
-const fn plain(
-    label: &'static str,
-    effect: &'static str,
-    key: &'static str,
-    decimals: usize,
-) -> Field {
-    Field {
-        label,
-        effect,
-        key,
-        display: |v| v,
-        store: |v| v,
-        decimals,
-    }
-}
-
-/// Resolve shows saturation on a 0 to 100 scale with 50 neutral.
-fn to_resolve_scale(v: f32) -> f32 {
-    50.0 + v * 50.0
-}
-fn from_resolve_scale(v: f32) -> f32 {
-    (v - 50.0) / 50.0
-}
-/// Hue is stored in degrees, ±180, and shown on the same 0 to 100 scale.
-fn hue_to_scale(v: f32) -> f32 {
-    50.0 + v / 3.6
-}
-fn hue_from_scale(v: f32) -> f32 {
-    (v - 50.0) * 3.6
-}
-
-fn field_row(ui: &mut egui::Ui, history: &mut History, fields: &[Field]) {
-    ui.horizontal_wrapped(|ui| {
-        for field in fields {
-            let Some(def) = pe_effects::by_key(field.effect).and_then(|e| e.param(field.key))
-            else {
-                continue;
-            };
-            let pe_effects::ParamKind::Float {
-                min,
-                max,
-                default,
-                neutral,
-            } = def.kind
-            else {
-                continue;
-            };
-            let Some(id) = history.document().stack.find_by_effect(field.effect) else {
-                continue;
-            };
-            let stored = history
-                .document()
-                .stack
-                .get(id)
-                .and_then(|r| r.params.get(field.key))
-                .and_then(ParamValue::as_float)
-                .unwrap_or(default);
-
-            let mut shown = (field.display)(stored);
-            let before = shown;
-            ui.label(
-                egui::RichText::new(field.label)
-                    .small()
-                    .color(resolve::colour::LABEL),
-            );
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(58.0, 25.0), egui::Sense::hover());
-            let mut child = ui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(egui::Rect::from_min_size(rect.min, egui::vec2(58.0, 18.0))),
-            );
-            let response = child.add_sized(
-                egui::vec2(56.0, 18.0),
-                egui::DragValue::new(&mut shown)
-                    .fixed_decimals(field.decimals)
-                    .speed(0.0),
-            );
-            if ui.is_rect_visible(rect) {
-                ui.painter().line_segment(
-                    [
-                        egui::pos2(rect.min.x + 2.0, rect.min.y + 21.0),
-                        egui::pos2(rect.max.x - 2.0, rect.min.y + 21.0),
-                    ],
-                    egui::Stroke::new(2.0_f32, egui::Color32::from_gray(120)),
-                );
-            }
-
-            let key = field.key;
-            if response.double_clicked() {
-                history.edit(field.label, None, move |doc| {
-                    if let Some(row) = doc.stack.get_mut(id) {
-                        row.params.set(key, ParamValue::Float(neutral));
-                    }
-                });
-            } else if (before - shown).abs() > 1e-9 {
-                let v = (field.store)(shown).clamp(min, max);
-                history.edit(
-                    field.label,
-                    Some(format!("{}.{key}", field.effect)),
-                    move |doc| {
-                        if let Some(row) = doc.stack.get_mut(id) {
-                            row.params.set(key, ParamValue::Float(v));
-                        }
-                    },
-                );
-            }
-            ui.add_space(6.0);
-        }
-    });
-}
-
 /// The Primaries panel.
 pub fn primaries(ui: &mut egui::Ui, history: &mut History) {
     let Some(id) = history.document().stack.find_by_effect("primaries") else {
         return;
     };
 
-    field_row(
-        ui,
-        history,
-        &[
-            plain("Temp", "white_balance", "temperature", 0),
-            plain("Tint", "white_balance", "tint", 1),
-            plain("Contrast", "contrast", "contrast", 3),
-            plain("Pivot", "contrast", "pivot", 3),
-            // Resolve's Mid/Detail and Lightroom's Clarity are the same
-            // operation under two names: local contrast in the midtones. One
-            // parameter, shown wherever its reader expects to find it.
-            plain("Mid/Detail", "presence", "clarity", 2),
-        ],
-    );
-    ui.add_space(6.0);
-
+    // Resolve puts Temp, Tint, Contrast, Pivot and Mid/Detail above the
+    // wheels and Color Boost, Shadows, Highlights, Saturation, Hue and Lum
+    // Mix below them. Every one of those is on the Basic panel already, and
+    // two panels showing the same parameter is two places to look for it —
+    // one of which is always the wrong one. The wheels are what this panel
+    // is for.
     wheel_grid(
         ui,
         history,
@@ -544,43 +409,6 @@ pub fn primaries(ui: &mut egui::Ui, history: &mut History) {
             ("gamma", "Gamma"),
             ("gain", "Gain"),
             ("offset", "Offset"),
-        ],
-    );
-
-    ui.add_space(8.0);
-    field_row(
-        ui,
-        history,
-        &[
-            // Resolve's Color Boost is vibrance: a push that leaves the
-            // already-vivid colours where they are.
-            plain("Color Boost", "colour", "vibrance", 2),
-            plain("Shadows", "tone", "shadows", 2),
-            plain("Highlights", "tone", "highlights", 2),
-            Field {
-                label: "Saturation",
-                effect: "colour",
-                key: "saturation",
-                display: to_resolve_scale,
-                store: from_resolve_scale,
-                decimals: 2,
-            },
-            Field {
-                label: "Hue",
-                effect: "colour",
-                key: "hue",
-                display: hue_to_scale,
-                store: hue_from_scale,
-                decimals: 2,
-            },
-            Field {
-                label: "Lum Mix",
-                effect: "colour",
-                key: "lum_mix",
-                display: |v| v * 100.0,
-                store: |v| v / 100.0,
-                decimals: 2,
-            },
         ],
     );
 }
@@ -679,63 +507,11 @@ mod tests {
         assert!(v.x > 0.9 && v.y.abs() < 1e-4, "{v:?}");
     }
 
-    /// Both directions of Resolve's 0-to-100 scale have to agree, or a number
-    /// typed in would not read back as itself.
-    #[test]
-    fn the_resolve_scale_round_trips() {
-        for v in [-1.0, -0.4, 0.0, 0.25, 1.0] {
-            assert!((from_resolve_scale(to_resolve_scale(v)) - v).abs() < 1e-5);
-        }
-        assert!((to_resolve_scale(0.0) - 50.0).abs() < 1e-6, "neutral is 50");
-    }
-
-    #[test]
-    fn the_hue_scale_round_trips_and_puts_neutral_in_the_middle() {
-        for v in [-180.0, -45.0, 0.0, 90.0, 180.0] {
-            assert!((hue_from_scale(hue_to_scale(v)) - v).abs() < 1e-3);
-        }
-        assert!((hue_to_scale(0.0) - 50.0).abs() < 1e-6);
-        assert!(
-            (hue_to_scale(180.0) - 100.0).abs() < 1e-4,
-            "the ends line up"
-        );
-    }
-
-    /// Every control the panel names has to exist, or the row silently draws
-    /// nothing and the gap reads as a layout bug rather than a typo.
-    #[test]
-    fn every_field_names_a_parameter_that_exists() {
-        for (effect, key) in [
-            ("white_balance", "temperature"),
-            ("white_balance", "tint"),
-            ("contrast", "contrast"),
-            ("contrast", "pivot"),
-            ("presence", "clarity"),
-            ("colour", "vibrance"),
-            ("tone", "shadows"),
-            ("tone", "highlights"),
-            ("colour", "saturation"),
-            ("colour", "hue"),
-            ("colour", "lum_mix"),
-        ] {
-            let def = pe_effects::by_key(effect).unwrap_or_else(|| panic!("no effect {effect}"));
-            assert!(def.param(key).is_some(), "{effect} has no {key}");
-        }
-    }
-
     /// And every effect it reaches into has to be pinned, or the panel would
     /// be driving something the user can delete out from under it.
     #[test]
     fn every_effect_the_panel_drives_is_pinned() {
-        for effect in [
-            "white_balance",
-            "contrast",
-            "presence",
-            "colour",
-            "tone",
-            "primaries",
-            "log_wheels",
-        ] {
+        for effect in ["primaries", "log_wheels"] {
             assert!(
                 pe_effects::registry::PINNED_ROWS.contains(&effect),
                 "{effect} is not pinned"

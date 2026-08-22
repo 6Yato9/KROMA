@@ -113,6 +113,7 @@ pub fn panel(ui: &mut egui::Ui, history: &mut History) {
     heading(ui, "Tone");
     slider(ui, history, "exposure", "ev", "Exposure");
     slider(ui, history, "contrast", "contrast", "Contrast");
+    slider(ui, history, "contrast", "pivot", "Pivot");
     slider(ui, history, "tone", "highlights", "Highlights");
     slider(ui, history, "tone", "shadows", "Shadows");
     slider(ui, history, "tone", "whites", "Whites");
@@ -123,6 +124,12 @@ pub fn panel(ui: &mut egui::Ui, history: &mut History) {
     slider(ui, history, "presence", "clarity", "Clarity");
     slider(ui, history, "colour", "vibrance", "Vibrance");
     slider(ui, history, "colour", "saturation", "Saturation");
+    // Moved here from the wheels panel, where they were the only two
+    // controls in that row Basic did not already have. Two panels showing
+    // the same parameter is two places to look for it, one of which is
+    // always the wrong one.
+    slider(ui, history, "colour", "hue", "Hue");
+    slider(ui, history, "colour", "lum_mix", "Lum Mix");
     ui.add_space(4.0);
 }
 
