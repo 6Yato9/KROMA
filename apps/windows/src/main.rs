@@ -568,6 +568,15 @@ impl App {
             return true;
         };
         let out = export_path(&batch.dir, &path);
+        if self.would_overwrite_a_source(&out) {
+            // Counted as a failure rather than stopping the run: one collision
+            // should not abandon the other sixty-five, and the summary at the
+            // end says how many did not make it.
+            if let Some(b) = self.batch.as_mut() {
+                b.failed += 1;
+            }
+            return true;
+        }
 
         // The photograph in hand has its edit in the live history; every other
         // one has it parked, or has none at all and gets the defaults.
@@ -625,6 +634,14 @@ impl App {
             self.status = "open a photo first".into();
             return;
         };
+        // A sidecar could only collide with a photograph if one were named
+        // `something.peproj`, which is close to impossible — and checked
+        // anyway, because "never write over an original" is worth being a rule
+        // rather than a set of places the rule happens to hold.
+        if self.would_overwrite_a_source(&path) {
+            self.status = format!("refused: {} is one of your photographs", path.display());
+            return;
+        }
         match self
             .history
             .document()
@@ -665,14 +682,28 @@ impl App {
         let mut failed = 0;
         let current = self.library.current();
 
-        let mut write = |path: &Path, doc: &Document| match doc
-            .to_json()
-            .map_err(|e| e.to_string())
-            .and_then(|json| {
-                std::fs::write(path.with_extension("peproj"), json).map_err(|e| e.to_string())
-            }) {
-            Ok(()) => written += 1,
-            Err(_) => failed += 1,
+        // Collected first, so the closure below can check against them
+        // without borrowing `self` while it also borrows the library.
+        let sources: Vec<PathBuf> = self
+            .library
+            .paths()
+            .iter()
+            .map(|p| p.to_path_buf())
+            .collect();
+        let mut write = |path: &Path, doc: &Document| {
+            let out = path.with_extension("peproj");
+            if sources.iter().any(|p| same_file(p, &out)) {
+                failed += 1;
+                return;
+            }
+            match doc
+                .to_json()
+                .map_err(|e| e.to_string())
+                .and_then(|json| std::fs::write(&out, json).map_err(|e| e.to_string()))
+            {
+                Ok(()) => written += 1,
+                Err(_) => failed += 1,
+            }
         };
 
         for (i, entry) in self.library.entries().iter().enumerate() {
@@ -701,16 +732,32 @@ impl App {
         Some(self.path.as_ref()?.with_extension("peproj"))
     }
 
+    /// Whether writing here would land on a photograph we were given.
+    ///
+    /// Checked against every photograph in the set, not only the one on
+    /// screen: a batch export writes into one folder, and the name it builds
+    /// for photo A can collide with photo B sitting right beside it.
+    ///
+    /// This is a hard refusal rather than a warning. The application is
+    /// allowed to be annoying about this exactly once — losing somebody's
+    /// original is not a thing to recover from, and there is no undo that
+    /// reaches outside the process.
+    fn would_overwrite_a_source(&self, out: &Path) -> bool {
+        self.path.iter().any(|p| same_file(p, out))
+            || self.library.paths().iter().any(|p| same_file(p, out))
+    }
+
     fn export(&mut self) {
         let Some(preview) = self.preview.as_ref() else {
             self.status = "no GPU".into();
             return;
         };
-        let out = self
-            .path
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("export.jpg"))
-            .with_extension("edited.jpg");
+        let source = self.path.clone().unwrap_or_else(|| PathBuf::from("export"));
+        let out = source.with_file_name(export_name(&source));
+        if self.would_overwrite_a_source(&out) {
+            self.status = format!("refused: {} is one of your photographs", out.display());
+            return;
+        }
 
         // The crop decides how much picture there is and the resize decides
         // how many pixels it comes in; neither is the source's size, and
@@ -1593,12 +1640,48 @@ impl Batch {
 /// Beside the original would overwrite the next run's input the moment someone
 /// exports JPEGs into the folder they came from, so a batch always goes
 /// somewhere chosen.
-fn export_path(dir: &Path, source: &Path) -> PathBuf {
+/// What a graded photograph is called: the original's name with `_KROMA` on
+/// the end.
+///
+/// The suffix is not decoration. An export named after its source, in the
+/// folder its source lives in, *is* its source on any filesystem that does not
+/// care about case — and Windows does not. This used to be `<stem>.jpg`, which
+/// meant one "Export all…" into the folder you opened would have written over
+/// every original in it.
+///
+/// The name is one half of that fix and [`would_overwrite`] is the other. A
+/// naming scheme that happens to differ is not a guarantee; a check is.
+fn export_name(source: &Path) -> String {
     let stem = source
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "export".to_string());
-    dir.join(format!("{stem}.jpg"))
+    format!("{stem}_KROMA.jpg")
+}
+
+fn export_path(dir: &Path, source: &Path) -> PathBuf {
+    dir.join(export_name(source))
+}
+
+/// Whether two paths name the same file, as far as can be told without
+/// creating one.
+///
+/// `canonicalize` is the right answer and it only works on files that already
+/// exist — which an output path usually does not. So the *directories* are
+/// canonicalised, which do exist, and the file names compared without regard
+/// to case. Windows treats `photo.JPG` and `photo.jpg` as one file, and a
+/// comparison that did not is exactly the comparison that would let a batch
+/// export eat a folder of originals.
+fn same_file(a: &Path, b: &Path) -> bool {
+    let dir = |p: &Path| {
+        let d = p.parent().unwrap_or(Path::new("."));
+        std::fs::canonicalize(d).unwrap_or_else(|_| d.to_path_buf())
+    };
+    let name = |p: &Path| p.file_name().map(|n| n.to_string_lossy().to_lowercase());
+    match (name(a), name(b)) {
+        (Some(x), Some(y)) => x == y && dir(a) == dir(b),
+        _ => false,
+    }
 }
 
 /// How the graded picture is being held up against the ungraded one.
@@ -1783,4 +1866,67 @@ fn draw(ui: &egui::Ui, rect: egui::Rect, framing: &Framing) -> egui::Rect {
         egui::Color32::WHITE,
     ));
     target
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The rule this whole pair of functions exists for: never write over a
+    /// photograph somebody gave us.
+    ///
+    /// It is asserted rather than reasoned about because the reasoning was
+    /// wrong once already. `export_path` used to build `<stem>.jpg`, which on
+    /// a case-insensitive filesystem *is* `<stem>.JPG` — so one "Export all…"
+    /// into the folder you opened would have written over every original in
+    /// it. There is no undo that reaches outside the process.
+    #[test]
+    fn an_export_is_never_named_after_its_source() {
+        for source in ["DJI_0001.JPG", "photo.jpg", "no_extension", "a.b.c.png"] {
+            let source = Path::new(source);
+            let out = export_path(Path::new("."), source);
+            assert!(
+                !same_file(source, &out),
+                "{} exports to itself as {}",
+                source.display(),
+                out.display()
+            );
+        }
+    }
+
+    #[test]
+    fn the_export_carries_the_kroma_suffix() {
+        assert_eq!(export_name(Path::new("DJI_0001.JPG")), "DJI_0001_KROMA.jpg");
+        assert_eq!(export_name(Path::new("photo.jpeg")), "photo_KROMA.jpg");
+        assert_eq!(export_name(Path::new("sunset")), "sunset_KROMA.jpg");
+    }
+
+    /// Case is the trap. Windows treats these as one file, and a comparison
+    /// that did not is the comparison that would have eaten the originals.
+    #[test]
+    fn two_names_differing_only_in_case_are_the_same_file() {
+        assert!(same_file(
+            Path::new("shots/DJI_0001.JPG"),
+            Path::new("shots/dji_0001.jpg")
+        ));
+        assert!(!same_file(
+            Path::new("shots/DJI_0001.JPG"),
+            Path::new("shots/DJI_0002.JPG")
+        ));
+        // Same name, different folder.
+        assert!(!same_file(
+            Path::new("a/photo.jpg"),
+            Path::new("b/photo.jpg")
+        ));
+    }
+
+    /// And exporting a photograph that is *already* an export must not land on
+    /// the export. Round-tripping is a normal thing to do by accident.
+    #[test]
+    fn exporting_an_export_does_not_land_on_it() {
+        let once = Path::new("photo_KROMA.jpg");
+        let twice = export_path(Path::new("."), once);
+        assert!(!same_file(once, &twice));
+        assert_eq!(export_name(once), "photo_KROMA_KROMA.jpg");
+    }
 }

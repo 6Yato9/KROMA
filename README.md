@@ -28,6 +28,23 @@ to watch: with a nine-row stack, dragging the deepest slider should read `1`.
 That is the stage cache re-running only what changed, and it is why the
 application does not get slower as you do more to an image.
 
+## Your originals are never written to
+
+The application does not modify the photograph you opened. It cannot: every
+write is checked against every file in the open set first, and a collision is
+refused rather than resolved.
+
+Exports are named after the original with `_KROMA` on the end —
+`DJI_0001.JPG` becomes `DJI_0001_KROMA.jpg`. That suffix is not decoration. An
+export named after its source, in the folder its source lives in, *is* its
+source on a filesystem that ignores case, and Windows ignores case. The naming
+and the check are two separate defences on purpose: a scheme that happens to
+differ is not a guarantee.
+
+The only other thing written beside a photograph is its `.peproj` sidecar,
+which holds the edit and appears only when you ask for it with Save edit or
+Save all. Nothing at all is written when the window closes.
+
 `Shift+D` bypasses the whole stack. `Ctrl+Z` / `Ctrl+Shift+Z` undo and redo,
 with slider drags collapsed into a single step.
 
