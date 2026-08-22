@@ -364,6 +364,30 @@ fn wheel_column(
     }
 }
 
+/// The four wheels, two by two.
+///
+/// Resolve puts them in a row because its colour page is a whole screen wide.
+/// In a docked inspector a row of four leaves each disc too small to place a
+/// puck in, and a wheel you cannot aim is not a wheel.
+fn wheel_grid(
+    ui: &mut egui::Ui,
+    history: &mut History,
+    id: RowId,
+    wheels: [(&'static str, &'static str); 4],
+) {
+    let width = ((ui.available_width() - 14.0) / 2.0).clamp(90.0, 200.0);
+    for row in 0..2 {
+        ui.horizontal_top(|ui| {
+            for column in 0..2 {
+                let (key, title) = wheels[row * 2 + column];
+                wheel_column(ui, history, id, key, title, width);
+                ui.add_space(6.0);
+            }
+        });
+        ui.add_space(6.0);
+    }
+}
+
 /// One of the small labelled numbers in the rows above and below the wheels.
 ///
 /// `display` maps the stored value into the units Resolve shows and `store`
@@ -511,18 +535,17 @@ pub fn primaries(ui: &mut egui::Ui, history: &mut History) {
     );
     ui.add_space(6.0);
 
-    let width = ((ui.available_width() - 20.0) / 4.0).clamp(66.0, 150.0);
-    ui.horizontal_top(|ui| {
-        for (key, title) in [
+    wheel_grid(
+        ui,
+        history,
+        id,
+        [
             ("lift", "Lift"),
             ("gamma", "Gamma"),
             ("gain", "Gain"),
             ("offset", "Offset"),
-        ] {
-            wheel_column(ui, history, id, key, title, width);
-            ui.add_space(3.0);
-        }
-    });
+        ],
+    );
 
     ui.add_space(8.0);
     field_row(
@@ -576,18 +599,17 @@ pub fn log_wheels(ui: &mut egui::Ui, history: &mut History) {
         return;
     };
 
-    let width = ((ui.available_width() - 20.0) / 4.0).clamp(66.0, 150.0);
-    ui.horizontal_top(|ui| {
-        for (key, title) in [
+    wheel_grid(
+        ui,
+        history,
+        id,
+        [
             ("shadow", "Shadow"),
             ("midtone", "Midtone"),
             ("highlight", "Highlight"),
             ("offset", "Offset"),
-        ] {
-            wheel_column(ui, history, id, key, title, width);
-            ui.add_space(3.0);
-        }
-    });
+        ],
+    );
 
     ui.add_space(6.0);
     basic::slider(ui, history, "log_wheels", "low_range", "Low Range");

@@ -252,59 +252,148 @@ const SIZES: [(&str, Resize); 5] = [
     ("1080", Resize::LongEdge { pixels: 1080 }),
 ];
 
-/// The crop panel.
+/// A pair of linked or independent numbers, the way Resolve shows Zoom and
+/// Position.
 ///
-/// Every control writes through the same two steps: change the geometry, then
-/// shrink it if the change left it hanging off the picture. Straightening
-/// always costs some of the edges — the only question is whether the tool
-/// takes them or leaves the user with blank corners.
-pub fn panel(ui: &mut egui::Ui, history: &mut History, source: (u32, u32), active: &mut bool) {
+/// Returns the new pair when either moved.
+fn xy_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: [f32; 2],
+    range: std::ops::RangeInclusive<f32>,
+    link: Option<&mut bool>,
+) -> Option<[f32; 2]> {
+    let mut next = value;
+    let mut changed = false;
     ui.horizontal(|ui| {
-        ui.toggle_value(active, "Crop")
-            .on_hover_text("C — show the whole frame and drag the rectangle");
-        if ui.small_button("Reset").clicked() {
-            edit(history, source, "Reset Crop", |g| *g = Geometry::default());
+        ui.add_sized(
+            [96.0, 18.0],
+            egui::Label::new(
+                egui::RichText::new(label)
+                    .small()
+                    .color(crate::resolve::colour::LABEL),
+            ),
+        );
+        let (lo, hi) = (*range.start(), *range.end());
+        for (i, axis) in ["X", "Y"].iter().enumerate() {
+            ui.label(egui::RichText::new(*axis).small().weak());
+            let before = next[i];
+            ui.add_sized(
+                [58.0, 18.0],
+                egui::DragValue::new(&mut next[i])
+                    .fixed_decimals(3)
+                    .speed(0.0),
+            );
+            if (before - next[i]).abs() > 1e-9 {
+                next[i] = next[i].clamp(lo, hi);
+                changed = true;
+                if link.as_ref().is_some_and(|l| **l) {
+                    next[1 - i] = next[i];
+                }
+            }
+            if i == 0
+                && let Some(l) = link.as_ref()
+            {
+                // The link chain between the two, exactly where Resolve puts
+                // it. Zoom is the one people want locked; Position is not.
+                let mut on = **l;
+                let text = if on { "[=]" } else { "[ ]" };
+                if ui
+                    .small_button(text)
+                    .on_hover_text("Link X and Y")
+                    .clicked()
+                {
+                    on = !on;
+                    changed = true;
+                    next[1] = next[0];
+                }
+                if on != **l {
+                    // Written back below, outside the borrow.
+                    ui.data_mut(|d| d.insert_temp(egui::Id::new(("xy_link_pending", label)), on));
+                }
+            }
         }
     });
+    if let Some(l) = link
+        && let Some(on) = ui.data(|d| d.get_temp::<bool>(egui::Id::new(("xy_link_pending", label))))
+    {
+        *l = on;
+        ui.data_mut(|d| d.remove::<bool>(egui::Id::new(("xy_link_pending", label))));
+    }
+    changed.then_some(next)
+}
 
+/// Resolve's Transform panel, against our geometry.
+///
+/// Zoom is the reciprocal of the crop's size — zooming to 2 keeps half the
+/// frame — and Position is where that crop sits. Saying it that way round
+/// costs one division and means the panel reads exactly like Resolve's while
+/// the document still stores the rectangle, which is the thing the renderer
+/// needs and the only thing that survives a change of image size.
+fn transform_section(ui: &mut egui::Ui, history: &mut History, source: (u32, u32)) {
     let g = history.document().geometry;
 
-    ui.add_space(4.0);
+    let zoom = [1.0 / g.size[0].max(1e-3), 1.0 / g.size[1].max(1e-3)];
+    let link_id = ui.make_persistent_id("zoom_link");
+    let mut link: bool = ui.data_mut(|d| *d.get_temp_mut_or(link_id, true));
+    if let Some(next) = xy_row(ui, "Zoom", zoom, 1.0..=20.0, Some(&mut link)) {
+        edit(history, source, "Zoom", move |g| {
+            g.size = [1.0 / next[0].max(1e-3), 1.0 / next[1].max(1e-3)];
+        });
+    }
+    ui.data_mut(|d| d.insert_temp(link_id, link));
+
+    if let Some(next) = xy_row(ui, "Position", g.centre, -1.0..=1.0, None) {
+        edit(history, source, "Position", move |g| g.centre = next);
+    }
+
     let mut angle = g.angle;
-    let edit_row = crate::resolve::slider_row(
+    let row = crate::resolve::slider_row(
         ui,
         ui.id().with("crop_angle"),
-        "Angle (°)",
+        "Rotation Angle",
         &mut angle,
         -45.0..=45.0,
-        2,
+        3,
     );
-    if edit_row.changed {
+    if row.changed {
         edit_coalesced(history, source, "Straighten", "crop.angle", move |g| {
             g.angle = angle
         });
     }
-    if edit_row.released {
+    if row.released {
         history.break_coalescing();
     }
-    if edit_row.reset {
+    if row.reset {
         edit(history, source, "Straighten", |g| g.angle = 0.0);
     }
 
-    ui.add_space(4.0);
-    ui.horizontal_wrapped(|ui| {
-        for (label, lock) in ASPECTS {
-            if ui.selectable_label(g.aspect == lock, label).clicked() {
-                edit(history, source, "Crop Aspect", move |g| {
-                    g.aspect = lock;
-                    g.apply_aspect(source.0, source.1);
-                });
-            }
-        }
-    });
-
-    ui.add_space(4.0);
     ui.horizontal(|ui| {
+        ui.add_sized(
+            [96.0, 18.0],
+            egui::Label::new(
+                egui::RichText::new("Flip")
+                    .small()
+                    .color(crate::resolve::colour::LABEL),
+            ),
+        );
+        let mut flip_h = g.flip_h;
+        if ui
+            .toggle_value(&mut flip_h, "H")
+            .on_hover_text("Flip horizontally")
+            .clicked()
+        {
+            edit(history, source, "Flip", move |g| g.flip_h = flip_h);
+        }
+        let mut flip_v = g.flip_v;
+        if ui
+            .toggle_value(&mut flip_v, "V")
+            .on_hover_text("Flip vertically")
+            .clicked()
+        {
+            edit(history, source, "Flip", move |g| g.flip_v = flip_v);
+        }
+        ui.add_space(8.0);
         if ui
             .button("⟲")
             .on_hover_text("Rotate anticlockwise")
@@ -315,34 +404,117 @@ pub fn panel(ui: &mut egui::Ui, history: &mut History, source: (u32, u32), activ
         if ui.button("⟳").on_hover_text("Rotate clockwise").clicked() {
             edit(history, source, "Rotate", |g| g.turns = (g.turns + 1) % 4);
         }
-        let mut flip_h = g.flip_h;
-        if ui.toggle_value(&mut flip_h, "Flip H").clicked() {
-            edit(history, source, "Flip", move |g| g.flip_h = flip_h);
-        }
-        let mut flip_v = g.flip_v;
-        if ui.toggle_value(&mut flip_v, "Flip V").clicked() {
-            edit(history, source, "Flip", move |g| g.flip_v = flip_v);
-        }
     });
+}
 
-    ui.add_space(6.0);
-    ui.label(egui::RichText::new("Export size").small().strong());
-    ui.horizontal_wrapped(|ui| {
-        let current = history.document().resize;
-        for (label, size) in SIZES {
-            if ui.selectable_label(current == size, label).clicked() {
-                history.edit("Export Size", None, move |doc| doc.resize = size);
-            }
+/// Resolve's Cropping panel: how much comes off each edge.
+///
+/// The document stores a centre and a size because that is what survives a
+/// change of image size and what the sampling map wants. Four edges is the
+/// same rectangle said the other way, and it is the way people describe a
+/// crop out loud — "take a bit off the left" is one number, not two.
+fn cropping_section(ui: &mut egui::Ui, history: &mut History, source: (u32, u32)) {
+    let g = history.document().geometry;
+    let edges = [
+        ("Crop Left", 0.5 + g.centre[0] - g.size[0] * 0.5),
+        ("Crop Right", 0.5 - g.centre[0] - g.size[0] * 0.5),
+        ("Crop Top", 0.5 + g.centre[1] - g.size[1] * 0.5),
+        ("Crop Bottom", 0.5 - g.centre[1] - g.size[1] * 0.5),
+    ];
+
+    let mut next: Option<(usize, f32)> = None;
+    for (i, (label, value)) in edges.iter().enumerate() {
+        let mut v = value.max(0.0);
+        let row = crate::resolve::slider_row(
+            ui,
+            ui.id().with(("crop_edge", i)),
+            label,
+            &mut v,
+            0.0..=0.9,
+            3,
+        );
+        if row.changed {
+            next = Some((i, v));
         }
-    });
+        if row.released {
+            history.break_coalescing();
+        }
+        if row.reset {
+            next = Some((i, 0.0));
+        }
+    }
 
-    let (w, h) = pe_render::export::output_size(history.document(), source.0, source.1);
-    ui.label(
-        egui::RichText::new(format!("{w} x {h} px"))
-            .small()
-            .monospace()
-            .weak(),
-    );
+    if let Some((i, v)) = next {
+        let mut e = [
+            edges[0].1.max(0.0),
+            edges[1].1.max(0.0),
+            edges[2].1.max(0.0),
+            edges[3].1.max(0.0),
+        ];
+        // Hold the opposite edge still and let this one move, which is what
+        // dragging a single edge means. Stopping short of it keeps the crop
+        // from collapsing to nothing under a fast drag.
+        let opposite = e[i ^ 1];
+        e[i] = v.clamp(0.0, (1.0 - opposite - MIN_SIZE).max(0.0));
+        edit_coalesced(history, source, "Crop", "crop.edges", move |g| {
+            g.size = [1.0 - e[0] - e[1], 1.0 - e[2] - e[3]];
+            g.centre = [(e[0] - e[1]) * 0.5, (e[2] - e[3]) * 0.5];
+        });
+    }
+}
+
+/// The Image page: transform, cropping, and what comes out.
+pub fn panel(ui: &mut egui::Ui, history: &mut History, source: (u32, u32), active: &mut bool) {
+    egui::CollapsingHeader::new("Transform")
+        .default_open(true)
+        .show(ui, |ui| transform_section(ui, history, source));
+
+    egui::CollapsingHeader::new("Cropping")
+        .default_open(true)
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.toggle_value(active, "Crop tool")
+                    .on_hover_text("C — show the whole frame and drag the rectangle");
+                if ui.small_button("Reset").clicked() {
+                    edit(history, source, "Reset Crop", |g| *g = Geometry::default());
+                }
+            });
+            ui.add_space(4.0);
+            cropping_section(ui, history, source);
+
+            ui.add_space(4.0);
+            let g = history.document().geometry;
+            ui.horizontal_wrapped(|ui| {
+                for (label, lock) in ASPECTS {
+                    if ui.selectable_label(g.aspect == lock, label).clicked() {
+                        edit(history, source, "Crop Aspect", move |g| {
+                            g.aspect = lock;
+                            g.apply_aspect(source.0, source.1);
+                        });
+                    }
+                }
+            });
+        });
+
+    egui::CollapsingHeader::new("Output")
+        .default_open(true)
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                let current = history.document().resize;
+                for (label, size) in SIZES {
+                    if ui.selectable_label(current == size, label).clicked() {
+                        history.edit("Export Size", None, move |doc| doc.resize = size);
+                    }
+                }
+            });
+            let (w, h) = pe_render::export::output_size(history.document(), source.0, source.1);
+            ui.label(
+                egui::RichText::new(format!("{w} x {h} px"))
+                    .small()
+                    .monospace()
+                    .weak(),
+            );
+        });
 }
 
 fn edit(history: &mut History, source: (u32, u32), label: &str, f: impl FnOnce(&mut Geometry)) {

@@ -205,11 +205,6 @@ impl Preview {
         self.scopes.as_ref()
     }
 
-    /// The histogram of the whole photograph as currently graded.
-    pub fn histogram(&self) -> Option<&Histogram> {
-        self.scopes.as_ref().map(|s| &s.histogram)
-    }
-
     /// Re-measure the scopes, but only when the edit has actually moved.
     ///
     /// The dedicated renderer has its own stage cache, so an unchanged

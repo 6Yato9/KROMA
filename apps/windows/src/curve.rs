@@ -19,6 +19,7 @@
 //! hiding the part of the signal a colourist most wants to reach.
 
 use crate::basic;
+use crate::preview::Scopes;
 use crate::resolve;
 use pe_core::{Curve, History, ParamValue, RowId};
 use pe_scopes::{BINS, Histogram};
@@ -27,9 +28,6 @@ use pe_scopes::{BINS, Histogram};
 /// numbers as the shader's CCT_WHITE and CCT_BLACK.
 const LOG_BLACK: f32 = 0.072_905_53;
 const LOG_WHITE: f32 = 0.554_794_5;
-
-/// Width of the column of controls to the right of the plot.
-const EDIT_W: f32 = 172.0;
 
 /// The four curves the effect carries, in the order the tabs show them.
 const CHANNELS: [(&str, &str); 4] = [
@@ -61,7 +59,7 @@ const REGIONS: [(&str, &str); 4] = [
 /// The three boundaries, in the order they appear left to right.
 const SPLITS: [&str; 3] = ["split_low", "split_mid", "split_high"];
 
-pub fn editor(ui: &mut egui::Ui, history: &mut History, scopes: Option<&Histogram>) {
+pub fn editor(ui: &mut egui::Ui, history: &mut History, scopes: Option<&Scopes>) {
     let Some(id) = history.document().stack.find_by_effect("curves") else {
         return;
     };
@@ -92,18 +90,16 @@ pub fn editor(ui: &mut egui::Ui, history: &mut History, scopes: Option<&Histogra
     let tab_id = ui.make_persistent_id("tone_curve_channel");
     let mut channel: usize = ui.data_mut(|d| *d.get_temp_mut_or(tab_id, 0usize));
 
-    // Plot on the left, the channel and soft-clip controls on the right, the
-    // way Resolve lays the panel out.
-    let available = ui.available_width();
-    let plot_w = (available - EDIT_W - 8.0).clamp(140.0, 460.0);
-    ui.horizontal_top(|ui| {
-        canvas(ui, history, id, CHANNELS[channel].0, scopes, plot_w);
-        ui.add_space(8.0);
-        ui.vertical(|ui| {
-            ui.set_width(EDIT_W);
-            edit_column(ui, history, id, &mut channel);
-        });
-    });
+    // The plot takes the whole width and the controls sit under it.
+    //
+    // Resolve puts them side by side because its colour page is a whole
+    // screen wide. In a docked inspector the same arrangement leaves the plot
+    // too narrow to place a control point in, and the plot is the part you
+    // cannot do without.
+    let plot_w = ui.available_width().clamp(140.0, 460.0);
+    canvas(ui, history, id, CHANNELS[channel].0, scopes, plot_w);
+    ui.add_space(6.0);
+    edit_column(ui, history, id, &mut channel);
     ui.data_mut(|d| d.insert_temp(tab_id, channel));
 }
 
@@ -337,7 +333,7 @@ fn canvas(
     history: &mut History,
     id: RowId,
     key: &'static str,
-    scopes: Option<&Histogram>,
+    scopes: Option<&Scopes>,
     width: f32,
 ) {
     let (rect, response) = ui.allocate_exact_size(
@@ -467,7 +463,25 @@ fn canvas(
         painter.rect_filled(band, 0.0, egui::Color32::from_black_alpha(70));
     }
 
-    histogram_behind(&painter, rect, scopes);
+    histogram_behind(&painter, rect, scopes.map(|s| &s.log_histogram));
+
+    // Clipping, at the end it is happening, from the *display* histogram.
+    //
+    // The trace behind the curve is binned in the curve's domain, which is the
+    // right space to read tones in and the wrong one to ask "will this survive
+    // the output". Those are two questions and they want two measurements —
+    // this is the second one, kept because losing it was the only cost of
+    // dropping the panel's own histogram.
+    if let Some(display) = scopes.map(|s| &s.histogram) {
+        let total = display.total.max(1) as f32;
+        let crushed = (display.red[0] + display.green[0] + display.blue[0]) as f32 / (3.0 * total);
+        if crushed > 0.002 {
+            clip_mark(&painter, egui::pos2(rect.min.x + 8.0, rect.min.y + 8.0));
+        }
+        if display.over_white_fraction() > 0.001 {
+            clip_mark(&painter, egui::pos2(rect.max.x - 8.0, rect.min.y + 8.0));
+        }
+    }
 
     let grid = egui::Stroke::new(1.0_f32, egui::Color32::from_gray(42));
     for q in 1..4 {
@@ -735,6 +749,29 @@ fn region_canvas(
     }
 }
 
+/// The three channel colours.
+///
+/// Chosen so that all three together come to white and any two come to a clean
+/// secondary. That is what makes the shape readable: the white core is where
+/// the channels agree, and a coloured fringe is exactly where one of them has
+/// drifted away from the others.
+const CHANNEL_COLOURS: [[u16; 3]; 3] = [[160, 48, 48], [48, 158, 56], [56, 68, 160]];
+
+/// Add channel colours, saturating.
+fn additive(channels: &[(f32, usize)]) -> egui::Color32 {
+    let mut sum = [0u16; 3];
+    for (_, which) in channels {
+        for c in 0..3 {
+            sum[c] += CHANNEL_COLOURS[*which][c];
+        }
+    }
+    egui::Color32::from_rgb(
+        sum[0].min(255) as u8,
+        sum[1].min(255) as u8,
+        sum[2].min(255) as u8,
+    )
+}
+
 /// The picture's tones, in the curve's own domain, behind the curve.
 ///
 /// Dimmer than the panel histogram and additive the same way: the white core
@@ -768,13 +805,18 @@ fn histogram_behind(painter: &egui::Painter, rect: egui::Rect, hist: Option<&His
                         egui::pos2(x0, rect.max.y - top * rect.height() * 0.92),
                         egui::pos2(x1, rect.max.y - base * rect.height() * 0.92),
                     ),
-                    basic::additive_channels(&heights[k..]).gamma_multiply(0.55),
+                    additive(&heights[k..]).gamma_multiply(0.55),
                 );
                 base = top;
             }
         }
     }
     painter.add(egui::Shape::mesh(mesh));
+}
+
+fn clip_mark(painter: &egui::Painter, at: egui::Pos2) {
+    painter.circle_filled(at, 4.5, egui::Color32::from_black_alpha(180));
+    painter.circle_filled(at, 2.8, egui::Color32::from_rgb(240, 200, 90));
 }
 
 fn nearest(

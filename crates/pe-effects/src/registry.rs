@@ -1731,13 +1731,19 @@ pub const EFFECTS_WITH_VISIBLE_DEFAULTS: &[&str] = &[
 ///
 /// Their effects are ordinary registry entries — nothing about them is special
 /// beyond being created up front and refusing to be deleted or moved.
+/// The rows a new document starts with, in render order.
+///
+/// A pinned row is one a fixed panel drives, so it cannot be deleted or
+/// reordered. Dehaze is deliberately *not* here: it has five controls
+/// including a colour and a depth view, and reducing it to one slider on the
+/// Basic panel threw four of them away. It is an effect, and it lives in the
+/// effects list like one.
 pub const PINNED_ROWS: &[&str] = &[
     "white_balance",
     "exposure",
     "contrast",
     "tone",
     "presence",
-    "dehaze",
     "colour",
     "colour_mixer",
     "curves",

@@ -866,14 +866,6 @@ impl eframe::App for App {
                 ui.toggle_value(&mut self.show_scopes, "Scopes")
                     .on_hover_text("S — waveform, parade and vectorscope");
                 ui.separator();
-                if ui
-                    .toggle_value(&mut self.cropping, "Crop")
-                    .on_hover_text("C")
-                    .clicked()
-                {
-                    self.view.fit();
-                }
-                ui.separator();
                 ui.add_enabled_ui(!self.view.is_fit(), |ui| {
                     if ui
                         .button("Fit")
@@ -997,8 +989,15 @@ impl eframe::App for App {
 
                 egui::ScrollArea::vertical().show(ui, |ui| match self.tab {
                     Tab::Colour => {
-                        basic::histogram(ui, self.preview.as_ref().and_then(|p| p.histogram()));
-                        ui.add_space(6.0);
+                        // The curve carries the histogram, so there is one
+                        // rather than two, and it is at the top where a
+                        // histogram belongs.
+                        egui::CollapsingHeader::new("Curves - Custom")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                let scopes = self.preview.as_ref().and_then(|p| p.scopes());
+                                curve::editor(ui, &mut self.history, scopes);
+                            });
                         egui::CollapsingHeader::new("Basic")
                             .default_open(true)
                             .show(ui, |ui| {
@@ -1007,14 +1006,6 @@ impl eframe::App for App {
                                     basic::reset(&mut self.history);
                                 }
                             });
-                        egui::CollapsingHeader::new("Curves - Custom").show(ui, |ui| {
-                            let log = self
-                                .preview
-                                .as_ref()
-                                .and_then(|p| p.scopes())
-                                .map(|s| &s.log_histogram);
-                            curve::editor(ui, &mut self.history, log);
-                        });
                         egui::CollapsingHeader::new("Primaries - Color Wheels")
                             .default_open(true)
                             .show(ui, |ui| {
