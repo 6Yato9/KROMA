@@ -39,6 +39,23 @@ const fn bipolar(
     }
 }
 
+/// Shorthand for a 0..100 control that starts at full, like Resolve's
+/// per-channel curve intensities.
+const fn intensity(key: &'static str, name: &'static str) -> ParamDef {
+    ParamDef {
+        key,
+        name,
+        kind: ParamKind::Float {
+            min: 0.0,
+            max: 100.0,
+            default: 100.0,
+            neutral: 100.0,
+        },
+        unit: "",
+        section: "",
+    }
+}
+
 /// Shorthand for a unipolar 0..1 slider that starts at zero.
 const fn amount(key: &'static str, name: &'static str) -> ParamDef {
     ParamDef {
@@ -154,7 +171,20 @@ pub static EFFECTS: &[EffectDef] = &[
                 unit: "",
                 section: "",
             },
-            amount("soft_clip", "Soft Clip"),
+            // How much of each drawn curve to apply. Resolve shows these as
+            // 0 to 100 beside the channel buttons, and they are the reason you
+            // can dial a curve back without redrawing it.
+            intensity("luma_intensity", "Y"),
+            intensity("red_intensity", "R"),
+            intensity("green_intensity", "G"),
+            intensity("blue_intensity", "B"),
+            // Soft Clip, in Resolve's four parts: where the knee starts at
+            // each end, and how gradual it is. A single "amount" cannot say
+            // both, and which of the two you want is the whole question.
+            amount("soft_clip_low", "Low").in_section("Soft Clip"),
+            amount("soft_clip_low_soft", "Low Soft").in_section("Soft Clip"),
+            amount("soft_clip_high", "High").in_section("Soft Clip"),
+            amount("soft_clip_high_soft", "High Soft").in_section("Soft Clip"),
             // The parametric curve. Four regions and three movable boundaries
             // between them — a shape that cannot be made un-smooth, which is
             // the whole reason to offer it alongside the point curves.

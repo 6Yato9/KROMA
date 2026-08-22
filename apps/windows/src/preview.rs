@@ -21,6 +21,9 @@ use pe_scopes::{Histogram, Vectorscope, Waveform};
 /// changed" question.
 pub struct Scopes {
     pub histogram: Histogram,
+    /// The same frame binned in the curve's own domain, for drawing behind
+    /// the curve editor. See `Histogram::from_display_log`.
+    pub log_histogram: Histogram,
     pub waveform: Waveform,
     pub vectorscope: Vectorscope,
     /// Bumped on every fresh measurement, so the panel knows when to re-upload
@@ -262,6 +265,7 @@ impl Preview {
             self.generation += 1;
             self.scopes = Some(Scopes {
                 histogram: Histogram::from_display(&pixels),
+                log_histogram: Histogram::from_display_log(&pixels),
                 waveform: Waveform::from_display(&pixels, w, h),
                 vectorscope: Vectorscope::from_display(&pixels),
                 generation: self.generation,

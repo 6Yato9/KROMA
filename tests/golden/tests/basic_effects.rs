@@ -551,6 +551,156 @@ fn moving_a_split_moves_which_tones_respond() {
     );
 }
 
+/// An S-curve on the luma channel, for the intensity tests.
+fn s_curve() -> ParamValue {
+    ParamValue::Curve(pe_core::Curve {
+        points: vec![[0.0, 0.0], [0.25, 0.12], [0.75, 0.88], [1.0, 1.0]],
+    })
+}
+
+/// The whole reason there are four intensity controls: a curve you can dial
+/// back is a curve you do not have to redraw.
+#[test]
+fn a_curve_intensity_of_zero_leaves_the_picture_alone() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = ramp();
+    let off = render(
+        gpu,
+        &src,
+        &look(
+            "curves",
+            &[
+                ("luma", s_curve()),
+                ("luma_intensity", ParamValue::Float(0.0)),
+            ],
+        ),
+    );
+    for x in [40u32, 120, 200] {
+        assert!(
+            delta(&src, &off, x).abs() <= 2,
+            "a curve at zero intensity still moved tone {x} by {}",
+            delta(&src, &off, x)
+        );
+    }
+}
+
+#[test]
+fn a_curve_intensity_dials_between_nothing_and_all_of_it() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = ramp();
+    let curved = |amount: f32| {
+        look(
+            "curves",
+            &[
+                ("luma", s_curve()),
+                ("luma_intensity", ParamValue::Float(amount)),
+            ],
+        )
+    };
+    let full = render(gpu, &src, &curved(100.0));
+    let half = render(gpu, &src, &curved(50.0));
+
+    // The S-curve deepens the shadows, so tone 40 comes down. Half the
+    // intensity should come down about half as far.
+    let full_move = delta(&src, &full, 40);
+    let half_move = delta(&src, &half, 40);
+    assert!(
+        full_move < -6,
+        "the curve did nothing at full ({full_move})"
+    );
+    assert!(
+        half_move < 0 && half_move > full_move,
+        "half intensity moved {half_move} against a full move of {full_move}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Soft clip
+// ---------------------------------------------------------------------------
+
+#[test]
+fn soft_clip_at_zero_is_not_a_clip_at_all() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = ramp();
+    let out = render(gpu, &src, &look("curves", &[]));
+    for x in [8u32, 60, 128, 200, 250] {
+        assert!(
+            delta(&src, &out, x).abs() <= 2,
+            "an untouched Curves row moved tone {x} by {}",
+            delta(&src, &out, x)
+        );
+    }
+}
+
+/// The point of soft clipping rather than hard: the approach to the limit is
+/// asymptotic, so highlights compress but never fuse into one flat value. A
+/// plateau here would be detail destroyed, which is exactly what the control
+/// exists to avoid.
+#[test]
+fn soft_clip_compresses_the_highlights_without_flattening_them() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = ramp();
+    let out = render(
+        gpu,
+        &src,
+        &look(
+            "curves",
+            &[
+                ("soft_clip_high", ParamValue::Float(1.0)),
+                ("soft_clip_high_soft", ParamValue::Float(0.5)),
+            ],
+        ),
+    );
+
+    assert!(
+        delta(&src, &out, 250) < -4,
+        "the highlights did not come down"
+    );
+    assert!(
+        delta(&src, &out, 60).abs() <= 3,
+        "a highlight clip reached the shadows by {}",
+        delta(&src, &out, 60)
+    );
+    // Still ordered, and still moving, right up to the top.
+    let mut last = -1i32;
+    for x in 200..256u32 {
+        let v = out.pixel(x, 4)[0] as i32;
+        assert!(v >= last, "the ramp folded back on itself at {x}");
+        last = v;
+    }
+    assert!(
+        out.pixel(255, 4)[0] as i32 > out.pixel(235, 4)[0] as i32,
+        "the top of the ramp flattened into a single value"
+    );
+}
+
+#[test]
+fn soft_clip_low_lifts_the_shadows_and_leaves_the_rest() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = ramp();
+    let out = render(
+        gpu,
+        &src,
+        &look("curves", &[("soft_clip_low", ParamValue::Float(1.0))]),
+    );
+    assert!(delta(&src, &out, 6) > 3, "the shadows did not lift");
+    assert!(
+        delta(&src, &out, 220).abs() <= 3,
+        "a shadow clip reached the highlights by {}",
+        delta(&src, &out, 220)
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Colour mixer
 // ---------------------------------------------------------------------------

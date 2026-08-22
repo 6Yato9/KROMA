@@ -6,13 +6,30 @@
 //! without letting them cross, adding on click, removing on right-click.
 //!
 //! The curve operates on log-encoded signal, which is why a straight line from
-//! corner to corner is the identity rather than a gamma ramp. It also means
-//! the histogram over the Basic panel — which is display-referred — would not
-//! line up if it were drawn behind this, so it deliberately is not. A
-//! log-referred histogram to sit behind the curve belongs with the scopes.
+//! corner to corner is the identity rather than a gamma ramp. The histogram
+//! drawn behind it is binned in that same domain — a display-referred one
+//! would put every tone in the wrong place, which is worse than drawing
+//! nothing.
+//!
+//! That domain is wider than a photograph. An SDR frame occupies roughly 0.073
+//! to 0.555 of the ACEScct range, so the trace sits in the left half of the
+//! plot and the rest is headroom above diffuse white. The shaded bands say so
+//! rather than leaving it looking like a bug — that headroom is real, it is
+//! where a recovered highlight lives, and a curve editor that hid it would be
+//! hiding the part of the signal a colourist most wants to reach.
 
 use crate::basic;
+use crate::resolve;
 use pe_core::{Curve, History, ParamValue, RowId};
+use pe_scopes::{BINS, Histogram};
+
+/// Where diffuse white and black sit in the curve's own domain. The same
+/// numbers as the shader's CCT_WHITE and CCT_BLACK.
+const LOG_BLACK: f32 = 0.072_905_53;
+const LOG_WHITE: f32 = 0.554_794_5;
+
+/// Width of the column of controls to the right of the plot.
+const EDIT_W: f32 = 172.0;
 
 /// The four curves the effect carries, in the order the tabs show them.
 const CHANNELS: [(&str, &str); 4] = [
@@ -44,36 +61,217 @@ const REGIONS: [(&str, &str); 4] = [
 /// The three boundaries, in the order they appear left to right.
 const SPLITS: [&str; 3] = ["split_low", "split_mid", "split_high"];
 
-pub fn editor(ui: &mut egui::Ui, history: &mut History) {
+pub fn editor(ui: &mut egui::Ui, history: &mut History, scopes: Option<&Histogram>) {
     let Some(id) = history.document().stack.find_by_effect("curves") else {
         return;
     };
 
-    let tab_id = ui.make_persistent_id("tone_curve_channel");
-    // 0 is the parametric curve; 1..=4 are the point curves, offset by one.
-    let mut channel: usize = ui.data_mut(|d| *d.get_temp_mut_or(tab_id, 0usize));
-
+    let mode_id = ui.make_persistent_id("tone_curve_mode");
+    let mut parametric_mode: bool = ui.data_mut(|d| *d.get_temp_mut_or(mode_id, false));
     ui.horizontal(|ui| {
-        if ui.selectable_label(channel == 0, "Parametric").clicked() {
-            channel = 0;
+        if ui.selectable_label(!parametric_mode, "Custom").clicked() {
+            parametric_mode = false;
         }
-        for (i, (_, label)) in CHANNELS.iter().enumerate() {
-            if ui.selectable_label(channel == i + 1, *label).clicked() {
-                channel = i + 1;
-            }
+        if ui.selectable_label(parametric_mode, "Parametric").clicked() {
+            parametric_mode = true;
         }
+        ui.label(
+            egui::RichText::new("click to add · right-click to remove")
+                .small()
+                .weak(),
+        );
     });
-    ui.data_mut(|d| d.insert_temp(tab_id, channel));
+    ui.data_mut(|d| d.insert_temp(mode_id, parametric_mode));
+    ui.add_space(4.0);
 
-    if channel == 0 {
+    if parametric_mode {
         parametric(ui, history, id);
         return;
     }
 
-    let key = CHANNELS[channel - 1].0;
-    canvas(ui, history, id, key);
+    let tab_id = ui.make_persistent_id("tone_curve_channel");
+    let mut channel: usize = ui.data_mut(|d| *d.get_temp_mut_or(tab_id, 0usize));
 
+    // Plot on the left, the channel and soft-clip controls on the right, the
+    // way Resolve lays the panel out.
+    let available = ui.available_width();
+    let plot_w = (available - EDIT_W - 8.0).clamp(140.0, 460.0);
+    ui.horizontal_top(|ui| {
+        canvas(ui, history, id, CHANNELS[channel].0, scopes, plot_w);
+        ui.add_space(8.0);
+        ui.vertical(|ui| {
+            ui.set_width(EDIT_W);
+            edit_column(ui, history, id, &mut channel);
+        });
+    });
+    ui.data_mut(|d| d.insert_temp(tab_id, channel));
+}
+
+/// The colour of each channel's button and trace.
+fn channel_colour(i: usize) -> egui::Color32 {
+    match i {
+        1 => egui::Color32::from_rgb(226, 68, 68),
+        2 => egui::Color32::from_rgb(64, 200, 84),
+        3 => egui::Color32::from_rgb(74, 118, 236),
+        _ => egui::Color32::from_gray(210),
+    }
+}
+
+/// A small square channel button, like Resolve's Y R G B row.
+fn channel_button(ui: &mut egui::Ui, i: usize, label: &str, selected: bool) -> bool {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(20.0, 18.0), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let tint = channel_colour(i);
+        let painter = ui.painter();
+        painter.rect_filled(
+            rect,
+            2.0,
+            if selected {
+                tint
+            } else {
+                tint.gamma_multiply(0.30)
+            },
+        );
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            label,
+            egui::FontId::proportional(11.0),
+            if selected {
+                egui::Color32::from_gray(16)
+            } else {
+                egui::Color32::from_gray(210)
+            },
+        );
+    }
+    response.clicked()
+}
+
+/// A compact slider row for the narrow right-hand column.
+///
+/// Not `resolve::slider_row`: that one reserves a label column wide enough for
+/// "Geometry Factor", and here the label is a single letter or two words in a
+/// column a third the width.
+fn narrow_row(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    lead: Option<(usize, &str)>,
+    label: &str,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    boxed: bool,
+) -> resolve::Edit {
+    let width = ui.available_width();
     ui.horizontal(|ui| {
+        let mut out = resolve::Edit::default();
+        if let Some((i, text)) = lead
+            && channel_button(ui, i, text, false)
+        {
+            // The lead swatch is decoration here; selection lives in the row
+            // of buttons above.
+        }
+        if !label.is_empty() {
+            ui.add_sized(
+                [56.0, 16.0],
+                egui::Label::new(
+                    egui::RichText::new(label)
+                        .small()
+                        .color(resolve::colour::LABEL),
+                ),
+            );
+        }
+        let track_w = if boxed {
+            (width - 56.0 - 44.0 - 26.0).max(30.0)
+        } else {
+            (width - 56.0 - 12.0).max(30.0)
+        };
+        let (lo, hi) = (*range.start(), *range.end());
+        let r = ui.add_sized(
+            [track_w, 16.0],
+            egui::Slider::new(value, lo..=hi).show_value(false),
+        );
+        out.changed = r.changed();
+        out.released = r.drag_stopped();
+        if boxed {
+            let before = *value;
+            ui.add_sized(
+                [42.0, 16.0],
+                egui::DragValue::new(value).fixed_decimals(0).speed(0.0),
+            );
+            if (before - *value).abs() > 1e-6 {
+                *value = value.clamp(lo, hi);
+                out.changed = true;
+                out.released = true;
+            }
+        }
+        let _ = id;
+        out
+    })
+    .inner
+}
+
+/// Resolve's Edit and Soft Clip column.
+fn edit_column(ui: &mut egui::Ui, history: &mut History, id: RowId, channel: &mut usize) {
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new("Edit")
+                .small()
+                .color(resolve::colour::TITLE),
+        );
+        ui.add_space(6.0);
+        for (i, label) in ["Y", "R", "G", "B"].iter().enumerate() {
+            if channel_button(ui, i, label, *channel == i) {
+                *channel = i;
+            }
+        }
+    });
+    ui.add_space(2.0);
+
+    // How much of each drawn curve to apply.
+    const INTENSITY: [(&str, usize); 4] = [
+        ("luma_intensity", 0),
+        ("red_intensity", 1),
+        ("green_intensity", 2),
+        ("blue_intensity", 3),
+    ];
+    for (key, i) in INTENSITY {
+        let mut v = float_param(history, id, key, 100.0);
+        let edit = narrow_row(
+            ui,
+            ui.id().with(key),
+            Some((i, "")),
+            "",
+            &mut v,
+            0.0..=100.0,
+            true,
+        );
+        apply(history, id, key, v, edit, 100.0);
+    }
+
+    ui.add_space(8.0);
+    ui.label(
+        egui::RichText::new("Soft Clip")
+            .small()
+            .color(resolve::colour::TITLE),
+    );
+    // Linked across the three channels rather than one set each. Resolve
+    // offers per-channel soft clip; three sets of four would be twelve
+    // controls to solve a problem — a channel clipping before the others —
+    // that the colour mixer already handles.
+    for (key, label) in [
+        ("soft_clip_low", "Low"),
+        ("soft_clip_low_soft", "Low Soft"),
+        ("soft_clip_high", "High"),
+        ("soft_clip_high_soft", "High Soft"),
+    ] {
+        let mut v = float_param(history, id, key, 0.0);
+        let edit = narrow_row(ui, ui.id().with(key), None, label, &mut v, 0.0..=1.0, false);
+        apply(history, id, key, v, edit, 0.0);
+    }
+
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        let key = CHANNELS[*channel].0;
         if ui.small_button("Reset").clicked() {
             set(history, id, key, Curve::default(), None);
         }
@@ -88,12 +286,37 @@ pub fn editor(ui: &mut egui::Ui, history: &mut History) {
                 None,
             );
         }
-        ui.label(
-            egui::RichText::new("click to add · right-click to remove")
-                .small()
-                .weak(),
-        );
     });
+}
+
+fn float_param(history: &History, id: RowId, key: &str, fallback: f32) -> f32 {
+    history
+        .document()
+        .stack
+        .get(id)
+        .and_then(|r| r.params.get(key))
+        .and_then(ParamValue::as_float)
+        .unwrap_or(fallback)
+}
+
+fn apply(
+    history: &mut History,
+    id: RowId,
+    key: &'static str,
+    value: f32,
+    edit: resolve::Edit,
+    _neutral: f32,
+) {
+    if edit.changed {
+        history.edit(key, Some(format!("curve.{key}")), move |doc| {
+            if let Some(row) = doc.stack.get_mut(id) {
+                row.params.set(key, ParamValue::Float(value));
+            }
+        });
+    }
+    if edit.released {
+        history.break_coalescing();
+    }
 }
 
 fn set(
@@ -110,10 +333,18 @@ fn set(
     });
 }
 
-fn canvas(ui: &mut egui::Ui, history: &mut History, id: RowId, key: &'static str) {
-    let side = ui.available_width().min(300.0);
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click_and_drag());
+fn canvas(
+    ui: &mut egui::Ui,
+    history: &mut History,
+    id: RowId,
+    key: &'static str,
+    scopes: Option<&Histogram>,
+    width: f32,
+) {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(width, width.min(300.0)),
+        egui::Sense::click_and_drag(),
+    );
 
     let mut curve = history
         .document()
@@ -221,6 +452,23 @@ fn canvas(ui: &mut egui::Ui, history: &mut History, id: RowId, key: &'static str
     }
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 3.0, egui::Color32::from_gray(18));
+
+    // Where the photograph actually lives inside the curve's domain. The rest
+    // is real headroom, not empty space, so it is shaded rather than hidden.
+    for band in [
+        egui::Rect::from_min_max(
+            rect.min,
+            egui::pos2(rect.min.x + rect.width() * LOG_BLACK, rect.max.y),
+        ),
+        egui::Rect::from_min_max(
+            egui::pos2(rect.min.x + rect.width() * LOG_WHITE, rect.min.y),
+            rect.max,
+        ),
+    ] {
+        painter.rect_filled(band, 0.0, egui::Color32::from_black_alpha(70));
+    }
+
+    histogram_behind(&painter, rect, scopes);
 
     let grid = egui::Stroke::new(1.0_f32, egui::Color32::from_gray(42));
     for q in 1..4 {
@@ -486,6 +734,48 @@ fn region_canvas(
             egui::Stroke::NONE,
         ));
     }
+}
+
+/// The picture's tones, in the curve's own domain, behind the curve.
+///
+/// Dimmer than the panel histogram and additive the same way: the white core
+/// is where the channels agree and a coloured fringe is where one has drifted.
+/// It is a reference, not a scope, so it gives way to the curve on top of it.
+fn histogram_behind(painter: &egui::Painter, rect: egui::Rect, hist: Option<&Histogram>) {
+    let Some(hist) = hist else {
+        return;
+    };
+    let peak = hist.peak().max(1) as f32;
+    let scale = |v: u32| (v as f32 / peak).clamp(0.0, 1.0).powf(0.42);
+
+    let mut mesh = egui::Mesh::default();
+    let step = rect.width() / BINS as f32;
+    for i in 0..BINS {
+        let x0 = rect.min.x + i as f32 * step;
+        let x1 = (x0 + step + 0.5).min(rect.max.x);
+        let mut heights = [
+            (scale(hist.red[i]), 0usize),
+            (scale(hist.green[i]), 1),
+            (scale(hist.blue[i]), 2),
+        ];
+        heights.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+        let mut base = 0.0f32;
+        for k in 0..3 {
+            let top = heights[k].0;
+            if top > base {
+                mesh.add_colored_rect(
+                    egui::Rect::from_min_max(
+                        egui::pos2(x0, rect.max.y - top * rect.height() * 0.92),
+                        egui::pos2(x1, rect.max.y - base * rect.height() * 0.92),
+                    ),
+                    basic::additive_channels(&heights[k..]).gamma_multiply(0.55),
+                );
+                base = top;
+            }
+        }
+    }
+    painter.add(egui::Shape::mesh(mesh));
 }
 
 fn nearest(

@@ -14,6 +14,23 @@ pub mod waveform;
 
 pub use waveform::{Channel, LEVELS, SKIN, TARGETS, VECTOR_SIZE, Vectorscope, Waveform};
 
+/// The sRGB decode, tabulated. Two hundred and fifty-six entries, so binning
+/// a frame never calls `powf`.
+fn srgb_decode() -> &'static [f64; 256] {
+    use std::sync::OnceLock;
+    static TABLE: OnceLock<[f64; 256]> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        std::array::from_fn(|i| {
+            let s = i as f64 / 255.0;
+            if s <= 0.04045 {
+                s / 12.92
+            } else {
+                ((s + 0.055) / 1.055).powf(2.4)
+            }
+        })
+    })
+}
+
 /// Number of bins. 256 matches an 8-bit display and is what every grading tool
 /// uses; finer bins do not survive being drawn at panel width.
 pub const BINS: usize = 256;
@@ -101,6 +118,46 @@ impl Histogram {
             let l = 0.2126 * px[0] as f32 + 0.7152 * px[1] as f32 + 0.0722 * px[2] as f32;
             h.luma[(l.round() as usize).min(BINS - 1)] += 1;
             if r == BINS - 1 || g == BINS - 1 || b == BINS - 1 {
+                h.over_white += 1;
+            }
+            h.total += 1;
+        }
+        h
+    }
+
+    /// Bin display pixels the way the *curve* sees them.
+    ///
+    /// The histogram over a Basic panel bins the display signal directly,
+    /// because the question there is what is about to clip on output. The one
+    /// drawn behind a curve is answering a different question — where in the
+    /// curve's own domain the picture's tones sit — so it has to be binned in
+    /// the space the curve operates on. Draw a display-referred histogram
+    /// behind a log curve and every tone is in the wrong place, which is worse
+    /// than drawing nothing.
+    ///
+    /// The signal is decoded back out of sRGB rather than measured in the
+    /// working space directly. That costs the highlights above diffuse white,
+    /// which the display has already clipped — a real limitation, and the
+    /// reason this is a background reference rather than a scope.
+    pub fn from_display_log(pixels: &[u8]) -> Self {
+        use pe_color::TransferFn;
+        let table = srgb_decode();
+        let mut h = Histogram::default();
+        for px in pixels.as_chunks::<4>().0 {
+            let rgb = [
+                table[px[0] as usize],
+                table[px[1] as usize],
+                table[px[2] as usize],
+            ];
+            let enc = TransferFn::AcesCct.encode_rgb(rgb);
+            let luma = pe_color::REC709_LUMA[0] * rgb[0]
+                + pe_color::REC709_LUMA[1] * rgb[1]
+                + pe_color::REC709_LUMA[2] * rgb[2];
+            h.red[bin(enc[0])] += 1;
+            h.green[bin(enc[1])] += 1;
+            h.blue[bin(enc[2])] += 1;
+            h.luma[bin(TransferFn::AcesCct.encode(luma))] += 1;
+            if px[0] == 255 || px[1] == 255 || px[2] == 255 {
                 h.over_white += 1;
             }
             h.total += 1;

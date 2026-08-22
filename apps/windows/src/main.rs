@@ -1007,8 +1007,13 @@ impl eframe::App for App {
                                     basic::reset(&mut self.history);
                                 }
                             });
-                        egui::CollapsingHeader::new("Tone Curve").show(ui, |ui| {
-                            curve::editor(ui, &mut self.history);
+                        egui::CollapsingHeader::new("Curves - Custom").show(ui, |ui| {
+                            let log = self
+                                .preview
+                                .as_ref()
+                                .and_then(|p| p.scopes())
+                                .map(|s| &s.log_histogram);
+                            curve::editor(ui, &mut self.history, log);
                         });
                         egui::CollapsingHeader::new("Colour Wheels").show(ui, |ui| {
                             wheels::panel(ui, &mut self.history);

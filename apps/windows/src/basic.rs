@@ -23,6 +23,14 @@ use pe_scopes::{BINS, Histogram};
 const CHANNEL_COLOURS: [[u16; 3]; 3] = [[160, 48, 48], [48, 158, 56], [56, 68, 160]];
 
 /// Add channel colours, saturating.
+///
+/// Shared with the curve editor, which draws the same histogram in a different
+/// domain — one copy of the compositing means the two cannot drift into
+/// disagreeing about what "red plus green" looks like.
+pub fn additive_channels(channels: &[(f32, usize)]) -> egui::Color32 {
+    additive(channels)
+}
+
 fn additive(channels: &[(f32, usize)]) -> egui::Color32 {
     let mut sum = [0u16; 3];
     for (_, which) in channels {
