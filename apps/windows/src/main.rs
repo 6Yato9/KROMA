@@ -34,7 +34,19 @@ use pe_render::GpuContext;
 use crate::preview::{Framing, Preview, View};
 
 fn main() -> eframe::Result {
-    let path = std::env::args().nth(1).map(PathBuf::from);
+    // Everything after the executable name, so several photographs can be
+    // opened at once from a shell or a "send to".
+    let mut paths: Vec<PathBuf> = std::env::args().skip(1).map(PathBuf::from).collect();
+    let mut index = 0;
+    if paths.is_empty() {
+        // Nothing asked for, so reopen what the last session had. Opening on
+        // the test chart when the user has a folder of photographs they were
+        // halfway through is a worse guess than any.
+        let (saved, at) = settings::Settings::load().session();
+        paths = saved;
+        index = at;
+    }
+    let path = paths.get(index).cloned();
 
     let image = match &path {
         Some(p) => match pe_io::load(p) {
@@ -62,7 +74,7 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "KROMA",
         options,
-        Box::new(move |cc| Ok(Box::new(App::new(cc, image, path)))),
+        Box::new(move |cc| Ok(Box::new(App::new(cc, image, path, paths, index)))),
     )
 }
 
@@ -141,6 +153,8 @@ impl App {
         cc: &eframe::CreationContext<'_>,
         image: pe_io::DecodedImage,
         path: Option<PathBuf>,
+        session: Vec<PathBuf>,
+        at: usize,
     ) -> Self {
         // The scheme, before a single frame is drawn with it.
         theme::apply(&cc.egui_ctx);
@@ -162,7 +176,16 @@ impl App {
 
         // Whatever the window opened with is the set, so the filmstrip and
         // the batch export have something to work with from the first frame.
-        let library_paths: Vec<PathBuf> = path.iter().cloned().collect();
+        // That is the whole restored session when there was one, not just the
+        // photograph being shown.
+        let library_paths: Vec<PathBuf> = if session.is_empty() {
+            path.iter().cloned().collect()
+        } else {
+            session
+        };
+        let mut library = Library::new(library_paths);
+        library.focus(at);
+        let show_strip = library.len() > 1;
 
         Self {
             image,
@@ -176,8 +199,8 @@ impl App {
             status: String::new(),
             titled: false,
             view: View::default(),
-            library: Library::new(library_paths),
-            show_strip: true,
+            library,
+            show_strip,
             clipboard: None,
             batch: None,
             compare: Compare::Off,
@@ -201,6 +224,18 @@ impl App {
     ///
     /// The outgoing edit is parked whole — history and all — so that clicking
     /// the wrong thumbnail and clicking back does not cost an hour of undo.
+    /// Write down what is open, so the next launch can reopen it.
+    ///
+    /// Called from every path that changes the set or the selection rather
+    /// than once at exit: a window can be closed by the operating system, by
+    /// a crash, or by a user who does not think of "which photo I was on" as
+    /// something that needs saving.
+    fn remember_session(&mut self) {
+        let paths = self.library.paths();
+        let index = self.library.current();
+        self.settings.remember_session(&paths, index);
+    }
+
     fn select(&mut self, index: usize, ctx: &egui::Context) {
         if index >= self.library.len() || index == self.library.current() {
             return;
@@ -240,6 +275,7 @@ impl App {
         self.cropping = false;
         self.last = None;
         self.set_title(ctx);
+        self.remember_session();
     }
 
     /// Decode and upload whatever photograph the library is pointing at.
@@ -282,6 +318,7 @@ impl App {
         }
         let was_current = index == self.library.current();
         self.library.remove(index);
+        self.remember_session();
         if self.library.is_empty() {
             self.status = "no photos open".into();
             return;
@@ -338,7 +375,8 @@ impl App {
         // `scale` is screen pixels per image pixel at the current zoom, so the
         // factor that takes it to 1.0 is what we want.
         if let Some((scale, _)) = self.last {
-            self.view.zoom = (self.view.zoom / scale.max(1e-4)).clamp(1.0, 32.0);
+            self.view.zoom =
+                (self.view.zoom / scale.max(1e-4)).clamp(preview::MIN_ZOOM, preview::MAX_ZOOM);
         }
     }
 
@@ -372,7 +410,7 @@ impl App {
             && let Some(pointer) = response.hover_pos()
         {
             let factor = (scroll * 0.004).exp();
-            let new_zoom = (self.view.zoom * factor).clamp(1.0, 32.0);
+            let new_zoom = (self.view.zoom * factor).clamp(preview::MIN_ZOOM, preview::MAX_ZOOM);
             let applied = new_zoom / self.view.zoom;
             if (applied - 1.0).abs() > 1e-4 {
                 // Where the cursor sits within the visible rectangle, 0..1.
@@ -466,6 +504,10 @@ impl App {
         } else {
             self.select(index, ctx);
         }
+        // `select` records it too, but the first-run branch does not go
+        // through `select` — and that is precisely the branch where the set
+        // was empty and has just become worth remembering.
+        self.remember_session();
     }
 
     /// Start a batch export of every photograph in the set.
@@ -731,7 +773,6 @@ impl eframe::App for App {
             }
             if i.consume_key(egui::Modifiers::NONE, egui::Key::C) {
                 self.cropping = !self.cropping;
-                self.view.fit();
             }
             if i.consume_key(egui::Modifiers::SHIFT, egui::Key::D) {
                 self.bypass_all = !self.bypass_all;
@@ -742,13 +783,6 @@ impl eframe::App for App {
                 egui::Key::O,
             );
         });
-        if open_requested {
-            self.open_dialog(ctx);
-        }
-        if open_folder_requested {
-            self.open_folder_dialog(ctx);
-        }
-
         // Drag a photo onto the window. Cheaper for the user than any menu,
         // and the first thing people try.
         let dropped: Vec<PathBuf> = ctx.input(|i| {
@@ -775,12 +809,17 @@ impl eframe::App for App {
         if !self.titled {
             self.set_title(ctx);
             self.titled = true;
+            // Once, on the first frame. Opening from a command line or a file
+            // association reaches none of the paths that record the set, and
+            // "the photograph I opened it on" is exactly what the next launch
+            // should come back to.
+            self.remember_session();
         }
 
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("Open…").on_hover_text("Ctrl+O").clicked() {
-                    self.open_dialog(ctx);
+                    open_requested = true;
                 }
                 ui.separator();
                 ui.add_enabled_ui(self.history.can_undo(), |ui| {
@@ -1148,11 +1187,7 @@ impl eframe::App for App {
                 };
 
                 let image = &self.image;
-                let view = if self.cropping {
-                    View::default()
-                } else {
-                    self.view
-                };
+                let view = self.view;
                 let preview = self.preview.as_mut().expect("checked above");
                 let compare = self.compare;
                 match preview.render(image, &doc, framing_geometry, view, viewport, compare.on()) {
@@ -1177,6 +1212,7 @@ impl eframe::App for App {
                                 ui,
                                 &response,
                                 target,
+                                framing.visible,
                                 self.history.document().geometry,
                                 source,
                             )
@@ -1199,6 +1235,18 @@ impl eframe::App for App {
                     }
                 }
             });
+
+        // Deferred requests, serviced once the whole interface has had its
+        // say. The ordering is not incidental: a button drawn at line 800
+        // cannot be read at line 750, and doing it there is what left Open
+        // Folder dead — the flag was already false again by the time the
+        // button set it.
+        if open_requested {
+            self.open_dialog(ctx);
+        }
+        if open_folder_requested {
+            self.open_folder_dialog(ctx);
+        }
 
         if stop_batch && let Some(batch) = self.batch.take() {
             self.status = format!("stopped after {} of {}", batch.done, batch.targets.len());

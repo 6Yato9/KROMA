@@ -115,22 +115,25 @@ fn dragged(rect: egui::Rect, grip: Grip, delta: egui::Vec2, ratio: Option<f32>) 
 }
 
 /// Draw and drive the overlay. Returns the new geometry when it moved.
+/// Draw the crop rectangle and handle a drag on it.
+///
+/// `visible` is the part of the frame that `target` shows. The two used to be
+/// assumed equal, which is why the viewer was forced to fit whenever the crop
+/// tool was open: any other zoom and the rectangle drifted away from the crop
+/// it was supposed to be drawing. Told where it is looking, the overlay works
+/// at any zoom, and the two controls stop being one.
 pub fn overlay(
     ui: &egui::Ui,
     response: &egui::Response,
     target: egui::Rect,
+    visible: egui::Rect,
     geometry: Geometry,
     source: (u32, u32),
 ) -> Option<Geometry> {
     let frame = geometry.enclosing(source.0, source.1);
     let uv = geometry.crop_uv_in(&frame, source.0, source.1);
-    let to_screen = |u: f32, v: f32| {
-        egui::pos2(
-            target.min.x + u * target.width(),
-            target.min.y + v * target.height(),
-        )
-    };
-    let rect = egui::Rect::from_min_max(to_screen(uv[0], uv[1]), to_screen(uv[2], uv[3]));
+    let span = egui::vec2(visible.width().max(1e-6), visible.height().max(1e-6));
+    let rect = place(uv, target, visible);
 
     let ratio = geometry.aspect.ratio(source.0, source.1);
     let grip_id = ui.make_persistent_id("crop_grip");
@@ -146,10 +149,11 @@ pub fn overlay(
     if response.dragged()
         && let Some(g) = grip
     {
-        // Screen points into the frame's uv.
+        // Screen points into the frame's uv. Zoomed in, a point on screen is
+        // a smaller step across the frame, which is what `visible` carries.
         let delta = egui::vec2(
-            response.drag_delta().x / target.width().max(1e-4),
-            response.drag_delta().y / target.height().max(1e-4),
+            response.drag_delta().x / target.width().max(1e-4) * span.x,
+            response.drag_delta().y / target.height().max(1e-4) * span.y,
         );
         let uv_rect = egui::Rect::from_min_max(egui::pos2(uv[0], uv[1]), egui::pos2(uv[2], uv[3]));
         let next = dragged(uv_rect, g, delta, ratio);
@@ -175,6 +179,24 @@ pub fn overlay(
 
     draw(ui, target, rect);
     moved
+}
+
+/// Where a rectangle given in frame uv lands on screen.
+///
+/// `target` is the on-screen rectangle and `visible` is the part of the frame
+/// it shows. Those two used to be assumed identical, which is why the viewer
+/// was pinned to fit whenever this tool was open — at any other zoom the crop
+/// rectangle drifted away from the crop it was drawing. Separating them is
+/// what lets the two controls be two controls.
+fn place(uv: [f32; 4], target: egui::Rect, visible: egui::Rect) -> egui::Rect {
+    let span = egui::vec2(visible.width().max(1e-6), visible.height().max(1e-6));
+    let at = |u: f32, v: f32| {
+        egui::pos2(
+            target.min.x + (u - visible.min.x) / span.x * target.width(),
+            target.min.y + (v - visible.min.y) / span.y * target.height(),
+        )
+    };
+    egui::Rect::from_min_max(at(uv[0], uv[1]), at(uv[2], uv[3]))
 }
 
 fn draw(ui: &egui::Ui, target: egui::Rect, rect: egui::Rect) {
@@ -543,6 +565,35 @@ fn edit_coalesced(
 
 #[cfg(test)]
 mod tests {
+
+    /// At fit the mapping is the identity it always was, so nothing that was
+    /// working before depends on the new argument being right.
+    #[test]
+    fn at_fit_a_crop_lands_where_it_did() {
+        let target = egui::Rect::from_min_max(egui::pos2(10.0, 20.0), egui::pos2(210.0, 120.0));
+        let whole = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        let r = place([0.25, 0.5, 0.75, 1.0], target, whole);
+        assert!((r.min.x - 60.0).abs() < 0.01, "{r:?}");
+        assert!((r.min.y - 70.0).abs() < 0.01, "{r:?}");
+        assert!((r.max.x - 160.0).abs() < 0.01, "{r:?}");
+        assert!((r.max.y - 120.0).abs() < 0.01, "{r:?}");
+    }
+
+    /// And zoomed in, a crop that fills the visible half fills the target.
+    ///
+    /// This is the whole reason the crop tool used to force the viewer back to
+    /// fit: without the visible rectangle, the overlay drew the crop at a
+    /// quarter of the size and a drag moved it at four times the rate.
+    #[test]
+    fn zoomed_in_the_crop_is_drawn_against_what_is_on_screen() {
+        let target = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(200.0, 100.0));
+        // The viewer is showing the middle half of the frame in each axis.
+        let visible = egui::Rect::from_min_max(egui::pos2(0.25, 0.25), egui::pos2(0.75, 0.75));
+        let r = place([0.25, 0.25, 0.75, 0.75], target, visible);
+        assert!((r.min.x - target.min.x).abs() < 0.01, "{r:?}");
+        assert!((r.max.x - target.max.x).abs() < 0.01, "{r:?}");
+        assert!((r.max.y - target.max.y).abs() < 0.01, "{r:?}");
+    }
     use super::*;
 
     fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> egui::Rect {

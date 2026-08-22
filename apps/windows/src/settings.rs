@@ -11,7 +11,7 @@
 //! their stars, not their session, so every error here is swallowed and the
 //! defaults stand.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +20,16 @@ use serde::{Deserialize, Serialize};
 pub struct Settings {
     /// Effect keys the user has starred, in the order they starred them.
     pub favourites: Vec<String>,
+    /// The photographs that were open when the window last closed, and which
+    /// one was showing.
+    ///
+    /// Stored as strings rather than as `PathBuf` so the file stays readable
+    /// and portable — a settings file is something a person may end up looking
+    /// at, and a serialised platform path is not.
+    #[serde(default)]
+    session: Vec<String>,
+    #[serde(default)]
+    session_index: usize,
     /// Anything a newer build wrote that this one does not know about, kept
     /// so that running an older version does not silently discard it.
     #[serde(flatten)]
@@ -74,6 +84,38 @@ impl Settings {
         }
     }
 
+    /// What to reopen, and where in it to start.
+    ///
+    /// Filtered by what still exists. A photograph moved or deleted since the
+    /// last run must not stop the application starting, and silently leaving
+    /// it out is the only reasonable thing to do about it — there is nobody
+    /// to tell yet.
+    pub fn session(&self) -> (Vec<PathBuf>, usize) {
+        let paths: Vec<PathBuf> = self
+            .session
+            .iter()
+            .map(PathBuf::from)
+            .filter(|p| p.is_file())
+            .collect();
+        let index = self.session_index.min(paths.len().saturating_sub(1));
+        (paths, index)
+    }
+
+    /// Record the set, if it has actually changed.
+    ///
+    /// Guarded because this is called from the selection path, which runs on
+    /// an arrow key — writing the file on every press would be a disc write
+    /// per keystroke to save something that did not change.
+    pub fn remember_session(&mut self, paths: &[&Path], index: usize) {
+        let next: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+        if next == self.session && index == self.session_index {
+            return;
+        }
+        self.session = next;
+        self.session_index = index;
+        self.save();
+    }
+
     pub fn is_favourite(&self, key: &str) -> bool {
         self.favourites.iter().any(|k| k == key)
     }
@@ -121,6 +163,33 @@ mod tests {
             back.contains("future_thing"),
             "newer data was dropped: {back}"
         );
+    }
+
+    /// A photograph that has been moved since the last run is dropped rather
+    /// than reopened as an error. There is nobody to tell yet — the window
+    /// does not exist.
+    #[test]
+    fn a_session_naming_a_missing_file_comes_back_empty() {
+        let s = Settings {
+            session: vec!["Z:/no/such/photo.jpg".into()],
+            session_index: 0,
+            ..Default::default()
+        };
+        let (paths, index) = s.session();
+        assert!(paths.is_empty());
+        assert_eq!(index, 0);
+    }
+
+    /// And the index cannot point past the end of what survived.
+    #[test]
+    fn the_index_is_clamped_to_what_is_left() {
+        let s = Settings {
+            session: vec!["Z:/gone/a.jpg".into(), "Z:/gone/b.jpg".into()],
+            session_index: 1,
+            ..Default::default()
+        };
+        let (paths, index) = s.session();
+        assert!(index < paths.len().max(1));
     }
 
     /// Nothing here is worth interrupting a launch over.

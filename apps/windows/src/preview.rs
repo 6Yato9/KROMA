@@ -69,10 +69,21 @@ const MAX_PREVIEW: u32 = 2560;
 /// the very edge rather than a correctness problem.
 const MARGIN: f32 = 0.06;
 
+/// How far out the view can go, as a fraction of fit.
+///
+/// Below fit is not a nonsense request: it is how you see a photograph
+/// *as an object* — with room around it, against the surround, the way it
+/// would sit on a wall or a page. A viewer that stops at fit can only ever
+/// show the picture filling something.
+pub const MIN_ZOOM: f32 = 0.05;
+pub const MAX_ZOOM: f32 = 32.0;
+
 /// Where the viewer is looking.
 #[derive(Clone, Copy, Debug)]
 pub struct View {
-    /// 1.0 fits the whole photograph in the viewport. 2.0 shows half of it.
+    /// 1.0 fits the whole photograph in the viewport. 2.0 shows half of it,
+    /// and 0.5 draws it at half the size it would fit at, with surround
+    /// around it.
     pub zoom: f32,
     /// Centre of the view, in frame uv. (0.5, 0.5) is the middle of the image.
     pub centre: egui::Vec2,
@@ -504,7 +515,7 @@ fn frame_plan(img_w: u32, img_h: u32, view: View, viewport: egui::Vec2) -> Frame
     let vh = viewport.y.max(1.0);
 
     let fit = (vw / iw).min(vh / ih);
-    let zoom = view.zoom.clamp(1.0, 32.0);
+    let zoom = view.zoom.clamp(MIN_ZOOM, MAX_ZOOM);
     let scale = fit * zoom;
 
     // How much of the image is visible, as a fraction of the frame.
@@ -543,10 +554,23 @@ fn frame_plan(img_w: u32, img_h: u32, view: View, viewport: egui::Vec2) -> Frame
         ],
     };
 
+    // What it will occupy on screen. Below fit that is smaller than the
+    // viewport, and above fit the visible part fills it.
+    let on_screen = egui::vec2(
+        (iw * visible.x * scale).min(vw),
+        (ih * visible.y * scale).min(vh),
+    );
+
     // Enough pixels for the screen, but never more than the source actually
     // has for that rectangle, and never past the memory cap.
-    let want_w = vw * (rendered.size[0] / visible.x.max(1e-4));
-    let want_h = vh * (rendered.size[1] / visible.y.max(1e-4));
+    //
+    // Measured against what is drawn rather than against the viewport. At half
+    // zoom those differ by a factor of two in each direction, and rendering
+    // four times the pixels egui is going to sample bilinearly does not look
+    // better — it aliases, the same way any 2:1 downscale does without a
+    // mip chain.
+    let want_w = on_screen.x * (rendered.size[0] / visible.x.max(1e-4));
+    let want_h = on_screen.y * (rendered.size[1] / visible.y.max(1e-4));
     let source_w = iw * rendered.size[0];
     let source_h = ih * rendered.size[1];
     let render_size = (
@@ -564,11 +588,6 @@ fn frame_plan(img_w: u32, img_h: u32, view: View, viewport: egui::Vec2) -> Frame
             (inner.max.x - rendered_rect.min.x) / rendered_rect.width().max(1e-6),
             (inner.max.y - rendered_rect.min.y) / rendered_rect.height().max(1e-6),
         ),
-    );
-
-    let on_screen = egui::vec2(
-        (iw * visible.x * scale).min(vw),
-        (ih * visible.y * scale).min(vh),
     );
 
     FramePlan {
@@ -604,6 +623,44 @@ mod tests {
         assert_eq!(
             p.uv,
             egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0))
+        );
+    }
+
+    /// Below fit, the picture is drawn smaller with surround around it.
+    ///
+    /// The viewer used to clamp at fit, which meant a photograph could only
+    /// ever be shown filling something. Seeing it *as an object* — with room
+    /// around it, the way it would sit on a page — needs the other direction.
+    #[test]
+    fn zooming_out_below_fit_draws_the_picture_smaller() {
+        let fit = plan(6000, 4000, 1.0, (1200.0, 900.0));
+        let out = plan(6000, 4000, 0.5, (1200.0, 900.0));
+
+        assert!(
+            (out.on_screen.x - fit.on_screen.x * 0.5).abs() < 1.0,
+            "half zoom should draw at half the size: {} against {}",
+            out.on_screen.x,
+            fit.on_screen.x
+        );
+        // Still the whole photograph, and still one region.
+        assert_eq!(out.rendered, Region::FULL);
+        assert!(out.visible.width() >= 0.999 && out.visible.height() >= 0.999);
+    }
+
+    /// And it renders for the size it will be drawn at.
+    ///
+    /// Rendering the full viewport and letting egui sample it down aliases,
+    /// the same way any 2:1 downscale does without a mip chain — and it costs
+    /// four times the pixels to look worse.
+    #[test]
+    fn zooming_out_renders_fewer_pixels_rather_than_downscaling() {
+        let fit = plan(6000, 4000, 1.0, (1200.0, 900.0));
+        let out = plan(6000, 4000, 0.5, (1200.0, 900.0));
+        assert!(
+            out.render_size.0 < fit.render_size.0,
+            "{:?} against {:?}",
+            out.render_size,
+            fit.render_size
         );
     }
 

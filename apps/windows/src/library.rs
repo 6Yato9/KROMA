@@ -136,6 +136,21 @@ impl Library {
         self.current
     }
 
+    /// Point the set at one of its entries without loading anything.
+    ///
+    /// Used once, at startup: the caller has already opened the photograph
+    /// itself, and this is only telling the strip which one is showing.
+    pub fn focus(&mut self, index: usize) {
+        if index < self.entries.len() {
+            self.current = index;
+        }
+    }
+
+    /// Every path in the set, in order.
+    pub fn paths(&self) -> Vec<&Path> {
+        self.entries.iter().map(|e| e.path.as_path()).collect()
+    }
+
     pub fn path(&self, index: usize) -> Option<&Path> {
         self.entries.get(index).map(|e| e.path.as_path())
     }
