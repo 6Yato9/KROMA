@@ -30,7 +30,10 @@ use crate::texture::{ImageTexture, WORKING_FORMAT};
 
 /// LUT texture is 256 wide by 4 rows: luma, red, green, blue.
 const LUT_WIDTH: u32 = 256;
-const LUT_ROWS: u32 = 4;
+/// Rows in the curve LUT: four tone curves, then six secondaries.
+///
+/// `curves.wgsl` indexes these by number, so the order here is load-bearing.
+const LUT_ROWS: u32 = 10;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -423,12 +426,29 @@ impl EffectRenderer {
 
     fn upload_lut(&self, gpu: &GpuContext, stage: &Scratch, row: &StackRow) {
         let mut data = Vec::with_capacity((LUT_WIDTH * LUT_ROWS) as usize);
+        // Rows 0-3 are the tone curves, whose identity is the diagonal.
         for key in ["luma", "red", "green", "blue"] {
             match row.params.get(key).and_then(ParamValue::as_curve) {
                 Some(curve) => data.extend_from_slice(&curve.bake()),
                 // A missing curve is the identity, not a black row. Getting
                 // this wrong would make a fresh Curves layer crush the image.
                 None => data.extend((0..LUT_WIDTH).map(|i| i as f32 / (LUT_WIDTH - 1) as f32)),
+            }
+        }
+        // Rows 4-9 are the secondaries, whose identity is a flat half. They
+        // answer "what should happen to this hue", and the answer that changes
+        // nothing is the same everywhere.
+        for key in [
+            "hue_vs_hue",
+            "hue_vs_sat",
+            "hue_vs_lum",
+            "lum_vs_sat",
+            "sat_vs_sat",
+            "sat_vs_lum",
+        ] {
+            match row.params.get(key).and_then(ParamValue::as_curve) {
+                Some(curve) => data.extend_from_slice(&curve.bake()),
+                None => data.extend(std::iter::repeat_n(0.5, LUT_WIDTH as usize)),
             }
         }
 

@@ -146,28 +146,74 @@ pub static EFFECTS: &[EffectDef] = &[
             ParamDef {
                 key: "luma",
                 name: "Luma",
-                kind: ParamKind::Curve,
+                kind: ParamKind::Curve { flat: false },
                 unit: "",
                 section: "",
             },
             ParamDef {
                 key: "red",
                 name: "Red",
-                kind: ParamKind::Curve,
+                kind: ParamKind::Curve { flat: false },
                 unit: "",
                 section: "",
             },
             ParamDef {
                 key: "green",
                 name: "Green",
-                kind: ParamKind::Curve,
+                kind: ParamKind::Curve { flat: false },
                 unit: "",
                 section: "",
             },
             ParamDef {
                 key: "blue",
                 name: "Blue",
-                kind: ParamKind::Curve,
+                kind: ParamKind::Curve { flat: false },
+                unit: "",
+                section: "",
+            },
+            // The secondaries. Each answers "what should happen to this hue"
+            // — or to this luminance, or this saturation — rather than mapping
+            // a level onto a level, which is why their identity is a flat line
+            // and a tone curve's is a diagonal.
+            ParamDef {
+                key: "hue_vs_hue",
+                name: "Hue Vs Hue",
+                kind: ParamKind::Curve { flat: true },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "hue_vs_sat",
+                name: "Hue Vs Sat",
+                kind: ParamKind::Curve { flat: true },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "hue_vs_lum",
+                name: "Hue Vs Lum",
+                kind: ParamKind::Curve { flat: true },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "lum_vs_sat",
+                name: "Lum Vs Sat",
+                kind: ParamKind::Curve { flat: true },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "sat_vs_sat",
+                name: "Sat Vs Sat",
+                kind: ParamKind::Curve { flat: true },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "sat_vs_lum",
+                name: "Sat Vs Lum",
+                kind: ParamKind::Curve { flat: true },
                 unit: "",
                 section: "",
             },

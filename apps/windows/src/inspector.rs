@@ -427,7 +427,7 @@ fn param_ui(
                 }
             });
         }
-        ParamKind::Curve => {
+        ParamKind::Curve { .. } => {
             let curve = current
                 .as_ref()
                 .and_then(ParamValue::as_curve)

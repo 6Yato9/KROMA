@@ -14,6 +14,74 @@ pub mod waveform;
 
 pub use waveform::{Channel, LEVELS, SKIN, TARGETS, VECTOR_SIZE, Vectorscope, Waveform};
 
+/// Where a frame's hues and saturations sit, for the secondary curves.
+///
+/// A secondary curve is indexed by hue or by saturation rather than by level,
+/// so the histogram behind it has to be too. Drawing a tone histogram behind a
+/// Hue Vs Sat curve would put every peak in the wrong place, which is worse
+/// than drawing nothing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ColourSpread {
+    /// Bin 0 is red, running once round the circle.
+    pub hue: [u32; BINS],
+    pub saturation: [u32; BINS],
+    pub total: u32,
+}
+
+impl Default for ColourSpread {
+    fn default() -> Self {
+        Self {
+            hue: [0; BINS],
+            saturation: [0; BINS],
+            total: 0,
+        }
+    }
+}
+
+impl ColourSpread {
+    pub fn from_display(pixels: &[u8]) -> Self {
+        let mut out = ColourSpread::default();
+        for px in pixels.as_chunks::<4>().0 {
+            let (r, g, b) = (
+                px[0] as f32 / 255.0,
+                px[1] as f32 / 255.0,
+                px[2] as f32 / 255.0,
+            );
+            let top = r.max(g).max(b);
+            let bottom = r.min(g).min(b);
+            let chroma = top - bottom;
+            let saturation = if top > 1e-5 { chroma / top } else { 0.0 };
+            out.saturation[((saturation * (BINS - 1) as f32).round() as usize).min(BINS - 1)] += 1;
+
+            // A pixel with no chroma has no hue to bin. Counting it as red —
+            // which is what falling through to zero would do — puts a spike at
+            // the left of every hue curve that is really just the greys.
+            if chroma > 1e-4 {
+                let h = if top == r {
+                    ((g - b) / chroma).rem_euclid(6.0)
+                } else if top == g {
+                    (b - r) / chroma + 2.0
+                } else {
+                    (r - g) / chroma + 4.0
+                } / 6.0;
+                out.hue[((h * BINS as f32) as usize).min(BINS - 1)] += 1;
+            }
+            out.total += 1;
+        }
+        out
+    }
+
+    /// The tallest bin in either, for the scale a curve draws against.
+    pub fn peak(&self) -> u32 {
+        self.hue
+            .iter()
+            .chain(self.saturation.iter())
+            .copied()
+            .max()
+            .unwrap_or(0)
+    }
+}
+
 /// The sRGB decode, tabulated. Two hundred and fifty-six entries, so binning
 /// a frame never calls `powf`.
 fn srgb_decode() -> &'static [f64; 256] {

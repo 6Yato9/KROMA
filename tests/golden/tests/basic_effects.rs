@@ -838,3 +838,230 @@ fn every_band_together_lifts_every_hue_equally() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// The secondary curves
+// ---------------------------------------------------------------------------
+
+/// A curve that is neutral everywhere except a bump around `x`.
+fn bump_at(x: f32, y: f32) -> ParamValue {
+    let w = 0.08;
+    ParamValue::Curve(pe_core::Curve {
+        points: vec![
+            [0.0, 0.5],
+            [(x - w).max(0.01), 0.5],
+            [x, y],
+            [(x + w).min(0.99), 0.5],
+            [1.0, 0.5],
+        ],
+    })
+}
+
+/// Two flat patches, one red and one blue, so a hue-indexed curve can be shown
+/// to reach one and not the other.
+fn two_hues() -> DecodedImage {
+    let mut px = Vec::new();
+    for _ in 0..8u32 {
+        for x in 0..64u32 {
+            let c: [u8; 4] = if x < 32 {
+                [200, 60, 60, 255]
+            } else {
+                [60, 80, 200, 255]
+            };
+            px.extend_from_slice(&c);
+        }
+    }
+    DecodedImage::new(64, 8, px).expect("two hues")
+}
+
+/// The one that has to hold before any of the rest matters. A freshly added
+/// Curves row carries six secondaries, and if their identity were the diagonal
+/// rather than a flat half, every hue in the picture would rotate the moment
+/// the row appeared.
+#[test]
+fn the_secondaries_do_nothing_at_their_defaults() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = two_hues();
+    let out = render(gpu, &src, &look("curves", &[]));
+    for x in [10u32, 50] {
+        for c in 0..3 {
+            assert!(
+                (out.pixel(x, 4)[c] as i32 - src.pixel(x, 4)[c] as i32).abs() <= 2,
+                "an untouched Curves row moved x={x}: {:?} became {:?}",
+                src.pixel(x, 4),
+                out.pixel(x, 4)
+            );
+        }
+    }
+}
+
+/// The whole point of a secondary: it reaches one hue and leaves the rest.
+#[test]
+fn hue_vs_sat_reaches_one_hue_and_not_another() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = two_hues();
+    // Red sits at hue zero, so the bump goes at the left-hand end.
+    let out = render(
+        gpu,
+        &src,
+        &look("curves", &[("hue_vs_sat", bump_at(0.02, 0.0))]),
+    );
+
+    let red = spread(&out, 10, 4);
+    let blue = spread(&out, 50, 4);
+    assert!(
+        red < spread(&src, 10, 4) / 2,
+        "the red patch was not desaturated ({red} against {})",
+        spread(&src, 10, 4)
+    );
+    assert!(
+        (blue - spread(&src, 50, 4)).abs() <= 4,
+        "the curve reached the blues too ({blue} against {})",
+        spread(&src, 50, 4)
+    );
+}
+
+#[test]
+fn hue_vs_hue_rotates_the_hue_it_is_pointed_at() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = two_hues();
+    let out = render(
+        gpu,
+        &src,
+        &look("curves", &[("hue_vs_hue", bump_at(0.02, 1.0))]),
+    );
+    // Red pushed a long way round the circle stops being the reddest channel.
+    let p = out.pixel(10, 4);
+    assert!(
+        p[1] as i32 > p[0] as i32 || p[2] as i32 > p[0] as i32,
+        "the red patch did not rotate, got {p:?}"
+    );
+    // And the blues are where they were.
+    let q = out.pixel(50, 4);
+    assert!(
+        q[2] as i32 > q[0] as i32 + 40,
+        "the rotation reached the blues, got {q:?}"
+    );
+}
+
+#[test]
+fn hue_vs_lum_brightens_only_its_own_hue() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = two_hues();
+    let out = render(
+        gpu,
+        &src,
+        &look("curves", &[("hue_vs_lum", bump_at(0.02, 1.0))]),
+    );
+    let level = |img: &DecodedImage, x: u32| {
+        let p = img.pixel(x, 4);
+        p[0].max(p[1]).max(p[2]) as i32
+    };
+    assert!(
+        level(&out, 10) > level(&src, 10) + 10,
+        "the red patch did not brighten"
+    );
+    assert!(
+        (level(&out, 50) - level(&src, 50)).abs() <= 4,
+        "the gain reached the blues"
+    );
+}
+
+/// A step that kills the low half of the axis, or the high half.
+///
+/// Better than a bump at a guessed position. Where a given patch lands on a
+/// luminance or saturation axis depends on the whole log encoding, and a test
+/// that hard-codes it is testing my arithmetic rather than the shader's. A
+/// step either side of the middle only needs the axis to be *monotone*, which
+/// is the property actually under test.
+fn step_curve(kill_low: bool) -> ParamValue {
+    let (a, b) = if kill_low { (0.0, 0.5) } else { (0.5, 0.0) };
+    ParamValue::Curve(pe_core::Curve {
+        points: vec![[0.0, a], [0.48, a], [0.52, b], [1.0, b]],
+    })
+}
+
+/// A ramp of the same hue getting brighter across x.
+fn lum_ramp() -> DecodedImage {
+    let mut px = Vec::new();
+    for _ in 0..8u32 {
+        for x in 0..64u32 {
+            let v = 40.0 + 200.0 * (x as f32 / 63.0);
+            px.extend_from_slice(&[v as u8, (v * 0.55) as u8, (v * 0.45) as u8, 255]);
+        }
+    }
+    DecodedImage::new(64, 8, px).expect("lum ramp")
+}
+
+/// Lum Vs Sat is indexed by how bright a pixel is, not by its hue — so which
+/// end of a brightness ramp it reaches has to follow which end of the axis the
+/// curve was drawn on.
+#[test]
+fn lum_vs_sat_follows_the_brightness_and_not_the_hue() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = lum_ramp();
+    let with = |kill_low: bool| {
+        render(
+            gpu,
+            &src,
+            &look("curves", &[("lum_vs_sat", step_curve(kill_low))]),
+        )
+    };
+    let dark_killed = with(true);
+    let bright_killed = with(false);
+
+    assert!(
+        spread(&dark_killed, 4, 4) < spread(&src, 4, 4) / 2,
+        "killing the low end left the shadows coloured"
+    );
+    assert!(
+        spread(&dark_killed, 59, 4) > spread(&src, 59, 4) * 3 / 4,
+        "killing the low end reached the highlights"
+    );
+    assert!(
+        spread(&bright_killed, 59, 4) < spread(&src, 59, 4) / 2,
+        "killing the high end left the highlights coloured"
+    );
+    assert!(
+        spread(&bright_killed, 4, 4) > spread(&src, 4, 4) * 3 / 4,
+        "killing the high end reached the shadows"
+    );
+}
+
+/// Sat Vs Sat is indexed by how saturated a pixel already is, which is the one
+/// axis none of the other five can reach.
+#[test]
+fn sat_vs_sat_follows_how_saturated_the_pixel_already_was() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = saturation_ramp();
+    let with = |kill_low: bool| {
+        render(
+            gpu,
+            &src,
+            &look("curves", &[("sat_vs_sat", step_curve(kill_low))]),
+        )
+    };
+    let muted_killed = with(true);
+    let vivid_killed = with(false);
+
+    assert!(
+        spread(&vivid_killed, 250, 4) < spread(&src, 250, 4) / 2,
+        "killing the high end left the vivid colours alone"
+    );
+    assert!(
+        spread(&muted_killed, 250, 4) > spread(&src, 250, 4) * 3 / 4,
+        "killing the low end reached the vivid colours"
+    );
+}

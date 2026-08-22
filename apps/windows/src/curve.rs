@@ -29,6 +29,313 @@ use pe_scopes::{BINS, Histogram};
 const LOG_BLACK: f32 = 0.072_905_53;
 const LOG_WHITE: f32 = 0.554_794_5;
 
+/// The seven curves Resolve offers, in the order its icon strip shows them.
+///
+/// The first maps a level onto a level; the other six answer "what should
+/// happen to this hue" — or to this luminance, or this saturation. That is the
+/// difference that decides everything else about them: their identity is a
+/// flat line rather than a diagonal, their background is a spectrum rather
+/// than a grid, and the histogram behind them counts hues rather than tones.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Custom,
+    HueVsHue,
+    HueVsSat,
+    HueVsLum,
+    LumVsSat,
+    SatVsSat,
+    SatVsLum,
+}
+
+impl Mode {
+    const ALL: [Mode; 7] = [
+        Mode::Custom,
+        Mode::HueVsHue,
+        Mode::HueVsSat,
+        Mode::HueVsLum,
+        Mode::LumVsSat,
+        Mode::SatVsSat,
+        Mode::SatVsLum,
+    ];
+
+    fn title(self) -> &'static str {
+        match self {
+            Mode::Custom => "Curves - Custom",
+            Mode::HueVsHue => "Curves - Hue Vs Hue",
+            Mode::HueVsSat => "Curves - Hue Vs Sat",
+            Mode::HueVsLum => "Curves - Hue Vs Lum",
+            Mode::LumVsSat => "Curves - Lum Vs Sat",
+            Mode::SatVsSat => "Curves - Sat Vs Sat",
+            Mode::SatVsLum => "Curves - Sat Vs Lum",
+        }
+    }
+
+    /// The parameter it edits. `None` for Custom, which has four.
+    fn key(self) -> Option<&'static str> {
+        match self {
+            Mode::Custom => None,
+            Mode::HueVsHue => Some("hue_vs_hue"),
+            Mode::HueVsSat => Some("hue_vs_sat"),
+            Mode::HueVsLum => Some("hue_vs_lum"),
+            Mode::LumVsSat => Some("lum_vs_sat"),
+            Mode::SatVsSat => Some("sat_vs_sat"),
+            Mode::SatVsLum => Some("sat_vs_lum"),
+        }
+    }
+
+    /// What the two readouts under the plot are called, and how a point's
+    /// stored 0..1 becomes the number Resolve shows.
+    fn readouts(self) -> Readouts {
+        match self {
+            Mode::Custom => ("Input", "Output", |v| v, |v| v),
+            Mode::HueVsHue => (
+                "Input Hue",
+                "Hue Rotate",
+                |v| v * 360.0,
+                |v| (v - 0.5) * 180.0,
+            ),
+            Mode::HueVsSat => ("Input Hue", "Saturation", |v| v * 360.0, |v| v * 2.0),
+            Mode::HueVsLum => ("Input Hue", "Lum Gain", |v| v * 360.0, |v| v * 2.0),
+            Mode::LumVsSat => ("Input Lum", "Saturation", |v| v, |v| v * 2.0),
+            Mode::SatVsSat => ("Input Sat", "Output Sat", |v| v, |v| v * 2.0),
+            Mode::SatVsLum => ("Input Sat", "Lum", |v| v, |v| v * 2.0),
+        }
+    }
+
+    fn x_is_hue(self) -> bool {
+        matches!(self, Mode::HueVsHue | Mode::HueVsSat | Mode::HueVsLum)
+    }
+
+    fn x_is_saturation(self) -> bool {
+        matches!(self, Mode::SatVsSat | Mode::SatVsLum)
+    }
+}
+
+/// What the two numbers under a plot are called, and how a stored 0..1
+/// becomes the number shown.
+///
+/// The pair travels together because they are one decision: Hue Rotate reads
+/// in degrees either side of zero and Saturation reads as a multiplier, and a
+/// label without its conversion is a number in the wrong units.
+type Readouts = (&'static str, &'static str, fn(f32) -> f32, fn(f32) -> f32);
+
+/// The icon strip. Drawn rather than typed, like every other icon here.
+///
+/// Each is the same glyph Resolve uses: a rectangle for Custom, and a ring of
+/// segments for the secondaries with the ones it acts on filled in. They are
+/// small and abstract, which is why the tooltip carries the name.
+fn mode_strip(ui: &mut egui::Ui, current: &mut Mode) {
+    ui.horizontal(|ui| {
+        for mode in Mode::ALL {
+            let (rect, response) =
+                ui.allocate_exact_size(egui::vec2(26.0, 22.0), egui::Sense::click());
+            if response.clicked() {
+                *current = mode;
+            }
+            if ui.is_rect_visible(rect) {
+                let active = *current == mode;
+                let painter = ui.painter();
+                if active {
+                    painter.rect_filled(rect, 3.0, egui::Color32::from_gray(56));
+                }
+                let tint = if active {
+                    egui::Color32::from_gray(235)
+                } else if response.hovered() {
+                    egui::Color32::from_gray(190)
+                } else {
+                    egui::Color32::from_gray(140)
+                };
+                let c = rect.center();
+                if mode == Mode::Custom {
+                    // A rectangle with a diagonal through it.
+                    let box_rect = egui::Rect::from_center_size(c, egui::vec2(13.0, 10.0));
+                    painter.rect_stroke(
+                        box_rect,
+                        1.0,
+                        egui::Stroke::new(1.2_f32, tint),
+                        egui::StrokeKind::Inside,
+                    );
+                    painter.line_segment(
+                        [box_rect.left_bottom(), box_rect.right_top()],
+                        egui::Stroke::new(1.2_f32, tint),
+                    );
+                } else {
+                    // A ring of six segments. Which ones are filled says which
+                    // pair the curve relates, so the six glyphs differ from
+                    // each other the way the curves do.
+                    let index = Mode::ALL.iter().position(|m| *m == mode).unwrap_or(1);
+                    for i in 0..6 {
+                        let a =
+                            i as f32 / 6.0 * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
+                        let at = c + egui::vec2(a.cos(), a.sin()) * 5.5;
+                        let on = (i + index) % 3 == 0;
+                        painter.circle_filled(
+                            at,
+                            if on { 2.2 } else { 1.4 },
+                            if on { tint } else { tint.gamma_multiply(0.45) },
+                        );
+                    }
+                }
+            }
+            response.on_hover_text(mode.title().trim_start_matches("Curves - "));
+        }
+    });
+}
+
+/// The spectrum or ramp behind a secondary curve.
+///
+/// Resolve paints the plot with what the axis *is*: a hue curve gets a
+/// rainbow, a luminance curve gets a black-to-white ramp. It is not
+/// decoration — it is the only thing that says where a peak in the histogram
+/// sits without counting grid lines.
+fn axis_background(painter: &egui::Painter, rect: egui::Rect, mode: Mode) {
+    const STEPS: usize = 96;
+    let mut mesh = egui::Mesh::default();
+    for i in 0..STEPS {
+        let t0 = i as f32 / STEPS as f32;
+        let t1 = (i + 1) as f32 / STEPS as f32;
+        let x0 = rect.min.x + t0 * rect.width();
+        let x1 = rect.min.x + t1 * rect.width();
+        for (t, x) in [(t0, x0), (t1, x1)] {
+            let colour = if mode.x_is_hue() {
+                // Dark, because the curve and the histogram are drawn on top
+                // of it and a full-strength rainbow would drown both.
+                hue_swatch(t).gamma_multiply(0.42)
+            } else if mode.x_is_saturation() {
+                // Saturation runs grey to grey; the ramp says how far along
+                // the axis you are, not what colour it is.
+                egui::Color32::from_gray((22.0 + t * 150.0) as u8)
+            } else {
+                egui::Color32::from_gray((14.0 + t * 158.0) as u8)
+            };
+            let base = mesh.vertices.len() as u32;
+            mesh.colored_vertex(egui::pos2(x, rect.min.y), colour);
+            mesh.colored_vertex(egui::pos2(x, rect.max.y), colour);
+            let _ = base;
+        }
+        let n = mesh.vertices.len() as u32;
+        mesh.add_triangle(n - 4, n - 3, n - 1);
+        mesh.add_triangle(n - 4, n - 1, n - 2);
+    }
+    painter.add(egui::Shape::mesh(mesh));
+}
+
+fn hue_swatch(hue: f32) -> egui::Color32 {
+    let h = hue * 6.0;
+    let f = h - h.floor();
+    let (r, g, b) = match h.floor() as i32 % 6 {
+        0 => (1.0, f, 0.0),
+        1 => (1.0 - f, 1.0, 0.0),
+        2 => (0.0, 1.0, f),
+        3 => (0.0, 1.0 - f, 1.0),
+        4 => (f, 0.0, 1.0),
+        _ => (1.0, 0.0, 1.0 - f),
+    };
+    egui::Color32::from_rgb(
+        (r * 235.0 + 20.0) as u8,
+        (g * 235.0 + 20.0) as u8,
+        (b * 235.0 + 20.0) as u8,
+    )
+}
+
+/// The histogram behind a secondary: hues or saturations rather than tones.
+fn spread_behind(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    mode: Mode,
+    spread: Option<&pe_scopes::ColourSpread>,
+) {
+    let Some(spread) = spread else {
+        return;
+    };
+    let bins = if mode.x_is_hue() {
+        &spread.hue
+    } else {
+        &spread.saturation
+    };
+    let peak = spread.peak().max(1) as f32;
+    let heights = trace(bins, peak);
+    let height = rect.height() * 0.92;
+    let x_of = |i: usize| rect.min.x + rect.width() * (i as f32 / (BINS - 1) as f32);
+    let y_of = |v: f32| rect.max.y - v * height;
+
+    let mut mesh = egui::Mesh::default();
+    let fill = egui::Color32::from_rgba_unmultiplied(230, 230, 230, 48);
+    for i in 0..BINS - 1 {
+        let base = mesh.vertices.len() as u32;
+        mesh.colored_vertex(egui::pos2(x_of(i), y_of(heights[i])), fill);
+        mesh.colored_vertex(egui::pos2(x_of(i + 1), y_of(heights[i + 1])), fill);
+        mesh.colored_vertex(egui::pos2(x_of(i + 1), rect.max.y), fill);
+        mesh.colored_vertex(egui::pos2(x_of(i), rect.max.y), fill);
+        mesh.add_triangle(base, base + 1, base + 2);
+        mesh.add_triangle(base, base + 2, base + 3);
+    }
+    painter.add(egui::Shape::mesh(mesh));
+    painter.add(egui::Shape::line(
+        (0..BINS)
+            .map(|i| egui::pos2(x_of(i), y_of(heights[i])))
+            .collect(),
+        egui::Stroke::new(1.2_f32, egui::Color32::from_white_alpha(210)),
+    ));
+}
+
+/// The six hue buttons under a hue curve, which drop a point at that hue.
+///
+/// Resolve puts them there because the useful thing to do with a hue curve is
+/// almost always "grab the reds", and hunting for red along a rainbow is a
+/// worse way to do that than pressing a red dot.
+fn hue_presets(ui: &mut egui::Ui, history: &mut History, id: RowId, mode: Mode) {
+    let Some(key) = mode.key() else {
+        return;
+    };
+    if !mode.x_is_hue() {
+        return;
+    }
+    ui.horizontal(|ui| {
+        for (name, hue) in [
+            ("Red", 0.0f32),
+            ("Yellow", 1.0 / 6.0),
+            ("Green", 2.0 / 6.0),
+            ("Cyan", 3.0 / 6.0),
+            ("Blue", 4.0 / 6.0),
+            ("Magenta", 5.0 / 6.0),
+        ] {
+            let (rect, response) =
+                ui.allocate_exact_size(egui::vec2(20.0, 18.0), egui::Sense::click());
+            if ui.is_rect_visible(rect) {
+                ui.painter()
+                    .circle_filled(rect.center(), 6.0, hue_swatch(hue));
+            }
+            if response.on_hover_text(name).clicked() {
+                add_point(history, id, key, hue);
+            }
+        }
+    });
+}
+
+/// Drop a control point on a curve at `x`, leaving the shape it already has.
+fn add_point(history: &mut History, id: RowId, key: &'static str, x: f32) {
+    let mut curve = history
+        .document()
+        .stack
+        .get(id)
+        .and_then(|r| r.params.get(key))
+        .and_then(ParamValue::as_curve)
+        .cloned()
+        .unwrap_or_else(Curve::flat);
+    if curve.points.iter().any(|p| (p[0] - x).abs() < MIN_SPACING) {
+        return;
+    }
+    let y = curve.sample(x);
+    let at = curve
+        .points
+        .iter()
+        .position(|q| q[0] > x)
+        .unwrap_or(curve.points.len());
+    curve.points.insert(at, [x, y]);
+    set(history, id, key, curve, None);
+}
+
 /// The four curves the effect carries, in the order the tabs show them.
 const CHANNELS: [(&str, &str); 4] = [
     ("luma", "Luma"),
@@ -64,24 +371,38 @@ pub fn editor(ui: &mut egui::Ui, history: &mut History, scopes: Option<&Scopes>)
         return;
     };
 
-    let mode_id = ui.make_persistent_id("tone_curve_mode");
-    let mut parametric_mode: bool = ui.data_mut(|d| *d.get_temp_mut_or(mode_id, false));
+    let mode_id = ui.make_persistent_id("curve_mode");
+    let mut mode: Mode = ui.data_mut(|d| *d.get_temp_mut_or(mode_id, Mode::Custom));
+    let parametric_id = ui.make_persistent_id("tone_curve_parametric");
+    let mut parametric_mode: bool = ui.data_mut(|d| *d.get_temp_mut_or(parametric_id, false));
+
     ui.horizontal(|ui| {
-        if ui.selectable_label(!parametric_mode, "Custom").clicked() {
-            parametric_mode = false;
+        mode_strip(ui, &mut mode);
+        ui.add_space(6.0);
+        if mode == Mode::Custom
+            && ui
+                .selectable_label(parametric_mode, "Parametric")
+                .on_hover_text("Four regions and three movable boundaries")
+                .clicked()
+        {
+            parametric_mode = !parametric_mode;
         }
-        if ui.selectable_label(parametric_mode, "Parametric").clicked() {
-            parametric_mode = true;
-        }
-        ui.label(
-            egui::RichText::new("click to add · right-click to remove")
-                .small()
-                .weak(),
-        );
     });
-    ui.data_mut(|d| d.insert_temp(mode_id, parametric_mode));
+    ui.data_mut(|d| {
+        d.insert_temp(mode_id, mode);
+        d.insert_temp(parametric_id, parametric_mode);
+    });
+    ui.label(
+        egui::RichText::new(mode.title())
+            .small()
+            .color(resolve::colour::TITLE),
+    );
     ui.add_space(4.0);
 
+    if mode != Mode::Custom {
+        secondary(ui, history, id, mode, scopes);
+        return;
+    }
     if parametric_mode {
         parametric(ui, history, id);
         return;
@@ -453,7 +774,7 @@ fn canvas(
 
     histogram_behind(&painter, rect, scopes.map(|s| &s.log_histogram));
 
-    soft_clip_lines(&painter, rect, low_knee, high_knee);
+    soft_clip_lines(&painter, rect, low_knee, high_knee, knee.is_some());
 
     // Clipping, at the end it is happening, from the *display* histogram.
     //
@@ -781,6 +1102,196 @@ fn trace(bins: &[u32; BINS], peak: f32) -> Vec<f32> {
         .collect()
 }
 
+/// A secondary curve: the plot, its spectrum, and the readouts under it.
+///
+/// The editing is the same as a tone curve's — drag a point, click to add,
+/// right-click to remove — because it is the same widget looked at through a
+/// different axis. What changes is the identity it resets to, what is painted
+/// behind it, and what the two numbers underneath are called.
+fn secondary(
+    ui: &mut egui::Ui,
+    history: &mut History,
+    id: RowId,
+    mode: Mode,
+    scopes: Option<&Scopes>,
+) {
+    let Some(key) = mode.key() else {
+        return;
+    };
+    let width = ui.available_width().clamp(140.0, 620.0);
+    let height = (width * 0.42).clamp(110.0, 240.0);
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click_and_drag());
+
+    let mut curve = history
+        .document()
+        .stack
+        .get(id)
+        .and_then(|r| r.params.get(key))
+        .and_then(ParamValue::as_curve)
+        .cloned()
+        .unwrap_or_else(Curve::flat);
+    curve.points = curve.sorted();
+
+    let to_screen = |p: [f32; 2]| -> egui::Pos2 {
+        egui::pos2(
+            rect.min.x + p[0].clamp(0.0, 1.0) * rect.width(),
+            rect.max.y - p[1].clamp(0.0, 1.0) * rect.height(),
+        )
+    };
+    let to_curve = |p: egui::Pos2| -> [f32; 2] {
+        [
+            ((p.x - rect.min.x) / rect.width().max(1e-4)).clamp(0.0, 1.0),
+            ((rect.max.y - p.y) / rect.height().max(1e-4)).clamp(0.0, 1.0),
+        ]
+    };
+
+    let drag_id = ui.make_persistent_id(("secondary_drag", key));
+    let mut dragging: Option<usize> = ui.data_mut(|d| d.get_temp(drag_id).unwrap_or(None));
+
+    if response.drag_started()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        dragging = nearest(&curve.points, pos, &to_screen);
+        ui.data_mut(|d| d.insert_temp(drag_id, dragging));
+    }
+    if response.dragged()
+        && let (Some(index), Some(pos)) = (dragging, response.interact_pointer_pos())
+    {
+        let mut p = to_curve(pos);
+        let last = curve.points.len() - 1;
+        // The ends anchor the range, so they slide only in y — the same rule
+        // the tone curve follows, and for the same reason: a flat dead zone at
+        // one end is easy to create by accident and hard to undo.
+        if index == 0 {
+            p[0] = 0.0;
+        } else if index == last {
+            p[0] = 1.0;
+        } else {
+            let lo = curve.points[index - 1][0] + MIN_SPACING;
+            let hi = curve.points[index + 1][0] - MIN_SPACING;
+            p[0] = p[0].clamp(lo.min(hi), hi.max(lo));
+        }
+        curve.points[index] = p;
+        set(
+            history,
+            id,
+            key,
+            curve.clone(),
+            Some(format!("curve.{key}.{index}")),
+        );
+    }
+    if response.drag_stopped() {
+        ui.data_mut(|d| d.insert_temp(drag_id, None::<usize>));
+        history.break_coalescing();
+    }
+    if response.clicked()
+        && let Some(pos) = response.interact_pointer_pos()
+        && nearest(&curve.points, pos, &to_screen).is_none()
+    {
+        let p = to_curve(pos);
+        if !curve
+            .points
+            .iter()
+            .any(|q| (q[0] - p[0]).abs() < MIN_SPACING)
+        {
+            let at = curve
+                .points
+                .iter()
+                .position(|q| q[0] > p[0])
+                .unwrap_or(curve.points.len());
+            curve.points.insert(at, p);
+            set(history, id, key, curve.clone(), None);
+        }
+    }
+    if response.secondary_clicked()
+        && let Some(pos) = response.interact_pointer_pos()
+        && let Some(index) = nearest(&curve.points, pos, &to_screen)
+        && index != 0
+        && index != curve.points.len() - 1
+    {
+        curve.points.remove(index);
+        set(history, id, key, curve.clone(), None);
+    }
+
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter_at(rect);
+        axis_background(&painter, rect, mode);
+        spread_behind(&painter, rect, mode, scopes.map(|s| &s.colour));
+
+        let grid = egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(26));
+        for q in 1..8 {
+            let x = rect.min.x + rect.width() * (q as f32 / 8.0);
+            painter.line_segment([egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)], grid);
+        }
+        // The neutral line, which is where the curve sits when it is doing
+        // nothing. On a secondary that is the middle, not the diagonal.
+        painter.line_segment(
+            [
+                egui::pos2(rect.min.x, rect.center().y),
+                egui::pos2(rect.max.x, rect.center().y),
+            ],
+            egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(60)),
+        );
+
+        let steps = 128;
+        painter.add(egui::Shape::line(
+            (0..=steps)
+                .map(|i| {
+                    let x = i as f32 / steps as f32;
+                    to_screen([x, curve.sample(x)])
+                })
+                .collect(),
+            egui::Stroke::new(1.8_f32, egui::Color32::from_gray(235)),
+        ));
+
+        let hover = response.hover_pos();
+        for (i, p) in curve.points.iter().enumerate() {
+            let at = to_screen(*p);
+            let near = hover.is_some_and(|h| h.distance(at) <= GRAB_RADIUS) || dragging == Some(i);
+            let r = if near { 5.5 } else { 4.0 };
+            painter.circle_filled(at, r, egui::Color32::WHITE);
+            painter.circle_stroke(
+                at,
+                r,
+                egui::Stroke::new(1.2_f32, egui::Color32::from_gray(30)),
+            );
+        }
+    }
+
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        hue_presets(ui, history, id, mode);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // Whichever point is in hand, or the last one placed. Resolve
+            // shows the same two numbers and they are how you set a value
+            // exactly rather than by eye.
+            let (x_name, y_name, to_x, to_y) = mode.readouts();
+            let point = dragging
+                .and_then(|i| curve.points.get(i))
+                .or_else(|| curve.points.get(curve.points.len().saturating_sub(1)));
+            let (x, y) = point.map_or((0.0, 0.5), |p| (p[0], p[1]));
+            ui.label(
+                egui::RichText::new(format!("{:.2}", to_y(y)))
+                    .small()
+                    .monospace(),
+            );
+            ui.label(egui::RichText::new(y_name).small().weak());
+            ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new(format!("{:.2}", to_x(x)))
+                    .small()
+                    .monospace(),
+            );
+            ui.label(egui::RichText::new(x_name).small().weak());
+        });
+    });
+
+    if ui.small_button("Reset").clicked() {
+        set(history, id, key, Curve::flat(), None);
+    }
+}
+
 /// The picture's tones, in the curve's own domain, behind the curve.
 ///
 /// One filled area per channel with a line along its top: the fills are
@@ -864,13 +1375,22 @@ fn knee_positions(low: f32, high: f32) -> (f32, f32) {
 /// with a handle on the left edge, and it is the right place for them: the
 /// limit is a level, and a level is a horizontal line. Dragging the bottom one
 /// up lifts the black point; dragging the top one down brings the white in.
-fn soft_clip_lines(painter: &egui::Painter, rect: egui::Rect, low: f32, high: f32) {
+fn soft_clip_lines(painter: &egui::Painter, rect: egui::Rect, low: f32, high: f32, dragging: bool) {
     for (t, pointing_up) in [(low, true), (high, false)] {
         let y = rect.max.y - t * rect.height();
-        painter.line_segment(
-            [egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)],
-            egui::Stroke::new(1.4_f32, egui::Color32::from_white_alpha(190)),
-        );
+        // The line only while a limit is in hand. At rest the arrows are
+        // enough — two lines across the plot at all times would read as part
+        // of the grid, and the plot already has one line in it that matters.
+        //
+        // Both are drawn, not only the one being dragged: they are the two
+        // ends of one range, and seeing where the far end sits is most of
+        // what tells you how much room is left.
+        if dragging {
+            painter.line_segment(
+                [egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)],
+                egui::Stroke::new(1.4_f32, egui::Color32::from_white_alpha(190)),
+            );
+        }
         // A triangle on the left edge, so it reads as something to take hold
         // of rather than as a grid line.
         let w = 5.5_f32;

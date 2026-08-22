@@ -32,7 +32,7 @@ pub const fn slot_width(kind: &ParamKind) -> usize {
         ParamKind::Float { .. } | ParamKind::Bool { .. } | ParamKind::Choice { .. } => 1,
         ParamKind::Rgb { .. } => 3,
         ParamKind::Wheel => 4,
-        ParamKind::Curve => 0,
+        ParamKind::Curve { .. } => 0,
     }
 }
 
@@ -117,7 +117,7 @@ pub fn pack(effect: &EffectDef, params: &ParamMap) -> [f32; PARAM_SLOTS] {
                 out[at + 2] = w.rgb[2];
                 out[at + 3] = w.master;
             }
-            ParamKind::Curve => unreachable!("curves have zero width"),
+            ParamKind::Curve { .. } => unreachable!("curves have zero width"),
         }
         at += width;
     }

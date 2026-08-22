@@ -49,6 +49,26 @@ pub struct Curve {
     pub points: Vec<[f32; 2]>,
 }
 
+impl Curve {
+    /// A flat line down the middle.
+    ///
+    /// The identity for a *secondary* curve. Hue Vs Sat and its five siblings
+    /// do not map a value onto itself the way a tone curve does — they answer
+    /// "what should happen to this hue", and the answer that changes nothing
+    /// is the same everywhere. Which is why their neutral is a level line and
+    /// a tone curve's is a diagonal.
+    pub fn flat() -> Self {
+        Self {
+            points: vec![[0.0, 0.5], [1.0, 0.5]],
+        }
+    }
+
+    /// Whether this curve leaves a secondary alone.
+    pub fn is_flat(&self) -> bool {
+        self.points.iter().all(|p| (p[1] - 0.5).abs() < 1e-4)
+    }
+}
+
 impl Default for Curve {
     fn default() -> Self {
         // Identity: a straight line from black to white.

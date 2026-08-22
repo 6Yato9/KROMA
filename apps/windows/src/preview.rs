@@ -12,7 +12,7 @@ use pe_color::space;
 use pe_core::{Document, Geometry};
 use pe_io::DecodedImage;
 use pe_render::{EffectRenderer, GpuContext, ImageTexture, Region, RenderError, TransformPass};
-use pe_scopes::{Histogram, Vectorscope, Waveform};
+use pe_scopes::{ColourSpread, Histogram, Vectorscope, Waveform};
 
 /// Everything measured from one readback of the graded frame.
 ///
@@ -24,6 +24,10 @@ pub struct Scopes {
     /// The same frame binned in the curve's own domain, for drawing behind
     /// the curve editor. See `Histogram::from_display_log`.
     pub log_histogram: Histogram,
+    /// Where the frame's hues and saturations sit, for the secondary curves.
+    /// A tone histogram behind a Hue Vs Sat curve would put every peak in the
+    /// wrong place.
+    pub colour: ColourSpread,
     pub waveform: Waveform,
     pub vectorscope: Vectorscope,
     /// Bumped on every fresh measurement, so the panel knows when to re-upload
@@ -261,6 +265,7 @@ impl Preview {
             self.scopes = Some(Scopes {
                 histogram: Histogram::from_display(&pixels),
                 log_histogram: Histogram::from_display_log(&pixels),
+                colour: ColourSpread::from_display(&pixels),
                 waveform: Waveform::from_display(&pixels, w, h),
                 vectorscope: Vectorscope::from_display(&pixels),
                 generation: self.generation,

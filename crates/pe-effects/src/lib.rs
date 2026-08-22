@@ -72,7 +72,16 @@ pub enum ParamKind {
     /// A four-way colour wheel.
     Wheel,
     /// An editable curve.
-    Curve,
+    /// A drawn curve, baked into the LUT texture.
+    ///
+    /// `flat` says what the identity is. A tone curve maps a level onto a
+    /// level, so leaving it alone is the diagonal; a secondary answers "what
+    /// should happen to this hue", and the answer that changes nothing is the
+    /// same everywhere — a level line down the middle. Getting this wrong
+    /// makes a freshly added Curves row rotate every hue in the picture.
+    Curve {
+        flat: bool,
+    },
     Choice {
         options: &'static [&'static str],
         default: &'static str,
@@ -120,7 +129,11 @@ impl ParamDef {
             ParamKind::Bool { default } => ParamValue::Bool(default),
             ParamKind::Rgb { default } => ParamValue::Rgb(default),
             ParamKind::Wheel => ParamValue::Wheel(Default::default()),
-            ParamKind::Curve => ParamValue::Curve(Default::default()),
+            ParamKind::Curve { flat } => ParamValue::Curve(if flat {
+                pe_core::Curve::flat()
+            } else {
+                pe_core::Curve::default()
+            }),
             ParamKind::Choice { default, .. } => ParamValue::Choice(default.into()),
         }
     }
@@ -197,10 +210,10 @@ impl EffectDef {
                 .get(def.key)
                 .and_then(ParamValue::as_wheel)
                 .is_none_or(|w| w.is_neutral()),
-            ParamKind::Curve => params
+            ParamKind::Curve { flat } => params
                 .get(def.key)
                 .and_then(ParamValue::as_curve)
-                .is_none_or(|c| c.is_identity()),
+                .is_none_or(|c| if flat { c.is_flat() } else { c.is_identity() }),
         })
     }
 }

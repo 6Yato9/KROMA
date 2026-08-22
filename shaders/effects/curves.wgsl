@@ -1,3 +1,7 @@
+// The LUT texture holds ten rows: four tone curves, then the six secondaries
+// in the order hue_vs_hue, hue_vs_sat, hue_vs_lum, lum_vs_sat, sat_vs_sat,
+// sat_vs_lum. `upload_lut` writes them in that order, so it is load-bearing.
+//
 // Log. Slots: 0-3 the per-channel curve intensities (Y, R, G, B), 4-7 the
 // four-part soft clip (low, low soft, high, high soft), 8-11 the parametric
 // regions (shadows, darks, lights, highlights), 12-14 the splits between them.
@@ -106,6 +110,59 @@ fn parametric(c: vec3<f32>) -> vec3<f32> {
     return c + vec3<f32>(dot(amounts, w) * PARAMETRIC_RANGE);
 }
 
+/// How far a full-travel Hue Vs Hue move rotates, either way.
+///
+/// A whole turn would let the curve send green to green the long way round,
+/// which is a lot of travel for a control whose useful range is "nudge this
+/// one hue". Ninety degrees each way is a strong move that still reads.
+const SECONDARY_HUE_RANGE: f32 = 0.25;
+
+/// Full travel of a Lum Gain, in stops.
+const SECONDARY_LUM_STOPS: f32 = 2.0;
+
+/// The six secondary curves.
+///
+/// Each is indexed by something about the pixel rather than by its level, and
+/// each returns 0.5 when it should do nothing — which is why a missing one
+/// bakes to a flat half rather than to a diagonal.
+///
+/// They run after the tone curves, on the result. A secondary asks "what
+/// should happen to this hue", and the hue it should be asking about is the
+/// one the picture ends up with, not the one it started with.
+fn secondaries(c: vec3<f32>) -> vec3<f32> {
+    var hsv = rgb_to_hsv(c);
+
+    // Saturation is measured on linear light for the same reason Vibrance
+    // measures it there: log compresses the gap between a colour's brightest
+    // and dimmest channel, so a vivid colour only reaches about 0.47 on the
+    // log axis and the right-hand half of every Sat curve would be empty.
+    let lin = cct_decode(c);
+    let top = max(max(lin.r, lin.g), lin.b);
+    let bottom = min(min(lin.r, lin.g), lin.b);
+    let sat_in = select(0.0, clamp(1.0 - bottom / top, 0.0, 1.0), top > 1e-5);
+    let lum_in = clamp((luma(c) - CCT_BLACK) / (CCT_WHITE - CCT_BLACK), 0.0, 1.0);
+
+    let hue = fract(hsv.x + 1.0);
+    var sat_gain = 1.0;
+    var lum_shift = 0.0;
+
+    // Hue Vs Hue: rotate.
+    hsv.x = fract(hsv.x + (lut(4, hue) - 0.5) * 2.0 * SECONDARY_HUE_RANGE + 1.0);
+    // Hue Vs Sat, Lum Vs Sat, Sat Vs Sat: three ways of asking for the same
+    // multiplier, so they multiply.
+    sat_gain = sat_gain * (lut(5, hue) * 2.0);
+    sat_gain = sat_gain * (lut(7, lum_in) * 2.0);
+    sat_gain = sat_gain * (lut(8, sat_in) * 2.0);
+    // Hue Vs Lum and Sat Vs Lum: a gain on the light, which in log is a shift.
+    lum_shift = lum_shift + (lut(6, hue) - 0.5) * 2.0 * SECONDARY_LUM_STOPS;
+    lum_shift = lum_shift + (lut(9, sat_in) - 0.5) * 2.0 * SECONDARY_LUM_STOPS;
+
+    hsv.y = clamp(hsv.y * sat_gain, 0.0, 8.0);
+    let out = hsv_to_rgb(hsv);
+    // One stop is one log unit over the ACEScct scale factor.
+    return out + vec3<f32>(lum_shift / 17.52);
+}
+
 fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let p = parametric(c);
 
@@ -122,5 +179,5 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let luma_curved = vec3<f32>(lut(0, o.r), lut(0, o.g), lut(0, o.b));
     o = mix(o, luma_curved, slot(0u) * 0.01);
 
-    return apply_soft_clip(o);
+    return apply_soft_clip(secondaries(o));
 }
