@@ -35,6 +35,9 @@ fn look(effect: &str, params: &[(&str, ParamValue)]) -> Document {
 /// wheel has no master ring — Resolve draws these with three boxes, not four,
 /// and the bands are already tonally separated. The primaries wheels are the
 /// ones with a master.
+/// `amount` is in the panel's own units, where one is a decisive push and the
+/// tails run to -8 and +8. It used to be a raw log offset, which is a seventh
+/// of the size.
 fn wheel(amount: f32) -> ParamValue {
     ParamValue::Wheel(Wheel {
         rgb: [amount; 3],
@@ -360,7 +363,7 @@ fn a_shadow_wheel_leaves_the_highlights_alone() {
         return;
     };
     let src = ramp();
-    let out = render(gpu, &src, &look("log_wheels", &[("shadow", wheel(0.15))]));
+    let out = render(gpu, &src, &look("log_wheels", &[("shadow", wheel(1.0))]));
 
     assert!(delta(&src, &out, 20) > 3, "the shadow wheel did nothing");
     assert!(
@@ -396,7 +399,7 @@ fn the_range_pivots_move_the_band_boundaries() {
         look(
             "log_wheels",
             &[
-                ("shadow", wheel(0.15)),
+                ("shadow", wheel(1.0)),
                 ("low_range", ParamValue::Float(low)),
                 ("high_range", ParamValue::Float(high)),
             ],
@@ -428,7 +431,7 @@ fn a_coloured_wheel_tints_rather_than_only_brightening() {
             &[(
                 "shadow",
                 ParamValue::Wheel(Wheel {
-                    rgb: [0.08, -0.02, -0.02],
+                    rgb: [0.55, -0.15, -0.15],
                     master: 0.0,
                 }),
             )],

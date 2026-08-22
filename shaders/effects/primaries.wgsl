@@ -23,6 +23,7 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     // Gain is a multiplier about one, so the master multiplies. Adding them
     // would make a neutral wheel double the picture.
     let gain = u.p[2].xyz * vec3<f32>(u.p[2].w);
+    let gain_is_neutral = all(abs(gain - vec3<f32>(1.0)) < vec3<f32>(1e-5));
     // Offset has no master ring; the fourth slot is along for the ride.
     let offset = (u.p[3].xyz - vec3<f32>(OFFSET_NEUTRAL)) / OFFSET_SCALE;
 
@@ -31,7 +32,18 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     // black stays anchored. Between them they hinge the transfer curve at each
     // end, which is what makes the wheels feel independent of one another.
     o = o + lift * (vec3<f32>(1.0) - o);
-    o = o * gain;
+    // Gain multiplies *light*, which is the one operation in this effect
+    // that is not about perception: Resolve's Gain of 2.0 is one stop and its
+    // 16.0 is four, and those are statements about how much light there was.
+    // Done on the log signal instead it would scale the encoding, which looks
+    // like a gain for small pushes and like nothing recognisable at the top of
+    // the range.
+    //
+    // The same deliberate exception as Film Look Creator's glow sections, for
+    // the same reason, and in the open for the same reason.
+    if !gain_is_neutral {
+        o = cct_encode(max(cct_decode(o) * gain, vec3<f32>(0.0)));
+    }
     o = max(o, vec3<f32>(0.0));
     o = pow(o, vec3<f32>(1.0) / max(vec3<f32>(1.0) + gamma, vec3<f32>(0.05)));
     return o;

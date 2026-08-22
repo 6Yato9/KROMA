@@ -22,13 +22,22 @@
 const OFFSET_NEUTRAL: f32 = 25.0;
 const OFFSET_SCALE: f32 = 500.0;
 
+/// What one unit on a wheel is worth, in log.
+///
+/// The panel reads in Resolve's numbers — shadow runs to -8 and highlight to
+/// +8 — and an SDR picture spans about 0.48 of the log range in total, so a
+/// unit cannot be a unit. At this scale a full push of one is about a third of
+/// the range, which is decisive, and the long tails run out to a shadow fully
+/// crushed or a highlight fully blown. Which is what a tail is for.
+const WHEEL_SCALE: f32 = 0.15;
+
 /// A log wheel's three channels.
 ///
-/// No master ring on any of them, which is how Resolve draws these: the bands
-/// are already tonally separated, and an achromatic push on one of them is
-/// what the band above it is for.
+/// No master *slot* on any of them: these wheels show three readouts, and the
+/// bar under each one writes into the three channels together rather than into
+/// a fourth component. So the fourth slot is unused, not ignored.
 fn wheel_offset(base: u32) -> vec3<f32> {
-    return slot3(base);
+    return slot3(base) * WHEEL_SCALE;
 }
 
 fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {

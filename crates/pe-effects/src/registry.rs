@@ -333,22 +333,25 @@ pub static EFFECTS: &[EffectDef] = &[
             // zero-centred nudge would have made the panel read 0.00 where
             // Resolve reads 1.00, and the number in the box is the thing a
             // colourist checks against a reference.
+            // Gain is a *linear* multiply, so its range is in stops of light:
+            // 2.0 is one stop up, 16.0 is four, and 0.01 is most of the way to
+            // black. Neutral is one, which is why the box reads 1.00.
             ParamDef {
                 key: "gain",
                 name: "Gain",
                 kind: ParamKind::Wheel {
-                    min: 0.0,
-                    max: 4.0,
+                    min: 0.01,
+                    max: 16.0,
                     default: 1.0,
                     master: true,
                 },
                 unit: "",
                 section: "",
             },
-            // Offset has no master ring, only the three channels — which is how
-            // Resolve draws it, and it is not an oversight on their part: an
-            // achromatic offset is an exposure change, and there is a control
-            // for that already.
+            // Offset shows three readouts, not four — which is how Resolve
+            // draws it. It still has the ribbed bar under it like every other
+            // wheel; what it lacks is an achromatic number to read, and on
+            // this wheel the bar moves the three channels together instead.
             //
             // Twenty-five is its neutral, not zero. The range is Resolve's,
             // and it is lopsided on purpose: there is more room to lift than
@@ -2865,11 +2868,20 @@ pub static EFFECTS: &[EffectDef] = &[
         derived_slots: 0,
         gates: &[],
         params: &[
+            // The three bands' ranges are Resolve's, and they are lopsided in
+            // opposite directions on purpose: shadows have a long way down and
+            // highlights a long way up, because that is where the room in a
+            // picture actually is. Crushing a shadow to nothing is a real
+            // thing to want; crushing a highlight to nothing is not.
+            //
+            // The midtone band has neither tail. There is nowhere for the
+            // middle of a picture to go except somewhere it can come back
+            // from.
             ParamDef {
                 key: "shadow",
                 name: "Shadow",
                 kind: ParamKind::Wheel {
-                    min: -1.0,
+                    min: -8.0,
                     max: 1.0,
                     default: 0.0,
                     master: false,
@@ -2894,16 +2906,15 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Highlight",
                 kind: ParamKind::Wheel {
                     min: -1.0,
-                    max: 1.0,
+                    max: 8.0,
                     default: 0.0,
                     master: false,
                 },
                 unit: "",
                 section: "",
             },
-            // The log wheels show three channels each, no master. Resolve's
-            // do too: these are already tonally separated, and an achromatic
-            // push on one band is what the band above it is for.
+            // Three readouts each, as Resolve draws them. The bar underneath
+            // is still there and still moves all three together.
             ParamDef {
                 key: "offset",
                 name: "Offset",

@@ -80,7 +80,13 @@ pub enum ParamKind {
         min: f32,
         max: f32,
         default: f32,
-        /// Whether there is a fourth, achromatic control on the wheel.
+        /// Whether the wheel has a fourth, achromatic *readout*.
+        ///
+        /// Not whether it has an achromatic control at all — every wheel has
+        /// the ribbed bar under it, Offset included. The bar is a nudge you
+        /// make without looking; the box is a value you read. Resolve draws
+        /// four bars and three of Offset's boxes, and on a wheel with no
+        /// master the bar moves the three channels together.
         master: bool,
     },
     /// An editable curve.

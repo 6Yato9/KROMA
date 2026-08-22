@@ -299,16 +299,17 @@ fn readouts(
 /// Relative, not absolute — push it and the value moves, let go and the bar
 /// stays where it was. That is what makes it usable without looking at it,
 /// which is the whole reason it is separate from the numbers above.
-fn master_bar(ui: &mut egui::Ui, width: f32, master: f32, range: (f32, f32)) -> Option<f32> {
+fn master_bar(ui: &mut egui::Ui, width: f32, range: (f32, f32)) -> Option<f32> {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(width, 13.0), egui::Sense::click_and_drag());
     let mut moved = None;
     if response.dragged() {
-        // A full sweep of the bar is a full sweep of the range.
-        // A full sweep of the bar crosses the wheel's own range, whatever
-        // that range happens to be.
+        // A full sweep of the bar crosses the wheel's own range, whatever that
+        // range happens to be. Returned as a *delta*, because the caller is the
+        // only one that knows whether it lands on the master or on the three
+        // channels together.
         let per_point = (range.1 - range.0) / width.max(1e-4);
-        moved = Some((master + response.drag_delta().x * per_point).clamp(range.0, range.1));
+        moved = Some(response.drag_delta().x * per_point);
     }
     if response.double_clicked() {
         moved = Some(0.0);
@@ -403,10 +404,30 @@ fn wheel_column(
         if let Some(w) = readouts(ui, width, wheel, (min, max), master) {
             next = Some(w);
         }
-        if master && let Some(m) = master_bar(ui, width, wheel.master, (min, max)) {
-            next = Some(Wheel {
-                rgb: wheel.rgb,
-                master: m,
+        // Every wheel has the bar, Offset included. What Offset does not have
+        // is the fourth *readout box* — and those are two controls wearing one
+        // idea: the box is an achromatic value you can read, the bar is an
+        // achromatic nudge you cannot. Resolve draws four bars and three of
+        // Offset's boxes.
+        //
+        // With no master to move, the bar moves the three channels together,
+        // which is what an achromatic nudge means on a wheel that has no
+        // achromatic component to put it in.
+        if let Some(delta) = master_bar(ui, width, (min, max)) {
+            next = Some(if master {
+                Wheel {
+                    rgb: wheel.rgb,
+                    master: (wheel.master + delta).clamp(min, max),
+                }
+            } else {
+                Wheel {
+                    rgb: [
+                        (wheel.rgb[0] + delta).clamp(min, max),
+                        (wheel.rgb[1] + delta).clamp(min, max),
+                        (wheel.rgb[2] + delta).clamp(min, max),
+                    ],
+                    master: wheel.master,
+                }
             });
         }
     });

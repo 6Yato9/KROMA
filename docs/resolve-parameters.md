@@ -589,11 +589,13 @@ selected.
 
 | Wheel | Default | Range | Master ring | Status |
 |---|---|---|---|---|
-| Lift | 0.00 | −1…1 | yes | confirmed / inferred range |
-| Gamma | 0.00 | −1…1 | yes | confirmed / inferred range |
-| Gain | 1.00 | 0…4 | yes | confirmed / inferred range |
-| Offset | **25.00** | **−175…255** | **no** | confirmed |
-| Log Shadow / Midtone / Highlights | 0.00 | −1…1 | no | confirmed |
+| Lift | 0.00 | −1…1 | yes | confirmed / **inferred range** |
+| Gamma | 0.00 | −1…1 | yes | confirmed / **inferred range** |
+| Gain | 1.00 | 0.01…16 | yes | confirmed |
+| Offset | 25.00 | −175…255 | readout: no | confirmed |
+| Log Shadow | 0.00 | −8…1 | readout: no | confirmed |
+| Log Midtone | 0.00 | −1…1 | readout: no | confirmed |
+| Log Highlights | 0.00 | −1…8 | readout: no | confirmed |
 | Log Offset | 25.00 | −175…255 | no | confirmed |
 | ↓ Range | 0.333 | 0…1 | — | confirmed |
 | ↑ Range | 0.550 | 0…1 | — | confirmed |
@@ -605,13 +607,32 @@ reading 0.00 where Resolve reads 1.00 would be lying about what it is. The
 conversion happens in the shader: gain multiplies, and offset is measured from
 25 and scaled.
 
-**Offset has no master ring**, on any of the wheels, and neither do the log
-wheels. That is Resolve's design and not an oversight: an achromatic offset is
-an exposure change, and there is a control for that already. The panel draws
-three boxes where there are three channels and four where there is a master.
+**Every wheel has the ribbed bar under it, Offset included.** What Offset and
+the log wheels lack is the fourth *readout box*. Those are two controls wearing
+one idea: the box is an achromatic value you can read, the bar is an achromatic
+nudge you cannot. Resolve draws four bars and three of Offset's boxes, and on a
+wheel with no master the bar moves the three channels together.
 
-Offset's range is lopsided on purpose — more room to lift than to crush,
-because crushing past black does nothing anyone wants.
+**The ranges are lopsided on purpose, and in opposite directions.** Shadows
+have a long way down and highlights a long way up, because that is where the
+room in a picture actually is: crushing a shadow to nothing is a real thing to
+want and crushing a highlight to nothing is not. The midtone band has neither
+tail — there is nowhere for the middle of a picture to go except somewhere it
+can come back from.
+
+**Gain is a linear multiply**, so its range is in stops of light: 2.0 is one
+stop up, 16.0 is four, 0.01 is most of the way to black. Done on the log signal
+instead it would scale the encoding, which passes for a gain at small pushes
+and is unrecognisable at the top of the range. That is the same deliberate
+exception Film Look Creator's glow sections make, for the same reason.
+
+A unit on a log wheel is worth 0.15 in log. An SDR picture spans about 0.48 of
+the log range in total, so a unit cannot be a unit: at this scale a full push
+of one is about a third of the range, and the long tails run out to a shadow
+fully crushed or a highlight fully blown.
+
+Lift and Gamma's ranges are still inferred — the screenshots give their values
+but not their endpoints.
 
 **One value deliberately not matched.** Resolve's Pivot reads 0.435; ours is
 0.4136. Theirs is mid grey in *their* log space and ours is mid grey in
