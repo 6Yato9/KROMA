@@ -408,3 +408,303 @@ fn a_selected_area_measures_that_area_and_not_the_frame() {
         "the region was ignored: the warm half came back as {q:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Noise Reduction
+// ---------------------------------------------------------------------------
+
+/// A flat field with per-pixel noise on it, and a hard edge down the middle.
+///
+/// Both halves of the job in one picture: the noise is what should go, the
+/// edge is what should stay, and an effect that cannot tell them apart is a
+/// blur with a different name.
+fn noisy_edge(size: u32) -> DecodedImage {
+    let mut px = Vec::new();
+    for y in 0..size {
+        for x in 0..size {
+            let base: i32 = if x < size / 2 { 70 } else { 170 };
+            // Deterministic, so the test means the same thing every run.
+            let n = ((x * 7919 + y * 104_729) % 41) as i32 - 20;
+            let v = (base + n).clamp(0, 255) as u8;
+            px.extend_from_slice(&[v, v, v, 255]);
+        }
+    }
+    DecodedImage::new(size, size, px).expect("noisy edge")
+}
+
+fn roughness(img: &DecodedImage, y: u32, from: u32, to: u32) -> f32 {
+    let values: Vec<f32> = (from..to).map(|x| img.pixel(x, y)[0] as f32).collect();
+    let mean = values.iter().sum::<f32>() / values.len() as f32;
+    (values.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / values.len() as f32).sqrt()
+}
+
+/// The property that separates noise reduction from blur: the noise goes and
+/// the edge stays. A plain average would take both.
+#[test]
+fn noise_reduction_smooths_the_noise_and_keeps_the_edge() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = noisy_edge(128);
+    let out = render(
+        gpu,
+        &src,
+        &look(
+            "noise_reduction",
+            &[
+                ("luma_threshold", ParamValue::Float(0.5)),
+                ("radius", ParamValue::Float(2.0)),
+            ],
+        ),
+    );
+
+    let before = roughness(&src, 64, 8, 56);
+    let after = roughness(&out, 64, 8, 56);
+    assert!(
+        after < before * 0.7,
+        "the noise survived: {before:.1} became {after:.1}"
+    );
+
+    // The edge is still an edge.
+    let step = out.pixel(66, 64)[0] as i32 - out.pixel(61, 64)[0] as i32;
+    assert!(
+        step > 60,
+        "the edge was smoothed away along with the noise (step of {step})"
+    );
+}
+
+/// Chroma noise is coarse and almost free to remove; luma noise sits on top of
+/// real detail. One threshold for both would mean choosing which of those two
+/// mistakes to make, so each has to work on its own.
+#[test]
+fn the_two_thresholds_act_on_different_noise() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    // Colour noise on a flat grey: the channels disagree, the luminance does
+    // not.
+    //
+    // Big enough that the radius is worth something. It is a fraction of the
+    // frame — so that a preview and an export smooth the same real detail —
+    // which means a small fixture asks the effect to average over less than a
+    // pixel and then complains that nothing happened.
+    const SIZE: u32 = 256;
+    let mut px = Vec::new();
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let n = ((x * 7919 + y * 104_729) % 31) as i32 - 15;
+            px.extend_from_slice(&[
+                (120 + n).clamp(0, 255) as u8,
+                120,
+                (120 - n).clamp(0, 255) as u8,
+                255,
+            ]);
+        }
+    }
+    let src = DecodedImage::new(SIZE, SIZE, px).unwrap();
+
+    let spread = |img: &DecodedImage| {
+        let mut worst = 0i32;
+        for y in 32..224u32 {
+            for x in 32..224u32 {
+                let p = img.pixel(x, y);
+                worst = worst.max(p[0] as i32 - p[2] as i32);
+            }
+        }
+        worst
+    };
+
+    let chroma = render(
+        gpu,
+        &src,
+        &look(
+            "noise_reduction",
+            &[
+                ("chroma_threshold", ParamValue::Float(1.0)),
+                ("mode", ParamValue::Choice("Enhanced".into())),
+                ("radius", ParamValue::Float(3.0)),
+            ],
+        ),
+    );
+    let luma_only = render(
+        gpu,
+        &src,
+        &look(
+            "noise_reduction",
+            &[
+                ("luma_threshold", ParamValue::Float(1.0)),
+                ("mode", ParamValue::Choice("Enhanced".into())),
+                ("radius", ParamValue::Float(3.0)),
+            ],
+        ),
+    );
+
+    assert!(
+        spread(&chroma) < spread(&src) / 2,
+        "the chroma threshold did not touch colour noise ({} against {})",
+        spread(&chroma),
+        spread(&src)
+    );
+    assert!(
+        spread(&luma_only) > spread(&src) * 3 / 4,
+        "the luma threshold removed colour noise, which is not its job"
+    );
+}
+
+#[test]
+fn noise_reduction_does_nothing_until_a_threshold_is_raised() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = noisy_edge(64);
+    let out = render(gpu, &src, &look("noise_reduction", &[]));
+    for y in [16u32, 32, 48] {
+        for x in [16u32, 32, 48] {
+            assert_eq!(
+                out.pixel(x, y)[0],
+                src.pixel(x, y)[0],
+                "an untouched Noise Reduction row changed the picture"
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Film Look Creator
+// ---------------------------------------------------------------------------
+
+/// A black-to-white ramp across x.
+fn ramp() -> DecodedImage {
+    let mut px = Vec::new();
+    for _ in 0..8 {
+        for x in 0..256u32 {
+            let v = x as u8;
+            px.extend_from_slice(&[v, v, v, 255]);
+        }
+    }
+    DecodedImage::new(256, 8, px).expect("ramp")
+}
+
+/// The shoulder is the point of the whole effect. Film has no clipping point —
+/// density keeps rising, ever more slowly — so a highlight rolls off rather
+/// than stopping, and a shoulder that flattened would be a clip with extra
+/// steps.
+#[test]
+fn the_highlight_rolloff_compresses_without_flattening() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = ramp();
+    let out = render(
+        gpu,
+        &src,
+        &look(
+            "film_look",
+            &[
+                ("highlight_rolloff", ParamValue::Float(2.0)),
+                ("shadow_rolloff", ParamValue::Float(0.0)),
+                ("film_contrast", ParamValue::Float(1.0)),
+                ("film_saturation", ParamValue::Float(1.0)),
+                ("shadow_tone", ParamValue::Float(0.0)),
+                ("highlight_tone", ParamValue::Float(0.0)),
+            ],
+        ),
+    );
+
+    let top = out.pixel(250, 4)[0] as i32;
+    let src_top = src.pixel(250, 4)[0] as i32;
+    assert!(top < src_top - 4, "the highlights did not roll off");
+    // Still climbing all the way to the end.
+    assert!(
+        out.pixel(255, 4)[0] as i32 > out.pixel(235, 4)[0] as i32,
+        "the shoulder flattened into a clip"
+    );
+    // And the shadows are untouched by a highlight control.
+    assert!(
+        (out.pixel(40, 4)[0] as i32 - src.pixel(40, 4)[0] as i32).abs() <= 3,
+        "the highlight rolloff reached the shadows"
+    );
+}
+
+/// Choosing a stock changes the base the sliders modulate rather than
+/// overwriting them, so the three have to differ with the sliders left alone.
+#[test]
+fn the_three_stocks_are_actually_different() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = ramp();
+    let of = |stock: &str| {
+        render(
+            gpu,
+            &src,
+            &look("film_look", &[("stock", ParamValue::Choice(stock.into()))]),
+        )
+    };
+    let negative = of("Colour Negative");
+    let reversal = of("Reversal");
+
+    // Reversal is the harder stock, so the two ends pull apart.
+    let range = |img: &DecodedImage| img.pixel(230, 4)[0] as i32 - img.pixel(25, 4)[0] as i32;
+    assert!(
+        range(&reversal) > range(&negative) + 6,
+        "reversal should be the harder stock ({} against {})",
+        range(&reversal),
+        range(&negative)
+    );
+}
+
+/// Toning shifts the colour without lifting the level. A tint that also
+/// brightened would be two controls in one, and the second one impossible to
+/// turn off.
+#[test]
+fn split_toning_colours_the_ends_without_moving_them() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = ramp();
+    let plain = render(
+        gpu,
+        &src,
+        &look(
+            "film_look",
+            &[
+                ("shadow_tone", ParamValue::Float(0.0)),
+                ("highlight_tone", ParamValue::Float(0.0)),
+            ],
+        ),
+    );
+    let toned = render(
+        gpu,
+        &src,
+        &look(
+            "film_look",
+            &[
+                ("shadow_hue", ParamValue::Float(210.0)),
+                ("shadow_tone", ParamValue::Float(1.0)),
+                ("highlight_tone", ParamValue::Float(0.0)),
+            ],
+        ),
+    );
+
+    // The shadows went blue.
+    let p = toned.pixel(30, 4);
+    assert!(
+        p[2] as i32 > p[0] as i32 + 4,
+        "the shadow tone did not reach the shadows, got {p:?}"
+    );
+    // And they are the same brightness they were.
+    let before = 0.2126 * plain.pixel(30, 4)[0] as f32
+        + 0.7152 * plain.pixel(30, 4)[1] as f32
+        + 0.0722 * plain.pixel(30, 4)[2] as f32;
+    let after = 0.2126 * p[0] as f32 + 0.7152 * p[1] as f32 + 0.0722 * p[2] as f32;
+    assert!(
+        (after - before).abs() < 6.0,
+        "toning moved the level from {before:.0} to {after:.0}"
+    );
+    // The highlights were left alone.
+    assert!(
+        (toned.pixel(230, 4)[2] as i32 - plain.pixel(230, 4)[2] as i32).abs() <= 3,
+        "a shadow tone reached the highlights"
+    );
+}

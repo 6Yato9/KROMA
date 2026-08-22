@@ -565,6 +565,10 @@ fn effect_source(name: &str) -> &'static str {
         }
         "radial_blur" => include_str!("../../../shaders/effects/radial_blur.wgsl"),
         "zoom_blur" => include_str!("../../../shaders/effects/zoom_blur.wgsl"),
+        "noise_reduction" => {
+            include_str!("../../../shaders/effects/noise_reduction.wgsl")
+        }
+        "film_look" => include_str!("../../../shaders/effects/film_look.wgsl"),
         other => panic!("no shader source embedded for {other:?}"),
     }
 }

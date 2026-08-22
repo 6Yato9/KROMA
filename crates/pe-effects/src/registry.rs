@@ -2057,6 +2057,226 @@ pub static EFFECTS: &[EffectDef] = &[
             },
         ],
     },
+    // The spatial half of Resolve's Noise Reduction. The temporal half
+    // compares a frame against its neighbours, and there is no next frame
+    // here — but the spatial half is the one that works on a photograph
+    // anyway.
+    EffectDef {
+        key: "noise_reduction",
+        name: "Noise Reduction",
+        group: Group::Optics,
+        space: WorkingSpace::Linear,
+        shader: "noise_reduction",
+        spatial: true,
+        derived_slots: 0,
+        params: &[
+            ParamDef {
+                key: "mode",
+                name: "Mode",
+                kind: ParamKind::Choice {
+                    options: &["Faster", "Better", "Enhanced"],
+                    default: "Better",
+                },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "radius",
+                name: "Radius",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 3.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "",
+            },
+            // Two thresholds, because luma and chroma carry different
+            // noise. Chroma noise is coarse and almost free to remove — the
+            // eye has little colour acuity — while luma noise is fine and
+            // sits on top of real detail, so the same treatment would take
+            // the detail with it. One threshold for both would mean choosing
+            // which of those two mistakes to make.
+            ParamDef {
+                key: "luma_threshold",
+                name: "Luma Threshold",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Spatial Threshold",
+            },
+            ParamDef {
+                key: "chroma_threshold",
+                name: "Chroma Threshold",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Spatial Threshold",
+            },
+            ParamDef {
+                key: "blend",
+                name: "Blend",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 1.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "",
+            },
+        ],
+    },
+    // The response half of Resolve's Film Look Creator: what a stock does to
+    // the light. The other half — halation, grain, bloom, vignette — is a set
+    // of rows in this application already, and writing them again in here
+    // would mean two implementations of halation that drift apart the first
+    // time one is fixed.
+    //
+    // Visible at its defaults; see EFFECTS_WITH_VISIBLE_DEFAULTS.
+    EffectDef {
+        key: "film_look",
+        name: "Film Look Creator",
+        group: Group::Film,
+        space: WorkingSpace::Log,
+        shader: "film_look",
+        spatial: false,
+        derived_slots: 0,
+        params: &[
+            ParamDef {
+                key: "stock",
+                name: "Film Stock",
+                kind: ParamKind::Choice {
+                    options: &["Colour Negative", "Consumer Colour", "Reversal"],
+                    default: "Colour Negative",
+                },
+                unit: "",
+                section: "",
+            },
+            ParamDef {
+                key: "strength",
+                name: "Strength",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 1.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "",
+            },
+            // The shoulder and the toe. Film has no clipping point —
+            // density keeps rising all the way up, ever more slowly — which
+            // is why a highlight on film rolls off instead of stopping.
+            // Reproducing that is most of what makes a digital picture read
+            // as film.
+            ParamDef {
+                key: "highlight_rolloff",
+                name: "Highlight Rolloff",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 1.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Film Response",
+            },
+            ParamDef {
+                key: "shadow_rolloff",
+                name: "Shadow Rolloff",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 1.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Film Response",
+            },
+            ParamDef {
+                key: "film_contrast",
+                name: "Film Contrast",
+                kind: ParamKind::Float {
+                    min: 0.5,
+                    max: 1.5,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Film Response",
+            },
+            ParamDef {
+                key: "film_saturation",
+                name: "Film Saturation",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Film Response",
+            },
+            ParamDef {
+                key: "shadow_hue",
+                name: "Shadow Hue",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 360.0,
+                    default: 210.0,
+                    neutral: 210.0,
+                },
+                unit: "",
+                section: "Split Toning",
+            },
+            ParamDef {
+                key: "shadow_tone",
+                name: "Shadow Tone",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.25,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Split Toning",
+            },
+            ParamDef {
+                key: "highlight_hue",
+                name: "Highlight Hue",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 360.0,
+                    default: 40.0,
+                    neutral: 40.0,
+                },
+                unit: "",
+                section: "Split Toning",
+            },
+            ParamDef {
+                key: "highlight_tone",
+                name: "Highlight Tone",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.2,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Split Toning",
+            },
+        ],
+    },
 ];
 
 /// Effects whose registry defaults deliberately change the image.
@@ -2091,6 +2311,9 @@ pub const EFFECTS_WITH_VISIBLE_DEFAULTS: &[&str] = &[
     // the same reason a Grain row arrives with grain in it.
     "radial_blur",
     "zoom_blur",
+    // A Film Look row with no film look in it would be a strange thing to
+    // add on purpose.
+    "film_look",
 ];
 
 /// The fixed panels, in the order they are applied.
@@ -2151,7 +2374,7 @@ mod tests {
     fn the_registry_is_the_expected_size() {
         // Nine at M1, plus Split Tone once the Resolve parameter research
         // landed. Pinned so an accidental duplicate or deletion is visible.
-        assert_eq!(EFFECTS.len(), 21);
+        assert_eq!(EFFECTS.len(), 23);
     }
 
     #[test]
@@ -2206,6 +2429,11 @@ mod tests {
             // comes out dark, the same way a downscale does.
             ("radial_blur", WorkingSpace::Linear),
             ("zoom_blur", WorkingSpace::Linear),
+            // An average of light, like any blur.
+            ("noise_reduction", WorkingSpace::Linear),
+            // A film response curve is a perceptual object: the shape of
+            // the print, not a photometric measurement.
+            ("film_look", WorkingSpace::Log),
             // Perception: pivoting, shaping, drawing.
             ("contrast", WorkingSpace::Log),
             ("curves", WorkingSpace::Log),
@@ -2240,6 +2468,7 @@ mod tests {
                     | "color_stabilizer"
                     | "radial_blur"
                     | "zoom_blur"
+                    | "noise_reduction"
             );
             assert_eq!(e.spatial, expected, "{}", e.key);
         }
