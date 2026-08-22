@@ -1203,6 +1203,419 @@ pub static EFFECTS: &[EffectDef] = &[
         ],
     },
     EffectDef {
+        key: "cinematic_haze",
+        name: "Cinematic Haze",
+        group: Group::Optics,
+        space: WorkingSpace::Linear,
+        shader: "cinematic_haze",
+        spatial: true,
+        derived_slots: 0,
+        gates: &[
+            Gate {
+                by: "adjust_levels",
+                when: When::True,
+                params: &["far_limit", "near_limit", "depth_gamma"],
+            },
+            Gate {
+                by: "rays_enable",
+                when: When::True,
+                params: &[
+                    "rays_preview",
+                    "source_threshold",
+                    "ray_directions",
+                    "ray_angle",
+                    "ray_length",
+                    "ray_soften",
+                    "ray_brightness",
+                    "ray_saturation",
+                ],
+            },
+            Gate {
+                by: "disturbance_enable",
+                when: When::True,
+                params: &[
+                    "disturbance_preview",
+                    "intensity",
+                    "disturbance_brightness",
+                    "disturbance_scale",
+                    "disturbance_detail",
+                    "start_frame",
+                ],
+            },
+        ],
+        params: &[
+            // Resolve's panel, group for group, less the parts a photograph cannot
+            // have. Colour Space Overrides is the renderer's decision under the
+            // two-space rule. Depth Map Source is a dropdown with one option here —
+            // there is no external depth input to choose — and a dropdown with one
+            // option is a dead control. Advanced Depth Controls reveals controls no
+            // screenshot we have shows, and a switch that reveals nothing is worse
+            // than a missing one.
+            // ---- Depth Map ----
+            ParamDef {
+                key: "depth_preview",
+                name: "Depth Map Preview",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+                section: "Depth Map",
+            },
+            ParamDef {
+                key: "quality",
+                name: "Quality",
+                kind: ParamKind::Choice {
+                    options: &["Faster", "Better", "Best"],
+                    default: "Better",
+                },
+                unit: "",
+                section: "Depth Map",
+            },
+            // The estimate reads *haze*, and haze means far — so the raw map is
+            // already a distance. Invert is on by default because Resolve's is, and
+            // because the useful convention is near = 1.
+            ParamDef {
+                key: "invert",
+                name: "Invert",
+                kind: ParamKind::Bool { default: true },
+                unit: "",
+                section: "Depth Map",
+            },
+            ParamDef {
+                key: "adjust_levels",
+                name: "Adjust Map Levels",
+                kind: ParamKind::Bool { default: true },
+                unit: "",
+                section: "Depth Map",
+            },
+            ParamDef {
+                key: "far_limit",
+                name: "Far Limit",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Depth Map",
+            },
+            ParamDef {
+                key: "near_limit",
+                name: "Near Limit",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Depth Map",
+            },
+            ParamDef {
+                key: "depth_gamma",
+                name: "Gamma",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Depth Map",
+            },
+            // ---- Atmospheric Scattering ----
+            // The physics of the whole effect, in two numbers. Airlight is how
+            // bright the scattered light is; Density is how much of it there is per
+            // unit of distance. Together they are the standard atmospheric model,
+            // which is also — read backwards — what Dehaze undoes.
+            ParamDef {
+                key: "airlight",
+                name: "Airlight",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.4,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Atmospheric Scattering",
+            },
+            ParamDef {
+                key: "density",
+                name: "Density",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.1,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Atmospheric Scattering",
+            },
+            // Distance costs detail as well as contrast. Without this the far
+            // hillside is a flat wash at full sharpness, which reads as a filter
+            // over the picture rather than as air in front of it.
+            ParamDef {
+                key: "resolution_loss",
+                name: "Resolution Loss",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.5,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Atmospheric Scattering",
+            },
+            ParamDef {
+                key: "scatter_colorize",
+                name: "Colorize",
+                kind: ParamKind::Rgb {
+                    default: [1.0, 1.0, 1.0],
+                },
+                unit: "",
+                section: "Atmospheric Scattering",
+            },
+            // ---- Light Halos ----
+            // A bright thing seen through air acquires a halo, and a *distant*
+            // bright thing acquires a bigger one — which is why this is in the same
+            // effect as the depth map rather than being Bloom again.
+            ParamDef {
+                key: "halo_threshold",
+                name: "Halo Threshold",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.65,
+                    neutral: 0.65,
+                },
+                unit: "",
+                section: "Light Halos",
+            },
+            ParamDef {
+                key: "halo_size",
+                name: "Size",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Light Halos",
+            },
+            ParamDef {
+                key: "halo_brightness",
+                name: "Brightness",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.25,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Light Halos",
+            },
+            ParamDef {
+                key: "halo_saturation",
+                name: "Saturation",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Light Halos",
+            },
+            ParamDef {
+                key: "halo_colorize",
+                name: "Colorize",
+                kind: ParamKind::Rgb {
+                    default: [1.0, 1.0, 1.0],
+                },
+                unit: "",
+                section: "Light Halos",
+            },
+            // ---- Light Rays ----
+            ParamDef {
+                key: "rays_enable",
+                name: "Enable Light Rays",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+                section: "Light Rays",
+            },
+            ParamDef {
+                key: "rays_preview",
+                name: "Preview Threshold",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+                section: "Light Rays",
+            },
+            ParamDef {
+                key: "source_threshold",
+                name: "Source Threshold",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.7,
+                    neutral: 0.7,
+                },
+                unit: "",
+                section: "Light Rays",
+            },
+            ParamDef {
+                key: "ray_directions",
+                name: "Ray Directions",
+                kind: ParamKind::Choice {
+                    options: &["At An Angle", "Radial"],
+                    default: "At An Angle",
+                },
+                unit: "",
+                section: "Light Rays",
+            },
+            ParamDef {
+                key: "ray_angle",
+                name: "Angle",
+                kind: ParamKind::Float {
+                    min: -180.0,
+                    max: 180.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "°",
+                section: "Light Rays",
+            },
+            ParamDef {
+                key: "ray_length",
+                name: "Length",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.75,
+                    neutral: 0.75,
+                },
+                unit: "",
+                section: "Light Rays",
+            },
+            ParamDef {
+                key: "ray_soften",
+                name: "Soften",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.15,
+                    neutral: 0.15,
+                },
+                unit: "",
+                section: "Light Rays",
+            },
+            ParamDef {
+                key: "ray_brightness",
+                name: "Brightness",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.3,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Light Rays",
+            },
+            ParamDef {
+                key: "ray_saturation",
+                name: "Saturation",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Light Rays",
+            },
+            // ---- Air Disturbance ----
+            // Four of Resolve's controls here are absent: Follow FX Tracker needs a
+            // tracker, and Flow Speed, Seethe Rate and Randomize Start Frame all
+            // describe how the field changes between exposures. Start Frame stays,
+            // because for one frame it is not a time at all — it is which slice of
+            // the field you get, which is a seed.
+            ParamDef {
+                key: "disturbance_enable",
+                name: "Enable Disturbance",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+                section: "Air Disturbance",
+            },
+            ParamDef {
+                key: "disturbance_preview",
+                name: "Preview Influence",
+                kind: ParamKind::Bool { default: false },
+                unit: "",
+                section: "Air Disturbance",
+            },
+            ParamDef {
+                key: "intensity",
+                name: "Intensity",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.25,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Air Disturbance",
+            },
+            ParamDef {
+                key: "disturbance_brightness",
+                name: "Brightness",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "Air Disturbance",
+            },
+            ParamDef {
+                key: "disturbance_scale",
+                name: "Scale",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 6.0,
+                    default: 2.0,
+                    neutral: 2.0,
+                },
+                unit: "",
+                section: "Air Disturbance",
+            },
+            ParamDef {
+                key: "disturbance_detail",
+                name: "Detail",
+                kind: ParamKind::Float {
+                    min: 1.0,
+                    max: 16.0,
+                    default: 7.0,
+                    neutral: 7.0,
+                },
+                unit: "",
+                section: "Air Disturbance",
+            },
+            ParamDef {
+                key: "start_frame",
+                name: "Start Frame",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1000.0,
+                    default: 0.0,
+                    neutral: 0.0,
+                },
+                unit: "",
+                section: "Air Disturbance",
+            },
+        ],
+    },
+    EffectDef {
         key: "dehaze",
         name: "Dehaze",
         group: Group::Optics,
@@ -3193,6 +3606,14 @@ pub const EFFECTS_WITH_VISIBLE_DEFAULTS: &[&str] = &[
     // add on purpose.
     "film_look",
     "dehaze",
+    // The one on this list that is *not* obvious, so it is worth saying why:
+    // Dehaze is corrective and Cinematic Haze is its mirror image, which
+    // might suggest the same treatment. It is not the same kind of tool.
+    // Dehaze answers "there is haze here I did not want"; this one answers
+    // "I want haze here", and a haze effect that adds no haze until you find
+    // the right slider reads as broken. Resolve ships it visible for the same
+    // reason.
+    "cinematic_haze",
 ];
 
 /// The fixed panels, in the order they are applied.
@@ -3253,7 +3674,7 @@ mod tests {
     fn the_registry_is_the_expected_size() {
         // Nine at M1, plus Split Tone once the Resolve parameter research
         // landed. Pinned so an accidental duplicate or deletion is visible.
-        assert_eq!(EFFECTS.len(), 23);
+        assert_eq!(EFFECTS.len(), 24);
     }
 
     /// A gate naming a parameter that does not exist would quietly do
@@ -3396,6 +3817,8 @@ mod tests {
             // Aerial perspective, lens spill and physical film damage are all
             // things happening to light.
             ("dehaze", WorkingSpace::Linear),
+            // The same model as Dehaze, run forwards instead of backwards.
+            ("cinematic_haze", WorkingSpace::Linear),
             ("bloom", WorkingSpace::Linear),
             ("film_damage", WorkingSpace::Linear),
             // Local contrast adds light back to a region.
@@ -3452,6 +3875,9 @@ mod tests {
                     | "radial_blur"
                     | "zoom_blur"
                     | "noise_reduction"
+                    // A depth estimate, a glow, rays and a shimmer: every part
+                    // of it reads its neighbours.
+                    | "cinematic_haze"
                     // Film Look Creator carries Resolve's halation, bloom,
                     // vignette and grain sections, and every one of those
                     // reads its neighbours.

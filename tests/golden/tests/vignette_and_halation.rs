@@ -386,3 +386,118 @@ fn relative_spread_reference() {
     let out = halo(gpu, true);
     pe_golden::assert_matches("halation_relative_spread", &out, TOLERANCE);
 }
+
+// ---------------------------------------------------------------------------
+// Cinematic Haze
+// ---------------------------------------------------------------------------
+
+/// The depth estimate is the whole effect: everything else is weighted by it.
+///
+/// A bright square on black is the clearest case the dark-channel prior has.
+/// Black has a dark channel of zero — nothing in front of it — and the square
+/// has a high one, which the prior can only read as air. With Invert on, as
+/// Resolve ships it, the map is *nearness*, so the black reads near and the
+/// square reads far.
+#[test]
+fn the_depth_preview_separates_the_bright_subject_from_the_black() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = square_on_black(200, 40);
+    let out = render(
+        gpu,
+        &src,
+        &look(
+            "cinematic_haze",
+            &[("depth_preview", ParamValue::Bool(true))],
+        ),
+    );
+
+    let inside = out.pixel(100, 100);
+    let outside = out.pixel(10, 10);
+    // Monochrome, because a depth map is one number.
+    assert_eq!(inside[0], inside[1], "the preview is not monochrome");
+    assert_eq!(inside[1], inside[2], "the preview is not monochrome");
+    assert!(
+        (outside[0] as i32) > (inside[0] as i32) + 20,
+        "the black should read near and the bright square far:          outside {}, inside {}",
+        outside[0],
+        inside[0]
+    );
+}
+
+/// What haze does: pulls the distance towards the airlight, and leaves what
+/// is close alone. Both halves matter — an effect that lifted everything
+/// equally would be a fog filter, not aerial perspective.
+#[test]
+fn haze_pulls_the_far_subject_towards_the_airlight_and_spares_the_near() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = square_on_black(200, 40);
+    let out = render(
+        gpu,
+        &src,
+        &look(
+            "cinematic_haze",
+            &[
+                ("density", ParamValue::Float(1.0)),
+                ("airlight", ParamValue::Float(0.4)),
+                // One thing at a time: the halos would light the black up on
+                // their own and this test is about the scattering.
+                ("halo_brightness", ParamValue::Float(0.0)),
+                ("resolution_loss", ParamValue::Float(0.0)),
+            ],
+        ),
+    );
+
+    let inside = out.pixel(100, 100)[0] as i32;
+    let outside = out.pixel(10, 10)[0] as i32;
+    let was_inside = src.pixel(100, 100)[0] as i32;
+    let was_outside = src.pixel(10, 10)[0] as i32;
+
+    assert!(
+        inside < was_inside - 8,
+        "the far subject should be pulled down towards the airlight:          {was_inside} became {inside}"
+    );
+    assert!(
+        (outside - was_outside).abs() <= 4,
+        "the near part of the frame should be left alone:          {was_outside} became {outside}"
+    );
+}
+
+/// Light Rays march along a line rather than gathering over a disc, so they
+/// have to reach further in the direction they are pointed than across it.
+/// A round glow would pass any test that only asked "is it brighter".
+#[test]
+fn light_rays_reach_along_their_angle_and_not_across_it() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = square_on_black(200, 20);
+    let out = render(
+        gpu,
+        &src,
+        &look(
+            "cinematic_haze",
+            &[
+                ("rays_enable", ParamValue::Bool(true)),
+                ("ray_angle", ParamValue::Float(0.0)),
+                ("ray_length", ParamValue::Float(1.0)),
+                ("ray_brightness", ParamValue::Float(1.0)),
+                ("ray_soften", ParamValue::Float(0.0)),
+                ("density", ParamValue::Float(0.0)),
+                ("halo_brightness", ParamValue::Float(0.0)),
+                ("resolution_loss", ParamValue::Float(0.0)),
+            ],
+        ),
+    );
+
+    // Along the angle, and the same distance across it.
+    let along = out.pixel(135, 100)[0] as i32 - src.pixel(135, 100)[0] as i32;
+    let across = out.pixel(100, 135)[0] as i32 - src.pixel(100, 135)[0] as i32;
+    assert!(
+        along > across + 4,
+        "the rays should be directional: along {along}, across {across}"
+    );
+}

@@ -391,3 +391,66 @@ is a stronger streak rather than a dead half of a control.
 
 The Alpha entry in Channel Adjustment and Use Alpha at the bottom are absent
 from both: there is no alpha channel here.
+
+---
+
+## Cinematic Haze
+
+Resolve's **AI Cinematic Haze**, minus the AI — and the name says so. Theirs
+estimates depth with a network; ours estimates it from the picture with the
+dark-channel prior, which is the same observation Dehaze already runs
+backwards. Shipping a hand-written estimator under a label that says AI would
+be a claim made to our own user, so the effect is called Cinematic Haze.
+
+The prior's limitation is worth knowing: it reads bright neutral subjects —
+snow, white walls, overcast sky — as distant, because "nothing in this patch is
+dark" is exactly what haze looks like to it.
+
+| Group | Parameter | Default | Range | Status |
+|---|---|---|---|---|
+| Depth Map | Depth Map Preview | off | — | confirmed |
+| Depth Map | Quality | Better | Faster / Better / Best | confirmed |
+| Depth Map | Invert | **on** | — | confirmed |
+| Depth Map | Adjust Map Levels | **on** | — | confirmed |
+| Depth Map | Far Limit / Near Limit | 0.000 / 1.000 | 0…1 | confirmed |
+| Depth Map | Gamma | 1.000 | 0…2 | inferred (range) |
+| Atmospheric Scattering | Airlight | 0.400 | 0…1 | confirmed |
+| Atmospheric Scattering | Density | 0.100 | 0…1 | confirmed |
+| Atmospheric Scattering | Resolution Loss | 0.500 | 0…1 | confirmed |
+| Atmospheric Scattering | Colorize | white | — | confirmed |
+| Light Halos | Halo Threshold | 0.650 | 0…1 | confirmed |
+| Light Halos | Size | 1.000 | 0…2 | inferred (range) |
+| Light Halos | Brightness | 0.250 | 0…1 | confirmed |
+| Light Halos | Saturation | 1.000 | 0…2 | inferred (range) |
+| Light Halos | Colorize | white | — | confirmed |
+| Light Rays | Enable | off | — | confirmed |
+| Light Rays | Preview Threshold | off | — | confirmed |
+| Light Rays | Source Threshold | 0.700 | 0…1 | confirmed |
+| Light Rays | Ray Directions | At An Angle | — | inferred (other options) |
+| Light Rays | Angle | 0.0 | −180…180 | inferred (range) |
+| Light Rays | Length / Soften | 0.750 / 0.150 | 0…1 | confirmed |
+| Light Rays | Brightness / Saturation | 0.300 / 1.000 | 0…1, 0…2 | confirmed / inferred |
+| Air Disturbance | Enable / Preview Influence | off / off | — | confirmed |
+| Air Disturbance | Intensity | 0.250 | 0…1 | confirmed |
+| Air Disturbance | Brightness | 1.000 | 0…1 | confirmed |
+| Air Disturbance | Scale | 2.000 | 0…6 | inferred (range) |
+| Air Disturbance | Detail | 7.00 | 1…16 | inferred (range) |
+| Air Disturbance | Start Frame | 0 | 0…1000 | inferred (range) |
+
+**Absent, and why.** Colour Space Overrides is the renderer's decision under
+the two-space rule. **Depth Map Source** is a dropdown with one option here —
+there is no external depth input to choose — and a dropdown with one option is
+a dead control. **Advanced Depth Controls** reveals controls no screenshot
+shows, and a switch that reveals nothing is worse than a missing one. **Follow
+FX Tracker** needs a tracker. **Flow Speed**, **Seethe Rate** and **Randomize
+Start Frame** describe how the field changes between exposures.
+
+**Start Frame stays**, and it is the interesting one: for a single exposure it
+is not a time at all, it is which slice of the turbulence you got — which is a
+seed, and a useful control.
+
+It is a **look** effect, so it ships visible. That is not obvious, given Dehaze
+is corrective and this is its mirror image, but they are different kinds of
+tool: Dehaze answers "there is haze here I did not want", and this answers "I
+want haze here". A haze effect that adds no haze until you find the right
+slider reads as broken.

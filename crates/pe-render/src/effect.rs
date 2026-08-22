@@ -573,6 +573,7 @@ fn effect_source(name: &str) -> &'static str {
         "halation" => include_str!("../../../shaders/effects/halation.wgsl"),
         "vignette" => include_str!("../../../shaders/effects/vignette.wgsl"),
         "bloom" => include_str!("../../../shaders/effects/bloom.wgsl"),
+        "cinematic_haze" => include_str!("../../../shaders/effects/cinematic_haze.wgsl"),
         "dehaze" => include_str!("../../../shaders/effects/dehaze.wgsl"),
         "film_damage" => include_str!("../../../shaders/effects/film_damage.wgsl"),
         "tone" => include_str!("../../../shaders/effects/tone.wgsl"),
