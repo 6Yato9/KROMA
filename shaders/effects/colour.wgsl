@@ -1,4 +1,7 @@
-// Log. Slots: 0 vibrance, 1 saturation.
+// Log. Slots: 0 vibrance, 1 saturation, 2 hue (degrees), 3 lum_mix.
+//
+// Slots follow the order the parameters are declared in the registry, so
+// that order is load-bearing and this comment moves with it.
 //
 // Saturation is uniform. Vibrance is the interesting one: it scales by how
 // unsaturated a colour already is, so muted colours lift while the ones that
@@ -9,10 +12,12 @@
 // bright colours far harder than dark ones for the same slider travel.
 
 fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
-    let vibrance = u.p[0].x;
-    let saturation = u.p[0].y;
+    let vibrance = slot(0u);
+    let saturation = slot(1u);
+    let hue = slot(2u);
+    let lum_mix = slot(3u);
 
-    if vibrance == 0.0 && saturation == 0.0 {
+    if vibrance == 0.0 && saturation == 0.0 && hue == 0.0 && lum_mix >= 1.0 {
         return c;
     }
 
@@ -39,5 +44,20 @@ fn effect(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let vib = vibrance * headroom * headroom;
 
     hsv.y = clamp(s * (1.0 + saturation + vib), 0.0, 8.0);
-    return hsv_to_rgb(hsv);
+    hsv.x = fract(hsv.x + hue / 360.0 + 1.0);
+    let out = hsv_to_rgb(hsv);
+
+    // Lum Mix. Saturating a colour in HSV holds its *value* — the brightest
+    // channel — not its luminance, so a push makes a face read brighter as
+    // well as more orange. Scaling the result back to the luminance it
+    // started with undoes exactly that, and the slider says how much of the
+    // correction to take.
+    if lum_mix >= 1.0 {
+        return out;
+    }
+    let before = luma(c);
+    let after = luma(out);
+    // In log, a difference is a ratio in light, so this is a gain.
+    let corrected = out + vec3<f32>(before - after);
+    return mix(corrected, out, clamp(lum_mix, 0.0, 1.0));
 }

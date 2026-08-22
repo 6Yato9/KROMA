@@ -1015,9 +1015,11 @@ impl eframe::App for App {
                                 .map(|s| &s.log_histogram);
                             curve::editor(ui, &mut self.history, log);
                         });
-                        egui::CollapsingHeader::new("Colour Wheels").show(ui, |ui| {
-                            wheels::panel(ui, &mut self.history);
-                        });
+                        egui::CollapsingHeader::new("Primaries - Color Wheels")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                wheels::panel(ui, &mut self.history);
+                            });
                         egui::CollapsingHeader::new("Colour Mixer").show(ui, |ui| {
                             mixer::panel(ui, &mut self.history);
                         });

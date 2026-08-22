@@ -270,34 +270,26 @@ pub fn panel(ui: &mut egui::Ui, history: &mut History, source: (u32, u32), activ
     let g = history.document().geometry;
 
     ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            [50.0, 18.0],
-            egui::Label::new(egui::RichText::new("Angle").small()),
-        );
-        let mut angle = g.angle;
-        let r = ui.add(
-            egui::Slider::new(&mut angle, -45.0..=45.0)
-                .show_value(false)
-                .handle_shape(egui::style::HandleShape::Circle),
-        );
-        if r.changed() {
-            edit_coalesced(history, source, "Straighten", "crop.angle", move |g| {
-                g.angle = angle
-            });
-        }
-        if r.drag_stopped() {
-            history.break_coalescing();
-        }
-        if r.double_clicked() {
-            edit(history, source, "Straighten", |g| g.angle = 0.0);
-        }
-        ui.label(
-            egui::RichText::new(format!("{:+.1}°", g.angle))
-                .small()
-                .monospace(),
-        );
-    });
+    let mut angle = g.angle;
+    let edit_row = crate::resolve::slider_row(
+        ui,
+        ui.id().with("crop_angle"),
+        "Angle (°)",
+        &mut angle,
+        -45.0..=45.0,
+        2,
+    );
+    if edit_row.changed {
+        edit_coalesced(history, source, "Straighten", "crop.angle", move |g| {
+            g.angle = angle
+        });
+    }
+    if edit_row.released {
+        history.break_coalescing();
+    }
+    if edit_row.reset {
+        edit(history, source, "Straighten", |g| g.angle = 0.0);
+    }
 
     ui.add_space(4.0);
     ui.horizontal_wrapped(|ui| {

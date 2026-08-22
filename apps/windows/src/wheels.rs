@@ -1,8 +1,24 @@
-//! Colour wheels.
+//! Resolve's Primaries — Color Wheels panel.
 //!
-//! The widget that makes this feel like Resolve rather than Lightroom, and the
-//! one no toolkit provides any part of: a hue disc drawn as a mesh, a puck you
-//! drag, and a master below it.
+//! Four wheels, a row of controls above them and a row below. That layout is
+//! the most-used screen in colour grading and every part of it earns its
+//! place: the wheels for where a cast is, the numbers under them for saying a
+//! value exactly, the master bar for the one adjustment you make without
+//! looking away from the picture.
+//!
+//! The panel drives several pinned rows at once — Temp and Tint are white
+//! balance, Contrast and Pivot are contrast, the wheels are Primaries, and the
+//! bottom row is spread across Colour, Tone and Presence. That is the same
+//! arrangement the Basic panel uses, and it works because a row is looked up
+//! by the effect it runs, never by where it sits in the stack.
+//!
+//! Two of Resolve's numbers are shown in Resolve's units rather than the
+//! document's. Saturation and Hue read 0 to 100 with 50 neutral, because that
+//! is what a colourist's hand expects; the document stores the rotation in
+//! degrees and the saturation as a signed multiplier, because those are the
+//! quantities that mean something on their own. A panel is a view, and a view
+//! may present a value in the units its reader thinks in — as long as both
+//! directions of the mapping live side by side, which is why they do.
 //!
 //! # The projection
 //!
@@ -11,22 +27,24 @@
 //! 120 degrees apart with red to the right, which is the standard RGB triangle
 //! and matches how a vectorscope reads.
 //!
-//! Going out (offset to position) is a projection onto that triangle; coming
-//! back (position to offset) is its transpose scaled by 2/3, which is the
-//! pseudo-inverse for a zero-mean triple. That factor is not cosmetic: without
-//! it, dragging the puck to the rim and reading the value back would report an
-//! offset half again as large as the one you asked for, and a round trip
-//! through the wheel would drift.
+//! Going out is a projection onto that triangle; coming back is its transpose
+//! scaled by 2/3, the pseudo-inverse for a zero-mean triple. That factor is
+//! not cosmetic: without it, dragging the puck to the rim and reading the
+//! value back would report an offset half again as large as the one you asked
+//! for, and a round trip through the wheel would drift.
 
 use std::f32::consts::TAU;
 
 use pe_core::{History, ParamValue, RowId, Wheel};
 
+use crate::basic;
+use crate::resolve;
+
 /// Chroma offset represented by a puck at the rim.
 ///
-/// Deliberately small. Colour wheels are for nudging a grade, and a full-radius
-/// drag that shifted the image by ±1.0 would make the outer half of the disc
-/// unusable.
+/// Deliberately small. Colour wheels are for nudging a grade, and a
+/// full-radius drag that shifted the image by ±1.0 would make the outer half
+/// of the disc unusable.
 const RANGE: f32 = 0.2;
 
 /// Angles of the three primaries, red first.
@@ -38,35 +56,266 @@ fn rgb_to_xy(rgb: [f32; 3]) -> egui::Vec2 {
     let mut v = egui::Vec2::ZERO;
     for (i, angle) in PRIMARY_ANGLES.iter().enumerate() {
         let d = rgb[i] - mean;
-        v += egui::vec2(d * angle.cos(), d * angle.sin());
+        v += egui::vec2(angle.cos(), angle.sin()) * d;
     }
     v / RANGE
 }
 
-/// Position on the disc back to an offset triple.
+/// A position on the disc back to an offset triple.
 fn xy_to_rgb(v: egui::Vec2) -> [f32; 3] {
     let mut rgb = [0.0f32; 3];
     for (i, angle) in PRIMARY_ANGLES.iter().enumerate() {
-        // Transpose of the projection, scaled by 2/3 so that a round trip is
-        // the identity rather than a 1.5x amplification.
         rgb[i] = (v.x * angle.cos() + v.y * angle.sin()) * RANGE * 2.0 / 3.0;
     }
     rgb
 }
 
-/// The colour to paint at a point on the rim.
-fn rim_colour(angle: f32) -> egui::Color32 {
-    let rgb = xy_to_rgb(egui::vec2(angle.cos(), angle.sin()));
-    // Lift off mid-grey so the ring reads as hue rather than as a dark smear,
-    // and normalise by RANGE so the ring is fully saturated at the rim
-    // whatever RANGE happens to be.
-    let f = |v: f32| ((0.5 + v / RANGE * 0.75).clamp(0.0, 1.0) * 255.0) as u8;
-    egui::Color32::from_rgb(f(rgb[0]), f(rgb[1]), f(rgb[2]))
+/// The colour of each readout's underline: master, then the three channels.
+fn channel_tint(i: usize) -> egui::Color32 {
+    match i {
+        1 => egui::Color32::from_rgb(226, 68, 68),
+        2 => egui::Color32::from_rgb(64, 200, 84),
+        3 => egui::Color32::from_rgb(74, 118, 236),
+        _ => egui::Color32::from_gray(220),
+    }
 }
 
-/// One wheel: hue disc, puck, and a master below.
-fn wheel(ui: &mut egui::Ui, history: &mut History, id: RowId, key: &'static str, label: &str) {
-    let mut value = history
+/// A fully saturated colour at a hue, for the ring.
+fn hue_colour(hue: f32) -> egui::Color32 {
+    let h = hue * 6.0;
+    let f = h - h.floor();
+    let (r, g, b) = match h.floor() as i32 % 6 {
+        0 => (1.0, f, 0.0),
+        1 => (1.0 - f, 1.0, 0.0),
+        2 => (0.0, 1.0, f),
+        3 => (0.0, 1.0 - f, 1.0),
+        4 => (f, 0.0, 1.0),
+        _ => (1.0, 0.0, 1.0 - f),
+    };
+    egui::Color32::from_rgb(
+        (r * 205.0 + 34.0) as u8,
+        (g * 205.0 + 34.0) as u8,
+        (b * 205.0 + 34.0) as u8,
+    )
+}
+
+/// The hue disc, the master arc around it, and the puck.
+fn disc(ui: &mut egui::Ui, size: f32, wheel: Wheel) -> Option<Wheel> {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::click_and_drag());
+    let centre = rect.center();
+    // The disc sits inside the master arc, which rides the outer edge.
+    let radius = (size * 0.5 - 7.0).max(8.0);
+
+    let mut moved = None;
+    if (response.dragged() || response.clicked())
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        let mut v = (pos - centre) / radius;
+        // Round, not square. A puck that could reach the corners would push a
+        // channel half again as far diagonally as it does straight up.
+        if v.length() > 1.0 {
+            v /= v.length();
+        }
+        moved = Some(Wheel {
+            rgb: xy_to_rgb(v),
+            master: wheel.master,
+        });
+    }
+    if response.double_clicked() {
+        moved = Some(Wheel {
+            rgb: [0.0; 3],
+            master: wheel.master,
+        });
+    }
+
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter_at(rect);
+
+        // The hue ring, as a fan of quads out from a neutral centre. Saturated
+        // at the rim and neutral in the middle, because the useful part of a
+        // colour wheel is its edge — the middle is where you already are.
+        const SEGMENTS: usize = 64;
+        let mut mesh = egui::Mesh::default();
+        for i in 0..SEGMENTS {
+            let a0 = i as f32 / SEGMENTS as f32 * TAU;
+            let a1 = (i + 1) as f32 / SEGMENTS as f32 * TAU;
+            let base = mesh.vertices.len() as u32;
+            mesh.colored_vertex(centre, egui::Color32::from_gray(30));
+            mesh.colored_vertex(
+                centre + egui::vec2(a0.cos(), a0.sin()) * radius,
+                hue_colour((a0 / TAU).rem_euclid(1.0)),
+            );
+            mesh.colored_vertex(
+                centre + egui::vec2(a1.cos(), a1.sin()) * radius,
+                hue_colour((a1 / TAU).rem_euclid(1.0)),
+            );
+            mesh.add_triangle(base, base + 1, base + 2);
+        }
+        painter.add(egui::Shape::mesh(mesh));
+
+        // Crosshair, so the neutral point stays visible under the puck.
+        let hair = egui::Stroke::new(1.0_f32, egui::Color32::from_black_alpha(90));
+        painter.line_segment(
+            [
+                egui::pos2(centre.x - radius, centre.y),
+                egui::pos2(centre.x + radius, centre.y),
+            ],
+            hair,
+        );
+        painter.line_segment(
+            [
+                egui::pos2(centre.x, centre.y - radius),
+                egui::pos2(centre.x, centre.y + radius),
+            ],
+            hair,
+        );
+
+        // The master, as an arc riding the outer edge. The same value as the
+        // bar below, and worth showing twice: the arc is what you read while
+        // your eyes are still on the wheel.
+        let outer = size * 0.5 - 2.5;
+        painter.circle_stroke(
+            centre,
+            outer,
+            egui::Stroke::new(3.0_f32, egui::Color32::from_gray(42)),
+        );
+        let sweep = (wheel.master / 0.5).clamp(-1.0, 1.0);
+        if sweep.abs() > 1e-3 {
+            let start = -std::f32::consts::FRAC_PI_2;
+            let steps = 40;
+            let points: Vec<egui::Pos2> = (0..=steps)
+                .map(|i| {
+                    let t = i as f32 / steps as f32 * sweep * std::f32::consts::PI;
+                    egui::pos2(
+                        centre.x + outer * (start + t).cos(),
+                        centre.y + outer * (start + t).sin(),
+                    )
+                })
+                .collect();
+            painter.add(egui::Shape::line(
+                points,
+                egui::Stroke::new(3.0_f32, egui::Color32::from_gray(215)),
+            ));
+        }
+
+        let at = centre + rgb_to_xy(wheel.rgb) * radius;
+        let hot = response.hovered() || response.dragged();
+        let r = if hot { 6.0 } else { 5.0 };
+        painter.circle_filled(at, r, egui::Color32::WHITE);
+        painter.circle_stroke(
+            at,
+            r,
+            egui::Stroke::new(1.2_f32, egui::Color32::from_gray(30)),
+        );
+    }
+
+    moved
+}
+
+/// The four numbers under a wheel: master, then the three channels, each with
+/// its own coloured underline.
+fn readouts(ui: &mut egui::Ui, width: f32, wheel: Wheel) -> Option<Wheel> {
+    let mut next = wheel;
+    let mut changed = false;
+    let cell = (width / 4.0).max(26.0);
+
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        for i in 0..4 {
+            let mut v = if i == 0 {
+                wheel.master
+            } else {
+                wheel.rgb[i - 1]
+            };
+            let before = v;
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(cell, 25.0), egui::Sense::hover());
+            let mut child = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(egui::Rect::from_min_size(rect.min, egui::vec2(cell, 18.0))),
+            );
+            child.add_sized(
+                egui::vec2(cell - 2.0, 18.0),
+                egui::DragValue::new(&mut v).fixed_decimals(2).speed(0.0),
+            );
+            if (before - v).abs() > 1e-9 {
+                let v = v.clamp(-1.0, 1.0);
+                if i == 0 {
+                    next.master = v;
+                } else {
+                    next.rgb[i - 1] = v;
+                }
+                changed = true;
+            }
+            // Resolve underlines each readout in its channel's colour, which
+            // is how four identical numbers stay apart at a glance.
+            if ui.is_rect_visible(rect) {
+                ui.painter().line_segment(
+                    [
+                        egui::pos2(rect.min.x + 3.0, rect.min.y + 21.0),
+                        egui::pos2(rect.max.x - 3.0, rect.min.y + 21.0),
+                    ],
+                    egui::Stroke::new(2.0_f32, channel_tint(i)),
+                );
+            }
+        }
+    });
+
+    changed.then_some(next)
+}
+
+/// The ribbed bar under each wheel: Resolve's master control.
+///
+/// Relative, not absolute — push it and the value moves, let go and the bar
+/// stays where it was. That is what makes it usable without looking at it,
+/// which is the whole reason it is separate from the numbers above.
+fn master_bar(ui: &mut egui::Ui, width: f32, master: f32) -> Option<f32> {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(width, 13.0), egui::Sense::click_and_drag());
+    let mut moved = None;
+    if response.dragged() {
+        // A full sweep of the bar is a full sweep of the range.
+        moved = Some((master + response.drag_delta().x / width.max(1e-4)).clamp(-0.5, 0.5));
+    }
+    if response.double_clicked() {
+        moved = Some(0.0);
+    }
+
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 2.0, egui::Color32::from_gray(24));
+        let hot = response.hovered() || response.dragged();
+        let tint = if hot {
+            egui::Color32::from_gray(145)
+        } else {
+            egui::Color32::from_gray(92)
+        };
+        let mut x = rect.min.x + 3.0;
+        while x < rect.max.x - 2.0 {
+            painter.line_segment(
+                [
+                    egui::pos2(x, rect.min.y + 3.0),
+                    egui::pos2(x, rect.max.y - 3.0),
+                ],
+                egui::Stroke::new(1.0_f32, tint),
+            );
+            x += 4.0;
+        }
+    }
+
+    moved
+}
+
+/// One complete wheel: title, reset, disc, readouts, master bar.
+fn wheel_column(
+    ui: &mut egui::Ui,
+    history: &mut History,
+    id: RowId,
+    key: &'static str,
+    title: &'static str,
+    width: f32,
+) {
+    let wheel = history
         .document()
         .stack
         .get(id)
@@ -75,153 +324,242 @@ fn wheel(ui: &mut egui::Ui, history: &mut History, id: RowId, key: &'static str,
         .copied()
         .unwrap_or_default();
 
+    let mut next: Option<Wheel> = None;
     ui.vertical(|ui| {
-        ui.label(egui::RichText::new(label).small().weak());
-
-        let size = 108.0;
-        let (rect, response) =
-            ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::click_and_drag());
-        let centre = rect.center();
-        let radius = size * 0.46;
-
-        // --- interaction -----------------------------------------------------
-        let mut changed = false;
-        if response.double_clicked() {
-            value.rgb = [0.0; 3];
-            changed = true;
-        } else if response.dragged()
-            && let Some(pos) = response.interact_pointer_pos()
-        {
-            // Screen y grows downward; the disc reads counter-clockwise like a
-            // vectorscope, so y is flipped going in and out.
-            let mut v = egui::vec2((pos.x - centre.x) / radius, -(pos.y - centre.y) / radius);
-            if v.length() > 1.0 {
-                v /= v.length();
+        ui.set_width(width);
+        ui.horizontal(|ui| {
+            ui.add_sized(
+                [(width - 24.0).max(20.0), 16.0],
+                egui::Label::new(
+                    egui::RichText::new(title)
+                        .small()
+                        .color(resolve::colour::TITLE),
+                ),
+            );
+            if ui.small_button("R").on_hover_text("Reset").clicked() {
+                next = Some(Wheel::default());
             }
-            value.rgb = xy_to_rgb(v);
-            changed = true;
+        });
+        if let Some(w) = disc(ui, width, wheel) {
+            next = Some(w);
         }
-
-        if changed {
-            let coalesce = Some(format!("wheel.{key}"));
-            history.edit(label.to_string(), coalesce, |doc| {
-                if let Some(row) = doc.stack.get_mut(id) {
-                    row.params.set(key, ParamValue::Wheel(value));
-                }
+        ui.add_space(2.0);
+        if let Some(w) = readouts(ui, width, wheel) {
+            next = Some(w);
+        }
+        if let Some(m) = master_bar(ui, width, wheel.master) {
+            next = Some(Wheel {
+                rgb: wheel.rgb,
+                master: m,
             });
         }
-        if response.drag_stopped() {
-            history.break_coalescing();
-        }
+    });
 
-        // --- drawing ---------------------------------------------------------
-        if ui.is_rect_visible(rect) {
-            let painter = ui.painter_at(rect);
-            let segments = 48;
-            let mut mesh = egui::Mesh::default();
-            mesh.colored_vertex(centre, egui::Color32::from_gray(86));
-            for i in 0..=segments {
-                let a = i as f32 / segments as f32 * TAU;
-                mesh.colored_vertex(
-                    centre + egui::vec2(a.cos(), -a.sin()) * radius,
-                    rim_colour(a),
+    if let Some(w) = next {
+        history.edit(title, Some(format!("wheel.{key}")), move |doc| {
+            if let Some(row) = doc.stack.get_mut(id) {
+                row.params.set(key, ParamValue::Wheel(w));
+            }
+        });
+    }
+}
+
+/// One of the small labelled numbers in the rows above and below the wheels.
+///
+/// `display` maps the stored value into the units Resolve shows and `store`
+/// maps it back. For most controls both are the identity; for Saturation, Hue
+/// and Lum Mix they are not, and keeping the pair together in one struct is
+/// what stops the two directions drifting apart.
+struct Field {
+    label: &'static str,
+    effect: &'static str,
+    key: &'static str,
+    display: fn(f32) -> f32,
+    store: fn(f32) -> f32,
+    decimals: usize,
+}
+
+const fn plain(
+    label: &'static str,
+    effect: &'static str,
+    key: &'static str,
+    decimals: usize,
+) -> Field {
+    Field {
+        label,
+        effect,
+        key,
+        display: |v| v,
+        store: |v| v,
+        decimals,
+    }
+}
+
+/// Resolve shows saturation on a 0 to 100 scale with 50 neutral.
+fn to_resolve_scale(v: f32) -> f32 {
+    50.0 + v * 50.0
+}
+fn from_resolve_scale(v: f32) -> f32 {
+    (v - 50.0) / 50.0
+}
+/// Hue is stored in degrees, ±180, and shown on the same 0 to 100 scale.
+fn hue_to_scale(v: f32) -> f32 {
+    50.0 + v / 3.6
+}
+fn hue_from_scale(v: f32) -> f32 {
+    (v - 50.0) * 3.6
+}
+
+fn field_row(ui: &mut egui::Ui, history: &mut History, fields: &[Field]) {
+    ui.horizontal_wrapped(|ui| {
+        for field in fields {
+            let Some(def) = pe_effects::by_key(field.effect).and_then(|e| e.param(field.key))
+            else {
+                continue;
+            };
+            let pe_effects::ParamKind::Float {
+                min,
+                max,
+                default,
+                neutral,
+            } = def.kind
+            else {
+                continue;
+            };
+            let Some(id) = history.document().stack.find_by_effect(field.effect) else {
+                continue;
+            };
+            let stored = history
+                .document()
+                .stack
+                .get(id)
+                .and_then(|r| r.params.get(field.key))
+                .and_then(ParamValue::as_float)
+                .unwrap_or(default);
+
+            let mut shown = (field.display)(stored);
+            let before = shown;
+            ui.label(
+                egui::RichText::new(field.label)
+                    .small()
+                    .color(resolve::colour::LABEL),
+            );
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(58.0, 25.0), egui::Sense::hover());
+            let mut child = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(egui::Rect::from_min_size(rect.min, egui::vec2(58.0, 18.0))),
+            );
+            let response = child.add_sized(
+                egui::vec2(56.0, 18.0),
+                egui::DragValue::new(&mut shown)
+                    .fixed_decimals(field.decimals)
+                    .speed(0.0),
+            );
+            if ui.is_rect_visible(rect) {
+                ui.painter().line_segment(
+                    [
+                        egui::pos2(rect.min.x + 2.0, rect.min.y + 21.0),
+                        egui::pos2(rect.max.x - 2.0, rect.min.y + 21.0),
+                    ],
+                    egui::Stroke::new(2.0_f32, egui::Color32::from_gray(120)),
                 );
             }
-            for i in 0..segments {
-                mesh.add_triangle(0, 1 + i as u32, 2 + i as u32);
-            }
-            painter.add(egui::Shape::mesh(mesh));
-            painter.circle_stroke(
-                centre,
-                radius,
-                egui::Stroke::new(1.0_f32, egui::Color32::from_gray(30)),
-            );
 
-            let v = rgb_to_xy(value.rgb);
-            let clamped = if v.length() > 1.0 { v / v.length() } else { v };
-            let puck = centre + egui::vec2(clamped.x, -clamped.y) * radius;
-            painter.circle_stroke(puck, 5.5, egui::Stroke::new(2.0_f32, egui::Color32::WHITE));
-            painter.circle_stroke(
-                puck,
-                6.8,
-                egui::Stroke::new(1.0_f32, egui::Color32::from_black_alpha(140)),
-            );
-        }
-
-        // Master. Resolve puts this as a ring around the wheel; a bar under it
-        // is easier to hit at this size and does the same job.
-        let mut master = value.master;
-        let r = ui.add_sized(
-            [size, 14.0],
-            egui::Slider::new(&mut master, -0.5..=0.5).show_value(false),
-        );
-        if r.changed() {
-            value.master = master;
-            history.edit(
-                label.to_string(),
-                Some(format!("wheel.{key}.master")),
-                |doc| {
+            let key = field.key;
+            if response.double_clicked() {
+                history.edit(field.label, None, move |doc| {
                     if let Some(row) = doc.stack.get_mut(id) {
-                        row.params.set(key, ParamValue::Wheel(value));
+                        row.params.set(key, ParamValue::Float(neutral));
                     }
-                },
-            );
-        }
-        if r.drag_stopped() {
-            history.break_coalescing();
-        }
-        if r.double_clicked() {
-            value.master = 0.0;
-            history.edit(label.to_string(), None, |doc| {
-                if let Some(row) = doc.stack.get_mut(id) {
-                    row.params.set(key, ParamValue::Wheel(value));
-                }
-            });
+                });
+            } else if (before - shown).abs() > 1e-9 {
+                let v = (field.store)(shown).clamp(min, max);
+                history.edit(
+                    field.label,
+                    Some(format!("{}.{key}", field.effect)),
+                    move |doc| {
+                        if let Some(row) = doc.stack.get_mut(id) {
+                            row.params.set(key, ParamValue::Float(v));
+                        }
+                    },
+                );
+            }
+            ui.add_space(6.0);
         }
     });
 }
 
-/// The four-way primaries panel.
-///
-/// Four wheels, not three. Offset is the one colourists reach for first, and
-/// leaving it out is the most common way a clone of these controls feels
-/// wrong — so it gets equal billing rather than being tucked away.
+/// The Primaries panel.
 pub fn primaries(ui: &mut egui::Ui, history: &mut History) {
     let Some(id) = history.document().stack.find_by_effect("primaries") else {
         return;
     };
 
-    // Two by two: four across would be under 80 points each in a 340 point
-    // panel, which is too small to aim a puck at.
-    ui.horizontal(|ui| {
-        wheel(ui, history, id, "lift", "Lift");
-        ui.add_space(6.0);
-        wheel(ui, history, id, "gamma", "Gamma");
-    });
-    ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        wheel(ui, history, id, "gain", "Gain");
-        ui.add_space(6.0);
-        wheel(ui, history, id, "offset", "Offset");
+    field_row(
+        ui,
+        history,
+        &[
+            plain("Temp", "white_balance", "temperature", 0),
+            plain("Tint", "white_balance", "tint", 1),
+            plain("Contrast", "contrast", "contrast", 3),
+            plain("Pivot", "contrast", "pivot", 3),
+            // Resolve's Mid/Detail and Lightroom's Clarity are the same
+            // operation under two names: local contrast in the midtones. One
+            // parameter, shown wherever its reader expects to find it.
+            plain("Mid/Detail", "presence", "clarity", 2),
+        ],
+    );
+    ui.add_space(6.0);
+
+    let width = ((ui.available_width() - 20.0) / 4.0).clamp(66.0, 150.0);
+    ui.horizontal_top(|ui| {
+        for (key, title) in [
+            ("lift", "Lift"),
+            ("gamma", "Gamma"),
+            ("gain", "Gain"),
+            ("offset", "Offset"),
+        ] {
+            wheel_column(ui, history, id, key, title, width);
+            ui.add_space(3.0);
+        }
     });
 
-    ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        if ui.small_button("Reset wheels").clicked() {
-            history.edit("Reset wheels", None, |doc| {
-                if let Some(row) = doc.stack.get_mut(id) {
-                    for key in ["lift", "gamma", "gain", "offset"] {
-                        row.params.set(key, ParamValue::Wheel(Wheel::default()));
-                    }
-                }
-            });
-        }
-        ui.label(
-            egui::RichText::new("drag the puck · double-click to reset")
-                .small()
-                .weak(),
-        );
-    });
+    ui.add_space(8.0);
+    field_row(
+        ui,
+        history,
+        &[
+            // Resolve's Color Boost is vibrance: a push that leaves the
+            // already-vivid colours where they are.
+            plain("Color Boost", "colour", "vibrance", 2),
+            plain("Shadows", "tone", "shadows", 2),
+            plain("Highlights", "tone", "highlights", 2),
+            Field {
+                label: "Saturation",
+                effect: "colour",
+                key: "saturation",
+                display: to_resolve_scale,
+                store: from_resolve_scale,
+                decimals: 2,
+            },
+            Field {
+                label: "Hue",
+                effect: "colour",
+                key: "hue",
+                display: hue_to_scale,
+                store: hue_from_scale,
+                decimals: 2,
+            },
+            Field {
+                label: "Lum Mix",
+                effect: "colour",
+                key: "lum_mix",
+                display: |v| v * 100.0,
+                store: |v| v / 100.0,
+                decimals: 2,
+            },
+        ],
+    );
 }
 
 /// Resolve's log wheels.
@@ -238,31 +576,22 @@ pub fn log_wheels(ui: &mut egui::Ui, history: &mut History) {
         return;
     };
 
-    ui.horizontal(|ui| {
-        wheel(ui, history, id, "shadow", "Shadow");
-        ui.add_space(6.0);
-        wheel(ui, history, id, "midtone", "Midtone");
-    });
-    ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        wheel(ui, history, id, "highlight", "Highlight");
-        ui.add_space(6.0);
-        wheel(ui, history, id, "offset", "Offset");
+    let width = ((ui.available_width() - 20.0) / 4.0).clamp(66.0, 150.0);
+    ui.horizontal_top(|ui| {
+        for (key, title) in [
+            ("shadow", "Shadow"),
+            ("midtone", "Midtone"),
+            ("highlight", "Highlight"),
+            ("offset", "Offset"),
+        ] {
+            wheel_column(ui, history, id, key, title, width);
+            ui.add_space(3.0);
+        }
     });
 
-    ui.add_space(4.0);
-    crate::basic::slider(ui, history, "log_wheels", "low_range", "Low Range");
-    crate::basic::slider(ui, history, "log_wheels", "high_range", "High Range");
-
-    if ui.small_button("Reset wheels").clicked() {
-        history.edit("Reset log wheels", None, |doc| {
-            if let Some(row) = doc.stack.get_mut(id) {
-                for key in ["shadow", "midtone", "highlight", "offset"] {
-                    row.params.set(key, ParamValue::Wheel(Wheel::default()));
-                }
-            }
-        });
-    }
+    ui.add_space(6.0);
+    basic::slider(ui, history, "log_wheels", "low_range", "Low Range");
+    basic::slider(ui, history, "log_wheels", "high_range", "High Range");
 }
 
 /// Both wheel sets, behind a tab.
@@ -291,63 +620,104 @@ pub fn panel(ui: &mut egui::Ui, history: &mut History) {
 mod tests {
     use super::*;
 
+    /// The property that makes a puck feel solid: pick it up, put it down, and
+    /// the numbers are exactly where they were. Anything less and a wheel
+    /// drifts a little every time it is touched.
     #[test]
-    fn the_projection_round_trips() {
-        // The 2/3 factor is the whole point: without it, reading a puck
-        // position back would report an offset half again too large, and every
-        // pass through the widget would inflate the grade.
-        for rgb in [
-            [0.1f32, -0.05, -0.05],
-            [-0.08, 0.12, -0.04],
-            [0.0, 0.0, 0.0],
-            [0.03, 0.01, -0.04],
+    fn a_puck_picked_up_and_put_down_changes_nothing() {
+        for v in [
+            egui::vec2(0.0, 0.0),
+            egui::vec2(0.4, -0.2),
+            egui::vec2(-0.9, 0.1),
+            egui::vec2(0.0, 1.0),
         ] {
-            let back = xy_to_rgb(rgb_to_xy(rgb));
-            for i in 0..3 {
-                assert!(
-                    (back[i] - rgb[i]).abs() < 1e-5,
-                    "channel {i}: {rgb:?} -> {back:?}"
-                );
-            }
+            let back = rgb_to_xy(xy_to_rgb(v));
+            assert!((back - v).length() < 1e-5, "{v:?} came back as {back:?}");
         }
     }
 
+    /// A wheel says which way the colour is pushed, not how bright it is. What
+    /// all three channels share belongs to the master bar, so the puck has to
+    /// ignore it completely.
     #[test]
-    fn a_neutral_wheel_sits_at_the_centre() {
-        assert_eq!(rgb_to_xy([0.0; 3]), egui::Vec2::ZERO);
-        // A pure luminance offset carries no chroma, so it must not move the
-        // puck either — that is what the master is for.
-        assert_eq!(rgb_to_xy([0.2; 3]), egui::Vec2::ZERO);
-    }
-
-    #[test]
-    fn red_sits_to_the_right() {
-        let v = rgb_to_xy(xy_to_rgb(egui::vec2(1.0, 0.0)));
+    fn the_puck_ignores_what_all_three_channels_share() {
+        let pushed = rgb_to_xy([0.1, 0.1, 0.1]);
+        assert!(pushed.length() < 1e-6, "a neutral lift moved the puck");
+        let a = rgb_to_xy([0.05, -0.02, -0.03]);
+        let b = rgb_to_xy([0.15, 0.08, 0.07]);
         assert!(
-            v.x > 0.9 && v.y.abs() < 1e-4,
-            "red should be at 0 degrees: {v:?}"
+            (a - b).length() < 1e-5,
+            "the same push at two brightnesses landed apart"
         );
     }
 
     #[test]
-    fn the_primaries_are_evenly_spaced() {
-        let angle = |v: egui::Vec2| v.y.atan2(v.x);
-        let sep = |a: f32, b: f32| {
-            let d = (a - b).abs() % TAU;
-            d.min(TAU - d)
-        };
-        let red = angle(rgb_to_xy([1.0, 0.0, 0.0]));
-        let green = angle(rgb_to_xy([0.0, 1.0, 0.0]));
-        let blue = angle(rgb_to_xy([0.0, 0.0, 1.0]));
+    fn pushing_towards_red_moves_the_puck_towards_red() {
+        let v = rgb_to_xy(xy_to_rgb(egui::vec2(1.0, 0.0)));
+        assert!(v.x > 0.9 && v.y.abs() < 1e-4, "{v:?}");
+    }
 
-        assert!((sep(red, green) - TAU / 3.0).abs() < 1e-4);
-        assert!((sep(green, blue) - TAU / 3.0).abs() < 1e-4);
-        assert!((sep(blue, red) - TAU / 3.0).abs() < 1e-4);
+    /// Both directions of Resolve's 0-to-100 scale have to agree, or a number
+    /// typed in would not read back as itself.
+    #[test]
+    fn the_resolve_scale_round_trips() {
+        for v in [-1.0, -0.4, 0.0, 0.25, 1.0] {
+            assert!((from_resolve_scale(to_resolve_scale(v)) - v).abs() < 1e-5);
+        }
+        assert!((to_resolve_scale(0.0) - 50.0).abs() < 1e-6, "neutral is 50");
     }
 
     #[test]
-    fn a_rim_colour_is_saturated_and_a_centre_colour_is_not() {
-        let red = rim_colour(0.0);
-        assert!(red.r() > red.b() + 60, "rim at 0 should read red: {red:?}");
+    fn the_hue_scale_round_trips_and_puts_neutral_in_the_middle() {
+        for v in [-180.0, -45.0, 0.0, 90.0, 180.0] {
+            assert!((hue_from_scale(hue_to_scale(v)) - v).abs() < 1e-3);
+        }
+        assert!((hue_to_scale(0.0) - 50.0).abs() < 1e-6);
+        assert!(
+            (hue_to_scale(180.0) - 100.0).abs() < 1e-4,
+            "the ends line up"
+        );
+    }
+
+    /// Every control the panel names has to exist, or the row silently draws
+    /// nothing and the gap reads as a layout bug rather than a typo.
+    #[test]
+    fn every_field_names_a_parameter_that_exists() {
+        for (effect, key) in [
+            ("white_balance", "temperature"),
+            ("white_balance", "tint"),
+            ("contrast", "contrast"),
+            ("contrast", "pivot"),
+            ("presence", "clarity"),
+            ("colour", "vibrance"),
+            ("tone", "shadows"),
+            ("tone", "highlights"),
+            ("colour", "saturation"),
+            ("colour", "hue"),
+            ("colour", "lum_mix"),
+        ] {
+            let def = pe_effects::by_key(effect).unwrap_or_else(|| panic!("no effect {effect}"));
+            assert!(def.param(key).is_some(), "{effect} has no {key}");
+        }
+    }
+
+    /// And every effect it reaches into has to be pinned, or the panel would
+    /// be driving something the user can delete out from under it.
+    #[test]
+    fn every_effect_the_panel_drives_is_pinned() {
+        for effect in [
+            "white_balance",
+            "contrast",
+            "presence",
+            "colour",
+            "tone",
+            "primaries",
+            "log_wheels",
+        ] {
+            assert!(
+                pe_effects::registry::PINNED_ROWS.contains(&effect),
+                "{effect} is not pinned"
+            );
+        }
     }
 }

@@ -159,7 +159,7 @@ fn narrow_row(
     label: &str,
     value: &mut f32,
     range: std::ops::RangeInclusive<f32>,
-    boxed: bool,
+    decimals: usize,
 ) -> resolve::Edit {
     let width = ui.available_width();
     ui.horizontal(|ui| {
@@ -180,11 +180,7 @@ fn narrow_row(
                 ),
             );
         }
-        let track_w = if boxed {
-            (width - 56.0 - 44.0 - 26.0).max(30.0)
-        } else {
-            (width - 56.0 - 12.0).max(30.0)
-        };
+        let track_w = (width - 56.0 - 44.0 - 26.0).max(30.0);
         let (lo, hi) = (*range.start(), *range.end());
         let r = ui.add_sized(
             [track_w, 16.0],
@@ -192,17 +188,20 @@ fn narrow_row(
         );
         out.changed = r.changed();
         out.released = r.drag_stopped();
-        if boxed {
-            let before = *value;
-            ui.add_sized(
-                [42.0, 16.0],
-                egui::DragValue::new(value).fixed_decimals(0).speed(0.0),
-            );
-            if (before - *value).abs() > 1e-6 {
-                *value = value.clamp(lo, hi);
-                out.changed = true;
-                out.released = true;
-            }
+        // Every value in the panel is typeable. A slider is for finding a
+        // number and a box is for saying one, and a control that only offers
+        // the first cannot be told "exactly 50".
+        let before = *value;
+        ui.add_sized(
+            [42.0, 16.0],
+            egui::DragValue::new(value)
+                .fixed_decimals(decimals)
+                .speed(0.0),
+        );
+        if (before - *value).abs() > 1e-6 {
+            *value = value.clamp(lo, hi);
+            out.changed = true;
+            out.released = true;
         }
         let _ = id;
         out
@@ -243,7 +242,7 @@ fn edit_column(ui: &mut egui::Ui, history: &mut History, id: RowId, channel: &mu
             "",
             &mut v,
             0.0..=100.0,
-            true,
+            0,
         );
         apply(history, id, key, v, edit, 100.0);
     }
@@ -265,7 +264,7 @@ fn edit_column(ui: &mut egui::Ui, history: &mut History, id: RowId, channel: &mu
         ("soft_clip_high_soft", "High Soft"),
     ] {
         let mut v = float_param(history, id, key, 0.0);
-        let edit = narrow_row(ui, ui.id().with(key), None, label, &mut v, 0.0..=1.0, false);
+        let edit = narrow_row(ui, ui.id().with(key), None, label, &mut v, 0.0..=1.0, 2);
         apply(history, id, key, v, edit, 0.0);
     }
 

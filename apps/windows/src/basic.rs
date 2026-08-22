@@ -195,54 +195,53 @@ pub fn slider(
         .and_then(ParamValue::as_float)
         .unwrap_or(default);
 
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            [76.0, 18.0],
-            egui::Label::new(egui::RichText::new(label).small()),
-        );
-        let r = ui.add(
-            egui::Slider::new(&mut v, min..=max)
-                .show_value(false)
-                .handle_shape(egui::style::HandleShape::Circle),
-        );
-        if r.changed() {
-            let coalesce = Some(format!("{effect}.{key}"));
-            history.edit(label.to_string(), coalesce, |doc| {
-                if let Some(row) = doc.stack.get_mut(id) {
-                    row.params.set(key, ParamValue::Float(v));
-                }
-            });
-        }
-        if r.drag_stopped() {
-            history.break_coalescing();
-        }
-        // Double-click resets to *neutral*, not to the default — for a look
-        // effect those differ, and "reset" should always mean "do nothing".
-        if r.double_clicked() {
-            history.edit(label.to_string(), None, |doc| {
-                if let Some(row) = doc.stack.get_mut(id) {
-                    row.params.set(key, ParamValue::Float(neutral));
-                }
-            });
-        }
-        ui.add_sized(
-            [46.0, 18.0],
-            egui::Label::new(
-                egui::RichText::new(format_value(v, def.unit))
-                    .small()
-                    .monospace(),
-            ),
-        );
-    });
+    let title = if def.unit.is_empty() {
+        label.to_string()
+    } else {
+        format!("{label} ({})", def.unit)
+    };
+    let edit = crate::resolve::slider_row(
+        ui,
+        ui.id().with((effect, key)),
+        &title,
+        &mut v,
+        min..=max,
+        decimals(min, max),
+    );
+    if edit.changed {
+        let coalesce = Some(format!("{effect}.{key}"));
+        history.edit(label.to_string(), coalesce, |doc| {
+            if let Some(row) = doc.stack.get_mut(id) {
+                row.params.set(key, ParamValue::Float(v));
+            }
+        });
+    }
+    if edit.released {
+        history.break_coalescing();
+    }
+    // Reset means *neutral*, not the default — for a look effect those differ,
+    // and reset should always mean "do nothing".
+    if edit.reset {
+        history.edit(label.to_string(), None, |doc| {
+            if let Some(row) = doc.stack.get_mut(id) {
+                row.params.set(key, ParamValue::Float(neutral));
+            }
+        });
+    }
 }
 
-fn format_value(v: f32, unit: &str) -> String {
-    if unit == "K" {
-        format!("{v:.0}")
-    } else if v.abs() >= 100.0 {
-        format!("{v:.0}{unit}")
+/// How many decimals a range wants.
+///
+/// A slider running to 15000 kelvin reading "6500.000" is noise; one running
+/// to 1.0 reading "0.2" has thrown away the resolution the control has.
+pub fn decimals(min: f32, max: f32) -> usize {
+    let span = (max - min).abs();
+    if span > 100.0 {
+        0
+    } else if span > 10.0 {
+        2
     } else {
-        format!("{v:+.2}{unit}")
+        3
     }
 }
 

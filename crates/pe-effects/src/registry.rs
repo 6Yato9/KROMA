@@ -1293,6 +1293,29 @@ pub static EFFECTS: &[EffectDef] = &[
         params: &[
             bipolar("vibrance", "Vibrance", 1.0, ""),
             bipolar("saturation", "Saturation", 1.0, ""),
+            // A global hue rotation, in degrees. Resolve's Primaries panel
+            // shows it as 0 to 100 with 50 neutral; the document stores the
+            // rotation itself, which is the thing that has a meaning.
+            bipolar("hue", "Hue", 180.0, "°"),
+            // How much of a saturation or hue move is allowed to change how
+            // bright the pixel is.
+            //
+            // At zero, pushing saturation leaves luminance exactly where it
+            // was — which is the whole reason the control exists, because
+            // saturating a face otherwise darkens it and the correction for
+            // that costs another control.
+            ParamDef {
+                key: "lum_mix",
+                name: "Lum Mix",
+                kind: ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    default: 1.0,
+                    neutral: 1.0,
+                },
+                unit: "",
+                section: "",
+            },
         ],
     },
     EffectDef {
