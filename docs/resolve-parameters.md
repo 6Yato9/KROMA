@@ -572,6 +572,11 @@ amount of dragging can smooth. Chroma's two ends are grey and full colour,
 which are as far apart as two colours get. The interpolation is written twice —
 `Warp::sample` and `colour_warper.wgsl` — and each says so.
 
+It lives on the **Colour page**, with the curves and the wheels, rather than
+in the effects list. It was an ordinary effect first and that was the wrong
+home: everything else on Resolve's colour page is simply *there*, and a tool
+you have to remember the name of in order to find is a tool nobody finds.
+
 **Chroma Warp is not built.** It is the one view that is not the same object:
 it places *pins* on the gamut, each with its own chroma range, tonal range and
 exposure, rather than dragging a fixed grid. The icon is there and says so

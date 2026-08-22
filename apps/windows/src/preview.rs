@@ -43,11 +43,18 @@ pub struct Scopes {
 /// viewport. It has its own stage cache, so it only re-runs when the edit
 /// actually changes.
 ///
-/// 320 columns because that is the one dimension a scope's resolution is
-/// really visible in: a waveform is drawn one column of the picture per column
-/// of the panel, and a panel is about that wide. Seventy-seven thousand pixels
-/// is a 300 KB readback and well under a millisecond to bin.
-const SCOPE_SIZE: (u32, u32) = (320, 240);
+/// Both dimensions matter, and they matter for different reasons.
+///
+/// *Columns* are horizontal resolution: a waveform draws one column of the
+/// picture per column of the panel, and a panel is six or seven hundred points
+/// wide. *Rows* are how many samples each of those columns gets — and with 256
+/// levels to spread them over, 240 rows meant most levels held one sample or
+/// none, so a smooth gradient came out as a comb rather than a sweep. That was
+/// the visible mess: not blur, sparseness.
+///
+/// 640 by 480 is three hundred thousand pixels — a 1.2 MB readback, a couple
+/// of milliseconds to bin, and it only happens when the edit changes.
+const SCOPE_SIZE: (u32, u32) = (640, 480);
 
 /// Upper bound on preview dimensions.
 ///

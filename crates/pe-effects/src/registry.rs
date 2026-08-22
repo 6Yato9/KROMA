@@ -4269,6 +4269,12 @@ pub const PINNED_ROWS: &[&str] = &[
     "colour",
     "colour_mixer",
     "curves",
+    // Part of the colour page, like the curves and the wheels, rather than
+    // something you go and fetch. It was an ordinary effect first and that was
+    // the wrong home: everything else on Resolve's colour page is simply
+    // there, and a tool you have to remember the name of to find is a tool
+    // nobody finds.
+    "colour_warper",
     "primaries",
     "log_wheels",
 ];

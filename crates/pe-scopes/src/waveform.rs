@@ -104,10 +104,13 @@ impl Waveform {
     }
 }
 
-/// Resolution of the vectorscope grid. 128 is enough to read a hue to within a
-/// couple of degrees at panel size, and small enough that the whole grid fits
-/// in a cache line-friendly 64 KB.
-pub const VECTOR_SIZE: usize = 128;
+/// Resolution of the vectorscope grid.
+///
+/// 128 was enough to read a hue to within a couple of degrees, which is the
+/// question a vectorscope answers — but it is drawn at around 250 points and
+/// upscaling by two put a visible softness on every trace. 256 is one grid cell
+/// per point at the size the panel actually is, and a quarter of a megabyte.
+pub const VECTOR_SIZE: usize = 256;
 
 /// The six colour bar targets a vectorscope is read against, at 75%.
 ///

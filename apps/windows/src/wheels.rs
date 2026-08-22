@@ -105,7 +105,14 @@ fn hue_colour(hue: f32) -> egui::Color32 {
 /// `range` is how far they may go. The puck measures *from* home, so a Gain
 /// wheel's puck sits in the middle at 1.00 exactly as a Lift wheel's does at
 /// 0.00 — the two read the same because they mean the same thing.
-fn disc(ui: &mut egui::Ui, size: f32, wheel: Wheel, home: f32, range: (f32, f32)) -> Option<Wheel> {
+fn disc(
+    ui: &mut egui::Ui,
+    size: f32,
+    wheel: Wheel,
+    home: f32,
+    range: (f32, f32),
+    master: bool,
+) -> Option<Wheel> {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::click_and_drag());
     let centre = rect.center();
@@ -193,12 +200,27 @@ fn disc(ui: &mut egui::Ui, size: f32, wheel: Wheel, home: f32, range: (f32, f32)
             outer,
             egui::Stroke::new(3.0_f32, egui::Color32::from_gray(42)),
         );
-        // Measured from this wheel's own home over its own range, like the
-        // puck. It used to divide by a hardcoded 0.5, which was every wheel's
-        // range when every wheel had the same one — so Gain sat at 1.00 and
-        // Offset at 25.00 and both pinned the arc at full travel, frozen.
-        let span = (range.1 - home).max(home - range.0).max(1e-4);
-        let sweep = ((wheel.master - home) / span).clamp(-1.0, 1.0);
+        // Where the master sits *in its range*, filled from the bottom
+        // clockwise — not a signed sweep either side of home.
+        //
+        // Which is why Offset opens half full on the right: it sits at 25 on a
+        // range of -175 to 255, which is a shade under halfway, and half of a
+        // fill that starts at six o'clock is exactly the right-hand side. A
+        // signed sweep would have shown nothing there, because nothing is what
+        // a default has moved.
+        //
+        // On a wheel with no master the bar writes into the three channels
+        // together, so the arc reads their mean — that *is* the achromatic
+        // value there. Reading `master` on those would have left the ring
+        // pinned wherever the default put it, which is the same frozen ring in
+        // a new disguise.
+        let achromatic = if master {
+            wheel.master
+        } else {
+            (wheel.rgb[0] + wheel.rgb[1] + wheel.rgb[2]) / 3.0
+        };
+        let span = (range.1 - range.0).max(1e-4);
+        let sweep = ((achromatic - range.0) / span).clamp(0.0, 1.0);
         if sweep.abs() > 1e-3 {
             let start = -std::f32::consts::FRAC_PI_2;
             let steps = 40;
@@ -402,7 +424,7 @@ fn wheel_column(
                 next = Some(Wheel::uniform(default));
             }
         });
-        if let Some(w) = disc(ui, width, wheel, default, (min, max)) {
+        if let Some(w) = disc(ui, width, wheel, default, (min, max), master) {
             next = Some(w);
         }
         ui.add_space(2.0);

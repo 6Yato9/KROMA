@@ -1218,6 +1218,23 @@ impl eframe::App for App {
                                     basic::reset(&mut self.history);
                                 }
                             });
+                        egui::CollapsingHeader::new("Colour Warper")
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                if let Some(id) = self
+                                    .history
+                                    .document()
+                                    .stack
+                                    .find_by_effect("colour_warper")
+                                {
+                                    warper::panel(
+                                        ui,
+                                        &mut self.history,
+                                        id,
+                                        ui.id().with("warper"),
+                                    );
+                                }
+                            });
                         egui::CollapsingHeader::new("Primaries - Color Wheels")
                             .default_open(true)
                             .show(ui, |ui| {
