@@ -1227,11 +1227,17 @@ impl eframe::App for App {
                                     .stack
                                     .find_by_effect("colour_warper")
                                 {
+                                    let seen = self
+                                        .preview
+                                        .as_ref()
+                                        .and_then(|p| p.scopes())
+                                        .map(|s| &s.warper);
                                     warper::panel(
                                         ui,
                                         &mut self.history,
                                         id,
                                         ui.id().with("warper"),
+                                        seen,
                                     );
                                 }
                             });

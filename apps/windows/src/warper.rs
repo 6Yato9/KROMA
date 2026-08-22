@@ -12,6 +12,7 @@
 //! numbers with lines between them.
 
 use pe_core::{History, ParamValue, Pin, Pins, RowId, Warp};
+use pe_scopes::warper::{Distribution, GRID};
 
 /// Which window onto the lattice is showing.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -35,7 +36,13 @@ impl View {
 const GRAB: f32 = 11.0;
 
 /// The whole panel: the view strip, the plot, and the controls under it.
-pub fn panel(ui: &mut egui::Ui, history: &mut History, id: RowId, row_id: egui::Id) {
+pub fn panel(
+    ui: &mut egui::Ui,
+    history: &mut History,
+    id: RowId,
+    row_id: egui::Id,
+    seen: Option<&Distribution>,
+) {
     let view_id = row_id.with("warper_view");
     let mut view: View = ui.data_mut(|d| *d.get_temp_mut_or(view_id, View::HueSat));
 
@@ -51,7 +58,7 @@ pub fn panel(ui: &mut egui::Ui, history: &mut History, id: RowId, row_id: egui::
 
     match view {
         View::HueSat => {
-            grid_plot(ui, history, id, row_id, "hue_sat", Axes::HueSat);
+            grid_plot(ui, history, id, row_id, "hue_sat", Axes::HueSat, seen);
             ui.add_space(4.0);
             crate::basic::slider_of(ui, history, id, "colour_warper", "hue_divisions");
             crate::basic::slider_of(ui, history, id, "colour_warper", "sat_divisions");
@@ -73,14 +80,14 @@ pub fn panel(ui: &mut egui::Ui, history: &mut History, id: RowId, row_id: egui::
             } else {
                 "chroma_luma_1"
             };
-            grid_plot(ui, history, id, row_id, key, Axes::ChromaLuma);
+            grid_plot(ui, history, id, row_id, key, Axes::ChromaLuma, seen);
             ui.add_space(4.0);
             crate::basic::slider_of(ui, history, id, "colour_warper", "chroma_divisions");
             crate::basic::slider_of(ui, history, id, "colour_warper", "luma_divisions");
             crate::basic::slider_of(ui, history, id, "colour_warper", "axis_angle");
         }
         View::ChromaWarp => {
-            chroma_warp(ui, history, id, row_id);
+            chroma_warp(ui, history, id, row_id, seen);
         }
     }
 }
@@ -196,7 +203,13 @@ fn icon(painter: &egui::Painter, rect: egui::Rect, view: View, tint: egui::Color
 /// want it to go, and told how far around itself to reach. That is a different
 /// question from the one the grids answer, which is why this is a view and not
 /// a third pair of axes.
-fn chroma_warp(ui: &mut egui::Ui, history: &mut History, id: RowId, row_id: egui::Id) {
+fn chroma_warp(
+    ui: &mut egui::Ui,
+    history: &mut History,
+    id: RowId,
+    row_id: egui::Id,
+    seen: Option<&Distribution>,
+) {
     let pins = read_pins(history, id);
     let chosen_id = row_id.with("pin");
     let mut chosen: Option<usize> = ui.data_mut(|d| d.get_temp(chosen_id).unwrap_or(None));
@@ -211,6 +224,13 @@ fn chroma_warp(ui: &mut egui::Ui, history: &mut History, id: RowId, row_id: egui
 
     if ui.is_rect_visible(rect) {
         gamut(ui.painter(), rect);
+        // The photograph's own colours, over the space they live in. Without
+        // this you are aiming a pin at where greens are in general rather than
+        // at the green in front of you, which is the difference between a
+        // diagram and a tool.
+        if let Some(d) = seen {
+            haze(ui.painter(), rect, &d.chromaticity, d.peaks[0]);
+        }
         draw_pins(ui.painter(), rect, &pins, chosen);
     }
 
@@ -495,6 +515,7 @@ fn draw_pins(painter: &egui::Painter, rect: egui::Rect, pins: &Pins, chosen: Opt
 }
 
 /// Read the lattice, draw it, and turn a drag on a vertex into an edit.
+#[allow(clippy::too_many_arguments)]
 fn grid_plot(
     ui: &mut egui::Ui,
     history: &mut History,
@@ -502,6 +523,7 @@ fn grid_plot(
     row_id: egui::Id,
     key: &'static str,
     axes: Axes,
+    seen: Option<&Distribution>,
 ) {
     let warp = history
         .document()
@@ -518,6 +540,15 @@ fn grid_plot(
 
     if ui.is_rect_visible(rect) {
         background(ui.painter(), rect, axes);
+        // The frame's own colours, in this view's projection. Each view needs
+        // its own measurement — a cloud plotted for one set of axes says
+        // nothing on another.
+        if let Some(d) = seen {
+            match axes {
+                Axes::HueSat => haze(ui.painter(), rect, &d.hue_sat, d.peaks[1]),
+                Axes::ChromaLuma => haze(ui.painter(), rect, &d.chroma_luma, d.peaks[2]),
+            }
+        }
         lattice(ui.painter(), rect, &warp, axes);
     }
 
@@ -601,6 +632,52 @@ fn grid_plot(
                 .weak(),
         );
     });
+}
+
+/// The frame's colours, drawn over a plot as a translucent haze.
+///
+/// White and additive, which is what makes it read as *measurement* rather
+/// than as part of the picture underneath: it brightens whatever it lands on
+/// instead of tinting it, so a dense cloud over a green still looks like a
+/// green with a lot of pixels in it.
+///
+/// The brightness curve is a fourth root. A photograph's colours are wildly
+/// unevenly distributed — a sky is thousands of pixels in a handful of cells
+/// and a red jacket is a hundred spread over dozens — and against a linear
+/// scale the jacket is invisible next to the sky. The whole reason to draw
+/// this is to see the jacket.
+fn haze(painter: &egui::Painter, rect: egui::Rect, grid: &[u32], peak: u32) {
+    if peak == 0 {
+        return;
+    }
+    let peak = peak as f32;
+    let cell = egui::vec2(
+        rect.width() / GRID as f32 + 0.5,
+        rect.height() / GRID as f32 + 0.5,
+    );
+    let mut mesh = egui::Mesh::default();
+    for row in 0..GRID {
+        for col in 0..GRID {
+            let count = grid[row * GRID + col];
+            if count == 0 {
+                continue;
+            }
+            let t = (count as f32 / peak).powf(0.25).clamp(0.0, 1.0);
+            let at = egui::pos2(
+                rect.min.x + col as f32 / GRID as f32 * rect.width(),
+                rect.min.y + row as f32 / GRID as f32 * rect.height(),
+            );
+            // Premultiplied with zero alpha is egui's additive case, which is
+            // the same trick the histogram's channels use to sum to white
+            // where they agree.
+            let v = (t * 190.0) as u8;
+            mesh.add_colored_rect(
+                egui::Rect::from_min_size(at, cell),
+                egui::Color32::from_rgba_premultiplied(v, v, v, 0),
+            );
+        }
+    }
+    painter.add(egui::Shape::mesh(mesh));
 }
 
 /// Where a vertex sits when nothing has been done to it, in axis units.

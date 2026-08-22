@@ -492,20 +492,6 @@ fn row_ui(
     }
 
     ui.add_space(2.0);
-    // One effect draws itself. The Colour Warper is a grid you drag, not a
-    // column of values, and its three views are three windows onto one
-    // lattice — a flat parameter list would show two dropdowns and nothing
-    // to point them at.
-    if def.key == "colour_warper" {
-        crate::warper::panel(ui, history, id, row_id);
-        ui.add_space(4.0);
-        resolve::section(ui, row_id.with("blend"), "Global Blend", |ui| {
-            blend_ui(ui, history, id, row_id);
-        });
-        ui.add_space(6.0);
-        return;
-    }
-
     // Top-level parameters first, in declaration order, then each heading in
     // the order it first appears. That is the order the effect declared, which
     // is the order the person who wrote it meant them to be read in.

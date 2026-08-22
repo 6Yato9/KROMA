@@ -593,6 +593,20 @@ opinion about.
 They are greyed in the screenshot because no pin was selected, and they are
 greyed here for the same reason.
 
+**All three plots show the photograph's own colours**, as a translucent haze
+over the space. This is what turns the warper from a diagram into a tool: a
+grid over a plot of colour *in general* tells you nothing about the picture in
+front of you, and you would be aiming a pin at where greens usually are rather
+than at the green you can see. Resolve draws it on all three for that reason.
+
+Three measurements rather than one, because the three views are three
+projections and a cloud measured for one says nothing on another. They are
+counted in a single pass, additive and white so the haze reads as measurement
+rather than as part of the plot underneath, and scaled by a fourth root — a
+photograph's colours are wildly unevenly distributed, and against a linear
+scale the red jacket is invisible beside the sky. Seeing the jacket is the
+entire point.
+
 **It works on chromaticity, not on hue and saturation.** CIE xy is what the
 plot draws and what a pin is placed on: moving a colour there changes its hue
 and its purity together, holds its luminance still, and means the same thing to

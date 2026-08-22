@@ -10,8 +10,10 @@
 //! histogram; a parade is three waveforms. None of it is hard — it is just
 //! rarely done properly outside grading tools.
 
+pub mod warper;
 pub mod waveform;
 
+pub use warper::Distribution;
 pub use waveform::{Channel, LEVELS, SKIN, TARGETS, VECTOR_SIZE, Vectorscope, Waveform};
 
 /// Where a frame's hues and saturations sit, for the secondary curves.
@@ -84,7 +86,7 @@ impl ColourSpread {
 
 /// The sRGB decode, tabulated. Two hundred and fifty-six entries, so binning
 /// a frame never calls `powf`.
-fn srgb_decode() -> &'static [f64; 256] {
+pub(crate) fn srgb_decode() -> &'static [f64; 256] {
     use std::sync::OnceLock;
     static TABLE: OnceLock<[f64; 256]> = OnceLock::new();
     TABLE.get_or_init(|| {

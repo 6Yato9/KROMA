@@ -12,7 +12,7 @@ use pe_color::space;
 use pe_core::{Document, Geometry};
 use pe_io::DecodedImage;
 use pe_render::{EffectRenderer, GpuContext, ImageTexture, Region, RenderError, TransformPass};
-use pe_scopes::{ColourSpread, Histogram, Vectorscope, Waveform};
+use pe_scopes::{ColourSpread, Distribution, Histogram, Vectorscope, Waveform};
 
 /// Everything measured from one readback of the graded frame.
 ///
@@ -30,6 +30,10 @@ pub struct Scopes {
     pub colour: ColourSpread,
     pub waveform: Waveform,
     pub vectorscope: Vectorscope,
+    /// Where the frame's colours sit on each of the Colour Warper's three
+    /// plots. Without it the warper is a diagram of colour in general rather
+    /// than a tool aimed at the photograph in front of you.
+    pub warper: Distribution,
     /// Bumped on every fresh measurement, so the panel knows when to re-upload
     /// its textures instead of doing it every frame.
     pub generation: u64,
@@ -286,6 +290,7 @@ impl Preview {
                 colour: ColourSpread::from_display(&pixels),
                 waveform: Waveform::from_display(&pixels, w, h),
                 vectorscope: Vectorscope::from_display(&pixels),
+                warper: Distribution::from_display(&pixels),
                 generation: self.generation,
             });
         }
