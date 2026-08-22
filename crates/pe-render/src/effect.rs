@@ -244,7 +244,18 @@ impl EffectRenderer {
         self.resolved.resize(doc.stack.len(), None);
         self.last_passes = plan.execute.len();
 
-        if !plan.execute.is_empty() {
+        // Guarded on anything being *dirty*, not on anything needing drawing.
+        //
+        // Those are different, and conflating them was a real bug with a
+        // memorable symptom. `resolved` is the map from row to the stage
+        // holding its output, and it is maintained by the loop below. A row
+        // that has just gone inert — which is exactly what a reset arrow does,
+        // and what an enable toggle does — needs no pass, so the plan had
+        // nothing to execute, so the loop was skipped, so `resolved` kept
+        // saying "row N's output is in stage N" from back when the row still
+        // did something. The number went to zero and the picture did not
+        // change until you moved the slider again.
+        if plan.first_dirty < doc.stack.len() {
             let mut encoder = gpu
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -276,7 +287,12 @@ impl EffectRenderer {
                 self.resolved[i] = Some(i);
             }
 
-            gpu.queue.submit([encoder.finish()]);
+            // Only if something actually drew. An encoder with no passes in
+            // it is legal to submit and does nothing, but a queue submission
+            // per frame of an idle window is a cost with no purchase.
+            if !plan.execute.is_empty() {
+                gpu.queue.submit([encoder.finish()]);
+            }
         }
 
         self.cache.store_plan(&doc.stack, &plan);

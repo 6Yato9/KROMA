@@ -99,6 +99,68 @@ impl Harness {
     }
 }
 
+/// A row that stops doing anything has to stop showing.
+///
+/// This is what a reset arrow *is* — put the value back to neutral — and it
+/// was broken in a way that made the arrow look broken instead. The renderer
+/// skipped all its bookkeeping when no row needed drawing, so the alias
+/// saying "row N's output lives in stage N" survived from when the row still
+/// did something, and the picture kept an effect whose number had already
+/// gone back to zero.
+///
+/// It needs the same renderer twice, because the whole bug is in what the
+/// cache remembers between two frames.
+#[test]
+fn a_row_that_goes_neutral_stops_affecting_the_picture() {
+    let Some(mut harness) = Harness::new(&chart()) else {
+        return;
+    };
+    let plain = harness.render(&doc_with(&[]));
+    let pushed = harness.render(&doc_with(&[(
+        "exposure",
+        &[("ev", ParamValue::Float(2.0))],
+    )]));
+    assert!(
+        plain.max_channel_delta(&pushed).unwrap() > 20,
+        "the fixture never showed the effect at all"
+    );
+
+    // Back to neutral, through the same renderer — which is the case the
+    // cache gets wrong.
+    let reset = harness.render(&doc_with(&[(
+        "exposure",
+        &[("ev", ParamValue::Float(0.0))],
+    )]));
+    assert!(
+        plain.max_channel_delta(&reset).unwrap() <= 2,
+        "the row went neutral and the picture kept the effect: {} levels",
+        plain.max_channel_delta(&reset).unwrap()
+    );
+}
+
+/// The same thing by the other route: switching a row off.
+///
+/// One bug, two controls — the enable pill on the last row of a stack was
+/// just as dead as the reset arrow, and for exactly the same reason.
+#[test]
+fn disabling_the_last_row_stops_it_showing() {
+    let Some(mut harness) = Harness::new(&chart()) else {
+        return;
+    };
+    let plain = harness.render(&doc_with(&[]));
+    let mut doc = doc_with(&[("exposure", &[("ev", ParamValue::Float(2.0))])]);
+    let pushed = harness.render(&doc);
+    assert!(plain.max_channel_delta(&pushed).unwrap() > 20);
+
+    doc.stack.rows[0].enabled = false;
+    let off = harness.render(&doc);
+    assert!(
+        plain.max_channel_delta(&off).unwrap() <= 2,
+        "the row was switched off and the picture kept it: {} levels",
+        plain.max_channel_delta(&off).unwrap()
+    );
+}
+
 fn doc_with(rows: &[(&str, &[(&str, ParamValue)])]) -> Document {
     let mut doc = Document::from_path("test.jpg");
     for (i, (effect, params)) in rows.iter().enumerate() {
