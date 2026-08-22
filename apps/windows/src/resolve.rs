@@ -773,6 +773,90 @@ mod tests {
         out.expect("laid out")
     }
 
+    /// Drive a real click at a point inside a row and report what the row
+    /// says came back.
+    ///
+    /// Two frames, because egui hit-tests against the widget rectangles the
+    /// *previous* frame registered — a one-frame test would click at a point
+    /// where, as far as egui is concerned, there is nothing yet.
+    fn click_at(width: f32, offset_from_right: f32) -> Edit {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(width, 400.0));
+        let mut value = 0.5_f32;
+
+        let run = |input: egui::RawInput, value: &mut f32| -> Edit {
+            let mut edit = Edit::default();
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                    edit = slider_row(
+                        &mut child,
+                        egui::Id::new("row"),
+                        "Exposure",
+                        value,
+                        0.0..=1.0,
+                        3,
+                    );
+                });
+            });
+            edit
+        };
+
+        // Frame one registers the widgets.
+        let base = egui::RawInput {
+            screen_rect: Some(rect),
+            ..Default::default()
+        };
+        run(base.clone(), &mut value);
+
+        // Frame two presses and releases on the point asked for.
+        let at = egui::pos2(rect.max.x - offset_from_right, rect.min.y + ROW_H * 0.5);
+        let mut input = base;
+        input.events = vec![
+            egui::Event::PointerMoved(at),
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: Default::default(),
+            },
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            },
+        ];
+        run(input, &mut value)
+    }
+
+    /// The reset arrow has to be clickable where it is *drawn*.
+    ///
+    /// It sits at the very end of the row, which is also where a floating
+    /// scrollbar lives and where a panel's edge is — the two places a click
+    /// most easily goes somewhere else. Worth a test that presses the actual
+    /// pixel rather than trusting the rectangle arithmetic.
+    #[test]
+    fn the_reset_arrow_answers_a_click_on_the_glyph() {
+        // The glyph is drawn at the centre of the reset column.
+        let edit = click_at(420.0, RESET_W * 0.5);
+        assert!(edit.reset, "a click on the reset arrow did nothing");
+        assert!(!edit.changed, "resetting is not a value change");
+    }
+
+    /// And anywhere in its column, since the hit area is the whole column and
+    /// a user aiming at a 12-point glyph will miss it.
+    #[test]
+    fn the_reset_arrow_answers_a_click_anywhere_in_its_column() {
+        for offset in [2.0_f32, 6.0, 9.0, 14.0, 17.0] {
+            let edit = click_at(420.0, offset);
+            assert!(
+                edit.reset,
+                "a click {offset} points from the right edge missed the reset arrow"
+            );
+        }
+    }
+
     /// The reason this exists at all: every row's track has to start and end
     /// in the same place, whatever its label says. egui's stock slider sizes
     /// its label to the text, so a panel of thirty parameters comes out as

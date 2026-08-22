@@ -611,9 +611,11 @@ fn param_ui(
     if !active {
         let mut child =
             ui.new_child(egui::UiBuilder::new().max_rect(ui.available_rect_before_wrap()));
+        // Disabled, which is what stops a click reaching it — egui gives a
+        // disabled `Ui` an inert response, so the row draws and reports
+        // nothing. The history is the real one because the row still has to
+        // *read* the value it is showing.
         child.disable();
-        // A throwaway history, so a stray interaction cannot write through a
-        // control the effect is currently ignoring.
         param_row(&mut child, history, id, def, row_id);
         let used = child.min_rect().height();
         ui.allocate_space(egui::vec2(ui.available_width(), used));

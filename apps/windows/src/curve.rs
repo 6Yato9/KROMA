@@ -557,13 +557,21 @@ fn float_param(history: &History, id: RowId, key: &str, fallback: f32) -> f32 {
         .unwrap_or(fallback)
 }
 
+/// What one of the curve panel's own sliders reports, applied.
+///
+/// All three parts of an `Edit`, which is the point: this used to take the
+/// neutral value and ignore it — the argument was even spelled `_neutral` —
+/// so the reset arrow on every slider in this panel drew, hovered, and did
+/// nothing at all. Dragging the slider back by hand worked, which is exactly
+/// what makes that kind of bug survive: the control it broke is the one you
+/// reach for *instead of* the thing that still works.
 fn apply(
     history: &mut History,
     id: RowId,
     key: &'static str,
     value: f32,
     edit: resolve::Edit,
-    _neutral: f32,
+    neutral: f32,
 ) {
     if edit.changed {
         history.edit(key, Some(format!("curve.{key}")), move |doc| {
@@ -574,6 +582,13 @@ fn apply(
     }
     if edit.released {
         history.break_coalescing();
+    }
+    if edit.reset {
+        history.edit(key, None, move |doc| {
+            if let Some(row) = doc.stack.get_mut(id) {
+                row.params.set(key, ParamValue::Float(neutral));
+            }
+        });
     }
 }
 
@@ -1477,6 +1492,89 @@ fn nearest(
 
 #[cfg(test)]
 mod tests {
+    use pe_core::History;
+
+    fn curve_row() -> (History, RowId) {
+        let history = History::new(pe_effects::new_document("photo.jpg"));
+        let id = history
+            .document()
+            .stack
+            .find_by_effect("curves")
+            .expect("curves is a pinned row");
+        (history, id)
+    }
+
+    fn value_of(history: &History, id: RowId, key: &str) -> f32 {
+        history
+            .document()
+            .stack
+            .get(id)
+            .and_then(|r| r.params.get(key))
+            .and_then(ParamValue::as_float)
+            .expect("the parameter is set")
+    }
+
+    /// The reset arrow on this panel's own sliders has to put the value back.
+    ///
+    /// It did not, for as long as `apply` existed: it took the neutral value
+    /// and ignored it. Worth a test rather than a careful reading, because
+    /// the failure is silent — the arrow draws, hovers and highlights exactly
+    /// as it does everywhere else.
+    #[test]
+    fn the_reset_arrow_puts_a_curve_slider_back() {
+        let (mut history, id) = curve_row();
+        let pushed = resolve::Edit {
+            changed: true,
+            ..Default::default()
+        };
+        apply(&mut history, id, "red_intensity", 40.0, pushed, 100.0);
+        assert_eq!(value_of(&history, id, "red_intensity"), 40.0);
+
+        let reset = resolve::Edit {
+            reset: true,
+            ..Default::default()
+        };
+        apply(&mut history, id, "red_intensity", 40.0, reset, 100.0);
+        assert_eq!(
+            value_of(&history, id, "red_intensity"),
+            100.0,
+            "the reset arrow left the value where it was"
+        );
+    }
+
+    /// And it is an undo step of its own, not a silent write — otherwise a
+    /// mis-click on a control you cannot see the effect of is unrecoverable.
+    #[test]
+    fn resetting_a_curve_slider_can_be_undone() {
+        let (mut history, id) = curve_row();
+        apply(
+            &mut history,
+            id,
+            "soft_clip_low",
+            0.3,
+            resolve::Edit {
+                changed: true,
+                ..Default::default()
+            },
+            0.0,
+        );
+        history.break_coalescing();
+        apply(
+            &mut history,
+            id,
+            "soft_clip_low",
+            0.3,
+            resolve::Edit {
+                reset: true,
+                ..Default::default()
+            },
+            0.0,
+        );
+        assert_eq!(value_of(&history, id, "soft_clip_low"), 0.0);
+        assert!(history.undo());
+        assert_eq!(value_of(&history, id, "soft_clip_low"), 0.3);
+    }
+
     use super::*;
 
     /// The two ends are one control. Moving the white end down on its own
