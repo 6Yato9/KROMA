@@ -659,12 +659,10 @@ fn canvas(
         && let Some(pos) = response.interact_pointer_pos()
     {
         let v = ((rect.max.y - pos.y) / rect.height().max(1e-4)).clamp(0.0, 1.0);
-        // Deliberately not clamped against the other end. Dragging white below
-        // black inverts the picture, and that is a real thing to want — it is
-        // how a negative is made, and refusing it would be the editor deciding
-        // what the user meant.
-        let at = if i == 0 { 0 } else { curve.points.len() - 1 };
-        curve.points[at][1] = v;
+        let (black, white) = mirrored_ends(v, i);
+        let last = curve.points.len() - 1;
+        curve.points[0][1] = black;
+        curve.points[last][1] = white;
         set(
             history,
             id,
@@ -1371,6 +1369,18 @@ const HANDLE_GRAB: f32 = 22.0;
 /// 18% grey in the curve's domain, the anchor both limits measure in from.
 const LOG_GREY: f32 = 0.413_588_67;
 
+/// Where the two ends go when one of them is dragged to `v`.
+///
+/// They are one control, mirrored about the middle. Moving the white end down
+/// on its own would only darken the picture — the black end has to come up to
+/// meet it, which collapses the contrast towards grey and then, once they
+/// cross, turns the picture into a negative. That crossing is the whole point
+/// of the control and it is why the two are linked rather than independent.
+fn mirrored_ends(v: f32, which: usize) -> (f32, f32) {
+    let white = if which == 1 { v } else { 1.0 - v };
+    (1.0 - white, white)
+}
+
 /// The two end handles: an arrow on the left edge and, once moved, a line
 /// across the plot at that level.
 ///
@@ -1440,6 +1450,29 @@ fn nearest(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The two ends are one control. Moving the white end down on its own
+    /// only darkens the picture; the black end coming up to meet it is what
+    /// collapses the contrast and then inverts it.
+    #[test]
+    fn the_two_ends_mirror_about_the_middle() {
+        // Dragging the white end to the top is the identity.
+        assert_eq!(mirrored_ends(1.0, 1), (0.0, 1.0));
+        // To the middle, both meet there and the picture goes flat.
+        assert_eq!(mirrored_ends(0.5, 1), (0.5, 0.5));
+        // Past it, they cross: white out below black out is a negative.
+        let (black, white) = mirrored_ends(0.2, 1);
+        assert!(
+            white < black,
+            "the ends did not cross ({white} against {black})"
+        );
+        // And either handle drives the pair, so grabbing the lower one works
+        // the same way from the other side. Compared loosely because one path
+        // subtracts twice and the other once.
+        let (a_black, a_white) = mirrored_ends(0.8, 0);
+        let (b_black, b_white) = mirrored_ends(0.2, 1);
+        assert!((a_black - b_black).abs() < 1e-6 && (a_white - b_white).abs() < 1e-6);
+    }
 
     /// The plot spans black to diffuse white, so the histogram behind it has
     /// to be read through that range. Laid out edge to edge instead, every

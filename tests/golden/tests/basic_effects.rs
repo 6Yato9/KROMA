@@ -618,6 +618,59 @@ fn a_curve_intensity_dials_between_nothing_and_all_of_it() {
     );
 }
 
+/// The curve's two ends, mirrored about the middle the way the editor links
+/// them: `white` is where the white end sits and the black end is its mirror.
+fn ends_at(white: f32) -> ParamValue {
+    ParamValue::Curve(pe_core::Curve {
+        points: vec![[0.0, 1.0 - white], [1.0, white]],
+    })
+}
+
+/// Bringing the ends together flattens the picture towards grey rather than
+/// darkening it. Moving the white end alone would only darken — the black end
+/// coming up to meet it is what collapses the contrast.
+#[test]
+fn closing_the_curve_ends_collapses_the_contrast_towards_grey() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = ramp();
+    let out = render(gpu, &src, &look("curves", &[("luma", ends_at(0.55))]));
+
+    let dark = out.pixel(20, 4)[0] as i32;
+    let bright = out.pixel(235, 4)[0] as i32;
+    assert!(
+        dark > src.pixel(20, 4)[0] as i32 + 10,
+        "the shadows should have come up, got {dark}"
+    );
+    assert!(
+        bright < src.pixel(235, 4)[0] as i32 - 10,
+        "the highlights should have come down, got {bright}"
+    );
+    assert!(
+        bright > dark,
+        "the ends crossed when they should only have met ({dark} to {bright})"
+    );
+}
+
+/// Past the middle they cross, and a curve whose white end is below its black
+/// end is a negative. That crossing is the whole point of linking them.
+#[test]
+fn crossing_the_curve_ends_inverts_the_picture() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        return;
+    };
+    let src = ramp();
+    let out = render(gpu, &src, &look("curves", &[("luma", ends_at(0.1))]));
+
+    let dark_end = out.pixel(20, 4)[0] as i32;
+    let bright_end = out.pixel(235, 4)[0] as i32;
+    assert!(
+        dark_end > bright_end + 30,
+        "the picture did not invert: the ramp still runs {dark_end} to {bright_end}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Soft clip
 // ---------------------------------------------------------------------------
