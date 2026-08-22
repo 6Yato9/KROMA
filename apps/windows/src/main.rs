@@ -163,8 +163,8 @@ impl App {
         Self {
             image,
             path,
+            ids: ids_for(&doc),
             history: History::new(doc),
-            ids: RowIdGenerator::default(),
             preview,
             gpu_name,
             bypass_all: false,
@@ -1108,9 +1108,7 @@ impl eframe::App for App {
                                 row.params = def.default_params();
                                 doc.stack.push(row);
                             });
-                        ctx.data_mut(|d| {
-                            d.insert_temp(egui::Id::new(("fx", id.0)).with("open"), true)
-                        });
+                        ctx.data_mut(|d| d.insert_temp(inspector::open_flag(id), true));
                     }
                     self.dragging_effect = None;
                 }
@@ -1643,6 +1641,17 @@ fn label(ui: &egui::Ui, at: egui::Pos2, text: &str, align: egui::Align2) {
         .rect_filled(rect, 2.0, egui::Color32::from_black_alpha(150));
     ui.painter()
         .text(at, align, text, font, egui::Color32::from_white_alpha(230));
+}
+
+/// A generator that will not collide with what the document already holds.
+///
+/// Resuming, not default. A new document arrives with its pinned rows in
+/// place and they hold ids from zero upwards, so a generator starting at zero
+/// hands the first added effect an id another row already owns — and from
+/// then on every lookup by id finds whichever comes first, which is the
+/// pinned one. The row draws, and nothing that acts on it works.
+fn ids_for(doc: &Document) -> RowIdGenerator {
+    RowIdGenerator::resuming(doc)
 }
 
 /// The id the hover preview borrows.

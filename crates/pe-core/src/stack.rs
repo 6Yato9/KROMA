@@ -255,7 +255,19 @@ impl Stack {
         self.rows.iter()
     }
 
+    /// Add a row to the end.
+    ///
+    /// Ids must be unique. Every lookup here is a linear scan that stops at
+    /// the first match, so a duplicate does not error — it silently resolves
+    /// to whichever row was pushed first, and the other one becomes a row you
+    /// can see and cannot touch. The assertion fires where the mistake is
+    /// made rather than where it is felt.
     pub fn push(&mut self, row: StackRow) {
+        debug_assert!(
+            !self.rows.iter().any(|r| r.id == row.id),
+            "row id {} is already in the stack",
+            row.id.0
+        );
         self.rows.push(row);
     }
 

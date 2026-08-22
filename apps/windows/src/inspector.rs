@@ -27,9 +27,9 @@ use pe_effects::{EffectDef, Group, ParamDef, ParamKind};
 use crate::resolve::{self, Edit};
 use crate::settings::Settings;
 
-/// One shelf tile. Near enough square to read as a swatch rather than a row,
-/// and small enough that three or four fit across a docked panel.
-const TILE: egui::Vec2 = egui::vec2(98.0, 66.0);
+/// Padding inside a tile: room for the star on the right, and a little either
+/// side of the name.
+const TILE_PAD: egui::Vec2 = egui::vec2(30.0, 9.0);
 
 /// How much of the tab the shelf gets before it starts scrolling.
 const BROWSER_HEIGHT: f32 = 250.0;
@@ -94,6 +94,17 @@ pub fn show(
     preview
 }
 
+/// Where a row's expanded state is kept.
+///
+/// Not `ui.make_persistent_id`, which mixes in the id of whichever `Ui` asked.
+/// The row is opened from the shelf and read by the list, and those are two
+/// different `Ui`s — so deriving it from either means the flag is written
+/// under one key and looked for under another, and a freshly added effect
+/// arrives shut.
+pub fn open_flag(row: RowId) -> egui::Id {
+    egui::Id::new(("fx", row.0)).with("open")
+}
+
 /// Add `key` to the end of the stack, opened.
 fn add(ui: &egui::Ui, history: &mut History, ids: &mut RowIdGenerator, def: &'static EffectDef) {
     let id = ids.allocate();
@@ -104,8 +115,7 @@ fn add(ui: &egui::Ui, history: &mut History, ids: &mut RowIdGenerator, def: &'st
     });
     // Open it. You added it to change something, and a row that arrives shut
     // costs a click to say so.
-    let open = ui.make_persistent_id(("fx", id.0)).with("open");
-    ui.data_mut(|d| d.insert_temp(open, true));
+    ui.data_mut(|d| d.insert_temp(open_flag(id), true));
 }
 
 /// Resolve a drop that landed on the enabled list.
@@ -201,6 +211,30 @@ fn heading(ui: &mut egui::Ui, text: &str) {
     ui.add_space(2.0);
 }
 
+/// How big every tile is.
+///
+/// One size for all of them, set by the longest name. Tiles that each fit
+/// their own text come out ragged and read as a list of buttons; a grid reads
+/// as a set of things of the same kind, which is what they are. Measured
+/// rather than guessed, so it follows the font instead of a number that was
+/// right on one machine.
+fn tile_size(ui: &egui::Ui) -> egui::Vec2 {
+    let font = egui::FontId::proportional(11.5);
+    let mut widest: f32 = 0.0;
+    let mut line: f32 = 0.0;
+    for def in pe_effects::all() {
+        if pe_effects::registry::PINNED_ROWS.contains(&def.key) {
+            continue;
+        }
+        let galley =
+            ui.painter()
+                .layout_no_wrap(def.name.to_string(), font.clone(), egui::Color32::WHITE);
+        widest = widest.max(galley.size().x);
+        line = line.max(galley.size().y);
+    }
+    egui::vec2(widest + TILE_PAD.x, line + TILE_PAD.y * 2.0)
+}
+
 /// A row of tiles, wrapping to as many as fit.
 fn tiles(
     ui: &mut egui::Ui,
@@ -268,11 +302,11 @@ fn tile(
     dragging: &mut Option<&'static str>,
     settings: &mut Settings,
 ) -> Option<&'static str> {
-    let (rect, response) = ui.allocate_exact_size(TILE, egui::Sense::click_and_drag());
+    let (rect, response) = ui.allocate_exact_size(tile_size(ui), egui::Sense::click_and_drag());
 
     // The star owns its own corner. Checked before the tile's own click, or
     // starring an effect would also add it.
-    let star_at = egui::pos2(rect.max.x - 11.0, rect.min.y + 11.0);
+    let star_at = egui::pos2(rect.max.x - 12.0, rect.center().y);
     let star_rect = egui::Rect::from_center_size(star_at, egui::Vec2::splat(20.0));
     let star_response = ui.interact(
         star_rect,
@@ -318,25 +352,16 @@ fn tile(
             egui::StrokeKind::Inside,
         );
         star(painter, star_at, settings.is_favourite(def.key), over_star);
-        // Wrapped and centred in the lower part of the tile, so a two-word
-        // name does not run under the star.
-        let galley = painter.layout(
-            def.name.to_string(),
+        painter.text(
+            egui::pos2(rect.min.x + 8.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            def.name,
             egui::FontId::proportional(11.5),
             if hot {
                 resolve::colour::TITLE
             } else {
                 egui::Color32::from_gray(198)
             },
-            rect.width() - 10.0,
-        );
-        painter.galley(
-            egui::pos2(
-                rect.center().x - galley.size().x * 0.5,
-                rect.max.y - 8.0 - galley.size().y,
-            ),
-            galley,
-            egui::Color32::WHITE,
         );
     }
     let response = response.on_hover_text(if settings.is_favourite(def.key) {
@@ -409,7 +434,7 @@ fn row_ui(
     };
     let enabled = row.enabled;
     let row_id = ui.make_persistent_id(("fx", id.0));
-    let open_id = row_id.with("open");
+    let open_id = open_flag(id);
     let mut open: bool = ui.data_mut(|d| *d.get_temp_mut_or(open_id, false));
 
     let action = resolve::effect_header(

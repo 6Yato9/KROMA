@@ -2536,6 +2536,43 @@ mod tests {
         }
     }
 
+    /// A new document arrives with its pinned rows already holding ids from
+    /// zero upwards, so anything that hands out new ones has to be told where
+    /// they stop.
+    ///
+    /// Getting this wrong does not error. Every lookup is a scan that stops at
+    /// the first match, so a duplicate id silently resolves to the pinned row
+    /// — the added effect draws, and its bin, its arrows and its parameters
+    /// all act on White Balance instead.
+    #[test]
+    fn a_generator_resumed_on_a_new_document_cannot_collide_with_it() {
+        let doc = new_document("a.jpg");
+        let mut ids = pe_core::RowIdGenerator::resuming(&doc);
+        let existing: Vec<u64> = doc.stack.iter().map(|r| r.id.0).collect();
+        assert_eq!(existing.len(), PINNED_ROWS.len());
+        for _ in 0..8 {
+            let next = ids.allocate();
+            assert!(
+                !existing.contains(&next.0),
+                "id {} is already in the stack",
+                next.0
+            );
+        }
+    }
+
+    /// And a generator that was *not* resumed collides immediately, which is
+    /// the mistake this is here to describe.
+    #[test]
+    fn a_default_generator_collides_with_the_pinned_rows() {
+        let doc = new_document("a.jpg");
+        let mut ids = pe_core::RowIdGenerator::default();
+        let first = ids.allocate();
+        assert!(
+            doc.stack.get(first).is_some(),
+            "the trap has moved: a default generator no longer collides, so              the comment on `resuming` needs revisiting"
+        );
+    }
+
     #[test]
     fn the_primaries_panel_has_four_wheels() {
         // Three wheels is the common mistake. Offset is the fourth.
