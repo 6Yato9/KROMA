@@ -933,13 +933,24 @@ impl eframe::App for App {
                 }
                 ui.separator();
                 ui.add_enabled_ui(self.history.can_undo(), |ui| {
-                    let label = self.history.undo_label().unwrap_or("").to_string();
-                    if ui.button("Undo").on_hover_text(label).clicked() {
+                    let what = self.history.undo_label().unwrap_or("").to_string();
+                    let tip = if what.is_empty() {
+                        "Undo — Ctrl+Z".to_string()
+                    } else {
+                        format!("Undo {what} — Ctrl+Z")
+                    };
+                    if resolve::icon_button(ui, resolve::Glyph::Undo, &tip) {
                         self.history.undo();
                     }
                 });
                 ui.add_enabled_ui(self.history.can_redo(), |ui| {
-                    if ui.button("Redo").clicked() {
+                    let what = self.history.redo_label().unwrap_or("").to_string();
+                    let tip = if what.is_empty() {
+                        "Redo — Ctrl+Shift+Z".to_string()
+                    } else {
+                        format!("Redo {what} — Ctrl+Shift+Z")
+                    };
+                    if resolve::icon_button(ui, resolve::Glyph::Redo, &tip) {
                         self.history.redo();
                     }
                 });
@@ -1032,15 +1043,17 @@ impl eframe::App for App {
                     }
                 });
                 ui.separator();
-                ui.label(egui::RichText::new("Compare").small().weak());
-                for (label, mode) in [
-                    ("Off", Compare::Off),
-                    ("Wipe", Compare::Wipe),
-                    ("Side", Compare::Side),
-                ] {
-                    if ui.selectable_label(self.compare == mode, label).clicked() {
-                        self.compare = mode;
-                    }
+                // One button that cycles, rather than three that are mostly
+                // off. A three-way choice where two thirds of the control is
+                // always the wrong answer is three times the width for the
+                // same one fact — which mode is on — and the fact is already
+                // written on the button.
+                if ui
+                    .selectable_label(self.compare.on(), self.compare.label())
+                    .on_hover_text("Click to cycle: off, wipe, side by side")
+                    .clicked()
+                {
+                    self.compare = self.compare.next();
                 }
                 ui.separator();
                 ui.toggle_value(&mut self.show_scopes, "Scopes")
@@ -1783,14 +1796,37 @@ fn same_file(a: &Path, b: &Path) -> bool {
 /// more finely than it reads two pictures a hand's width apart. Side by side is
 /// for "which of these do I prefer", where a seam would fuse the two into one
 /// image and stop you seeing either.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 enum Compare {
+    /// The default, and the one the cycling button starts and returns to.
+    #[default]
     Off,
     Wipe,
     Side,
 }
 
 impl Compare {
+    /// The next mode round, so one button can be the whole control.
+    ///
+    /// Off is in the cycle rather than being a separate way out: a comparison
+    /// you cannot turn off with the button that turned it on is a control that
+    /// only works in one direction.
+    fn next(self) -> Self {
+        match self {
+            Compare::Off => Compare::Wipe,
+            Compare::Wipe => Compare::Side,
+            Compare::Side => Compare::Off,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Compare::Off => "Compare",
+            Compare::Wipe => "Compare · Wipe",
+            Compare::Side => "Compare · Side",
+        }
+    }
+
     fn on(self) -> bool {
         self != Compare::Off
     }
@@ -1963,6 +1999,25 @@ fn draw(ui: &egui::Ui, rect: egui::Rect, framing: &Framing) -> egui::Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A cycling button has to come back round, or it is a one-way trip: the
+    /// control that turned the comparison on is the only one there is to turn
+    /// it off again.
+    #[test]
+    fn compare_cycles_back_to_off() {
+        let mut mode = Compare::default();
+        assert_eq!(mode, Compare::Off, "a comparison should start off");
+        let mut seen = vec![mode];
+        for _ in 0..3 {
+            mode = mode.next();
+            seen.push(mode);
+        }
+        assert_eq!(
+            seen,
+            vec![Compare::Off, Compare::Wipe, Compare::Side, Compare::Off],
+            "three presses should visit every mode and land back on off"
+        );
+    }
 
     /// The rule this whole pair of functions exists for: never write over a
     /// photograph somebody gave us.

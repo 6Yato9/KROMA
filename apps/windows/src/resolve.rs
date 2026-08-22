@@ -129,6 +129,81 @@ fn label_text(ui: &egui::Ui, rect: egui::Rect, text: &str) {
     );
 }
 
+/// Glyphs the toolbar draws instead of spelling out.
+///
+/// Only where the picture is unambiguous. "Undo" as a word costs four times
+/// the width of the arrow everybody already reads as undo, and a toolbar is
+/// mostly a competition for width — but a glyph nobody recognises costs the
+/// user a hover and a guess, which is a far worse trade.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Glyph {
+    Undo,
+    Redo,
+}
+
+/// A toolbar button with a drawn glyph rather than a label.
+pub fn icon_button(ui: &mut egui::Ui, glyph: Glyph, tooltip: &str) -> bool {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(26.0, 20.0), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        if response.hovered() && ui.is_enabled() {
+            painter.rect_filled(rect, 2.0, colour::CONTROL_HOT);
+        }
+        let tint = dim(
+            ui,
+            if response.hovered() {
+                colour::TITLE
+            } else {
+                colour::ICON
+            },
+        );
+        arrow(painter, rect.center(), glyph, tint);
+    }
+    response.on_hover_text(tooltip).clicked()
+}
+
+/// An arc with a head on it, one way round or the other.
+///
+/// The same glyph as the reset arrow at the end of every parameter row, which
+/// is deliberate: they mean nearly the same thing, and a second drawing of
+/// "put it back" would be a second thing to learn.
+fn arrow(painter: &egui::Painter, centre: egui::Pos2, glyph: Glyph, tint: egui::Color32) {
+    use std::f32::consts::PI;
+    let r = 6.0_f32;
+    // Mirrored rather than drawn twice: redo is undo the other way round, and
+    // two hand-placed arcs would drift apart the first time either is nudged.
+    let flip = if glyph == Glyph::Undo { 1.0 } else { -1.0 };
+    let at = |a: f32| egui::pos2(centre.x + flip * r * a.cos(), centre.y - r * a.sin());
+
+    // From the lower right, up over the top, back down the left: the shape
+    // everybody already reads as one step backwards.
+    let (from, to) = (-0.25 * PI, 1.14 * PI);
+    const STEPS: usize = 20;
+    let points: Vec<egui::Pos2> = (0..=STEPS)
+        .map(|i| at(from + (to - from) * i as f32 / STEPS as f32))
+        .collect();
+    painter.add(egui::Shape::line(
+        points.clone(),
+        egui::Stroke::new(1.4_f32, tint),
+    ));
+
+    // The head takes the arc's own heading at the end, rather than a triangle
+    // placed by hand: adjust the sweep and it stays attached and pointing the
+    // way the line was travelling.
+    let end = points[STEPS];
+    let dir = (end - points[STEPS - 1]).normalized();
+    let side = egui::vec2(-dir.y, dir.x);
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            end + dir * 3.2,
+            end - dir * 1.4 + side * 2.9,
+            end - dir * 1.4 - side * 2.9,
+        ],
+        tint,
+        egui::Stroke::NONE,
+    ));
+}
+
 /// The circular reset arrow at the end of every row.
 ///
 /// Public because the Image tab's X/Y rows are laid out by hand — two boxes
@@ -775,6 +850,68 @@ mod tests {
             });
         });
         out.expect("laid out")
+    }
+
+    /// Press the middle of an icon button and report whether it fired.
+    ///
+    /// Driven for real rather than reasoned about, because the whole question
+    /// is whether a hand-painted widget inside a disabled `Ui` still counts a
+    /// click — and that is egui's answer to give, not ours.
+    fn press_icon(enabled: bool) -> bool {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(120.0, 40.0));
+        let mut fired = false;
+
+        let mut run = |input: egui::RawInput| {
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                    child.add_enabled_ui(enabled, |ui| {
+                        fired = icon_button(ui, Glyph::Undo, "Undo");
+                    });
+                });
+            });
+        };
+
+        let base = egui::RawInput {
+            screen_rect: Some(rect),
+            ..Default::default()
+        };
+        // Frame one registers the widget; egui hit-tests against last frame.
+        run(base.clone());
+
+        let at = rect.min + egui::vec2(13.0, 10.0);
+        let mut input = base;
+        input.events = vec![
+            egui::Event::PointerMoved(at),
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: Default::default(),
+            },
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            },
+        ];
+        run(input);
+        fired
+    }
+
+    #[test]
+    fn an_icon_button_reports_a_click() {
+        assert!(press_icon(true), "clicking the glyph did nothing");
+    }
+
+    /// Undo with nothing to undo is drawn dim, and must be inert as well as
+    /// look it: a toolbar that greys a control and then honours the click is
+    /// worse than one that never greyed it.
+    #[test]
+    fn a_disabled_icon_button_does_not() {
+        assert!(!press_icon(false), "a greyed-out glyph still fired");
     }
 
     /// Drive a real click at a point inside a row and report what the row
