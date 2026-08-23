@@ -4,7 +4,7 @@
 # and every branch that touches it conflicts. On the Mac:
 #
 #   brew install xcodegen cbindgen
-#   cd apps/macos && xcodegen generate && open PhotoEditor.xcodeproj
+#   cd apps/apple && xcodegen generate && open PhotoEditor.xcodeproj
 name: PhotoEditor
 options:
   bundleIdPrefix: local.photoeditor
@@ -20,10 +20,30 @@ targets:
     settings:
       base:
         SWIFT_OBJC_BRIDGING_HEADER: PhotoEditor/PhotoEditor-Bridging-Header.h
+        # Xcode refuses to code-sign an app bundle without one, and there is
+        # nothing in it worth hand-maintaining yet.
+        GENERATE_INFOPLIST_FILE: "YES"
         # Points at the universal library build-engine.sh produces.
         LIBRARY_SEARCH_PATHS: $(SRCROOT)/../../target/universal/$(CONFIGURATION:lower)
         OTHER_LDFLAGS: -lpe_ffi
         HEADER_SEARCH_PATHS: $(SRCROOT)/PhotoEditor
+    preBuildScripts:
+      - name: Build Rust engine
+        script: "\"$SRCROOT/build-engine.sh\""
+        basedOnDependencyAnalysis: false
+
+  Spike:
+    type: application
+    platform: macOS
+    sources:
+      - path: Spike
+    settings:
+      base:
+        SWIFT_OBJC_BRIDGING_HEADER: Spike/Spike-Bridging-Header.h
+        GENERATE_INFOPLIST_FILE: "YES"
+        LIBRARY_SEARCH_PATHS: $(SRCROOT)/../../target/universal/$(CONFIGURATION:lower)
+        OTHER_LDFLAGS: -lpe_ffi
+        HEADER_SEARCH_PATHS: $(SRCROOT)/Spike
     preBuildScripts:
       - name: Build Rust engine
         script: "\"$SRCROOT/build-engine.sh\""

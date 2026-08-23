@@ -2,7 +2,7 @@
 # Build the Rust engine as a universal static library for the Mac app, and
 # regenerate the C header Swift imports.
 #
-# Run from the repo root or from apps/macos; Xcode runs it as a build phase.
+# Run from the repo root or from apps/apple; Xcode runs it as a build phase.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -30,7 +30,8 @@ lipo -create \
 # The header is generated, never hand-edited, so it cannot drift from the Rust.
 if command -v cbindgen >/dev/null 2>&1; then
   cbindgen --config cbindgen.toml --crate pe-ffi \
-           --output apps/macos/PhotoEditor/pe_ffi.h
+           --output apps/apple/PhotoEditor/pe_ffi.h
+  cp apps/apple/PhotoEditor/pe_ffi.h apps/apple/Spike/pe_ffi.h
 else
   echo "warning: cbindgen not installed; run 'cargo install cbindgen'" >&2
 fi

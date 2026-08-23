@@ -14,3 +14,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [dependencies]
 pe-core = { version = "0.0.1", path = "../pe-core" }
 pe-color = { version = "0.0.1", path = "../pe-color" }
+pe-session = { version = "0.0.1", path = "../pe-session" }
+pe-render = { version = "0.0.1", path = "../pe-render" }
+wgpu = "27"
+pollster = "0.4"

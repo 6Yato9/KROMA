@@ -1,4 +1,4 @@
-# macOS app
+# Apple apps
 
 Scaffolded at M0, built at M6. It exists now so that the engine/UI firewall is
 real from the first commit rather than aspirational: `crates/pe-ffi` has a
@@ -8,7 +8,7 @@ consumer, and `Engine.swift` is the only file on this side that may touch it.
 
 ```bash
 brew install xcodegen cbindgen
-cd apps/macos
+cd apps/apple
 xcodegen generate
 open PhotoEditor.xcodeproj
 ```

@@ -10,5 +10,7 @@
 //! original" is not a Windows rule.
 
 pub mod support;
+pub mod surface;
 
 pub use support::Support;
+pub use surface::Attached;

@@ -111,6 +111,54 @@ pub extern "C" fn pe_version() -> *const c_char {
     concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr() as *const c_char
 }
 
+/// Prove a `CAMetalLayer` can be drawn into. Fills it with orange.
+///
+/// Temporary — replaced by `pe_session_attach_layer` in Task 11. It exists so
+/// the riskiest assumption in the port is tested before anything is built on
+/// it.
+///
+/// # Safety
+/// `layer` must be a live `CAMetalLayer`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_spike_attach_and_clear(
+    layer: *mut std::ffi::c_void,
+    width: u32,
+    height: u32,
+) -> i32 {
+    guard(-99, || {
+        if layer.is_null() {
+            return -1;
+        }
+        let instance = pe_render::GpuContext::create_instance();
+        // Adapter must come from the same instance the surface will belong to,
+        // and must be told about the surface so a machine with more than one
+        // GPU picks one that can present to it.
+        let probe = match unsafe {
+            instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(layer))
+        } {
+            Ok(s) => s,
+            Err(_) => return -2,
+        };
+        let Ok(gpu) = pollster::block_on(pe_render::GpuContext::from_instance(
+            &instance,
+            Some(&probe),
+        )) else {
+            return -3;
+        };
+        drop(probe);
+        let attached = match unsafe {
+            pe_session::Attached::new(&instance, &gpu.adapter, &gpu.device, layer, width, height)
+        } {
+            Ok(a) => a,
+            Err(_) => return -4,
+        };
+        match attached.present_clear(&gpu.device, &gpu.queue, [0.85, 0.45, 0.10, 1.0]) {
+            Ok(()) => 0,
+            Err(_) => -5,
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

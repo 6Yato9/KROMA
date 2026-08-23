@@ -1700,6 +1700,10 @@ version = "0.0.1"
 dependencies = [
  "pe-color",
  "pe-core",
+ "pe-render",
+ "pe-session",
+ "pollster 0.4.0",
+ "wgpu",
 ]
 
 [[package]]
