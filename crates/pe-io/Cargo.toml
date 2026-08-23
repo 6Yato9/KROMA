@@ -9,4 +9,6 @@ license.workspace = true
 [dependencies]
 image = { version = "0.25.9", default-features = false, features = ["jpeg", "png"] }
 pe-color = { version = "0.0.1", path = "../pe-color" }
+# For the zlib stream an iCCP chunk is required to hold, and its CRC.
+flate2 = "1.1.9"
 thiserror = "2.0.20"

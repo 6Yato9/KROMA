@@ -277,15 +277,119 @@ pub fn write_bytes_atomically(path: impl AsRef<Path>, bytes: &[u8]) -> Result<()
     })
 }
 
-pub fn save_png(img: &DecodedImage, path: impl AsRef<Path>) -> Result<(), IoError> {
+// ---------------------------------------------------------------------------
+// Saying what a file is in
+// ---------------------------------------------------------------------------
+
+/// Put an ICC profile into an already-encoded JPEG.
+///
+/// As an APP2 segment straight after the start-of-image marker, which is where
+/// every reader looks and where the specification puts it. Splicing the encoded
+/// bytes rather than asking the encoder, because the encoder has no opinion on
+/// colour and offers no way to express one — and byte surgery on a container
+/// this simple is easier to be sure of than a fork of the encoder would be.
+fn with_icc_jpeg(bytes: Vec<u8>, profile: &[u8]) -> Vec<u8> {
+    // A JPEG that does not start with SOI is not one; hand it back untouched
+    // rather than corrupting it further.
+    if bytes.len() < 2 || bytes[0] != 0xFF || bytes[1] != 0xD8 {
+        return bytes;
+    }
+    // A segment's length field is two bytes and counts itself, so the payload
+    // has 65533 to work with: twelve for the identifier, two for the chunk
+    // numbering, and the rest for profile.
+    const PER_CHUNK: usize = 65533 - 12 - 2;
+    let total = profile.len().div_ceil(PER_CHUNK).max(1);
+    if total > 255 {
+        // The chunk counter is one byte. No profile this program writes comes
+        // close, and a silently truncated one would be worse than none.
+        return bytes;
+    }
+
+    let mut out = Vec::with_capacity(bytes.len() + profile.len() + total * 20);
+    out.extend_from_slice(&bytes[0..2]);
+    for (i, part) in profile.chunks(PER_CHUNK).enumerate() {
+        out.extend_from_slice(&[0xFF, 0xE2]);
+        out.extend_from_slice(&((part.len() + 16) as u16).to_be_bytes());
+        out.extend_from_slice(b"ICC_PROFILE ");
+        out.push(i as u8 + 1);
+        out.push(total as u8);
+        out.extend_from_slice(part);
+    }
+    out.extend_from_slice(&bytes[2..]);
+    out
+}
+
+/// Put an ICC profile into an already-encoded PNG.
+///
+/// An `iCCP` chunk immediately after `IHDR`, which is where the specification
+/// requires it — before `PLTE` and `IDAT`, and readers are entitled to stop
+/// looking once the pixels start.
+fn with_icc_png(bytes: Vec<u8>, profile: &[u8]) -> Vec<u8> {
+    use std::io::Write as _;
+    const SIGNATURE: usize = 8;
+    // Signature, then IHDR's own length, type, 13 bytes of data and CRC.
+    const AFTER_IHDR: usize = SIGNATURE + 4 + 4 + 13 + 4;
+    if bytes.len() < AFTER_IHDR || &bytes[SIGNATURE + 4..SIGNATURE + 8] != b"IHDR" {
+        return bytes;
+    }
+
+    // The profile goes in deflated; that is not optional in the format.
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    if encoder.write_all(profile).is_err() {
+        return bytes;
+    }
+    let Ok(compressed) = encoder.finish() else {
+        return bytes;
+    };
+
+    let mut data = Vec::with_capacity(compressed.len() + 8);
+    // The profile's name, Latin-1 and null-terminated, then the one
+    // compression method the format defines.
+    data.extend_from_slice(b"ICC profile");
+    data.push(0);
+    data.push(0);
+    data.extend_from_slice(&compressed);
+
+    let mut chunk = Vec::with_capacity(data.len() + 12);
+    chunk.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    chunk.extend_from_slice(b"iCCP");
+    chunk.extend_from_slice(&data);
+    // The CRC covers the type and the data, and not the length.
+    let mut crc = flate2::Crc::new();
+    crc.update(&chunk[4..]);
+    chunk.extend_from_slice(&crc.sum().to_be_bytes());
+
+    let mut out = Vec::with_capacity(bytes.len() + chunk.len());
+    out.extend_from_slice(&bytes[..AFTER_IHDR]);
+    out.extend_from_slice(&chunk);
+    out.extend_from_slice(&bytes[AFTER_IHDR..]);
+    out
+}
+
+/// Write an 8-bit PNG, saying what colour space it is in.
+///
+/// The space is required rather than optional. An untagged file is read as
+/// sRGB by everything there is, so "forgot to say" and "said sRGB" are the same
+/// file on disc and only one of them is honest — leaving the argument out was
+/// how every export before this one came to be silently mislabelled.
+pub fn save_png(
+    img: &DecodedImage,
+    path: impl AsRef<Path>,
+    space: &pe_color::ColorSpace,
+) -> Result<(), IoError> {
     let buf = image::RgbaImage::from_raw(img.width, img.height, img.pixels.clone()).ok_or(
         IoError::PixelCountMismatch {
             expected: img.width as usize * img.height as usize * 4,
             found: img.pixels.len(),
         },
     )?;
-    buf.save_with_format(path.as_ref(), image::ImageFormat::Png)?;
-    Ok(())
+    let mut bytes = Vec::new();
+    buf.write_to(
+        &mut std::io::Cursor::new(&mut bytes),
+        image::ImageFormat::Png,
+    )?;
+    let bytes = with_icc_png(bytes, &pe_color::icc::profile_for(space));
+    write_bytes_atomically(path, &bytes)
 }
 
 /// Write 16-bit RGBA out as a PNG.
@@ -299,6 +403,7 @@ pub fn save_png16(
     height: u32,
     rgba: &[u16],
     path: impl AsRef<Path>,
+    space: &pe_color::ColorSpace,
 ) -> Result<(), IoError> {
     let expected = width as usize * height as usize * 4;
     if rgba.len() != expected {
@@ -314,29 +419,34 @@ pub fn save_png16(
                 found: rgba.len(),
             },
         )?;
-    write_atomically(path, |file| {
-        let mut out = std::io::BufWriter::new(file);
-        buf.write_to(&mut out, image::ImageFormat::Png)?;
-        Ok(())
-    })
+    let mut bytes = Vec::new();
+    buf.write_to(
+        &mut std::io::Cursor::new(&mut bytes),
+        image::ImageFormat::Png,
+    )?;
+    let bytes = with_icc_png(bytes, &pe_color::icc::profile_for(space));
+    write_bytes_atomically(path, &bytes)
 }
 
-pub fn save_jpeg(img: &DecodedImage, path: impl AsRef<Path>, quality: u8) -> Result<(), IoError> {
+pub fn save_jpeg(
+    img: &DecodedImage,
+    path: impl AsRef<Path>,
+    quality: u8,
+    space: &pe_color::ColorSpace,
+) -> Result<(), IoError> {
     let rgb = image::RgbImage::from_fn(img.width, img.height, |x, y| {
         let p = img.pixel(x, y);
         image::Rgb([p[0], p[1], p[2]])
     });
-    // Through a scratch file: an export usually lands on top of the last one,
-    // and an encoder that stops halfway would otherwise have already truncated
-    // a JPEG that was fine.
-    write_atomically(path, |file| {
-        use std::io::Write as _;
-        let mut out = std::io::BufWriter::new(file);
-        let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality.max(1));
-        enc.encode_image(&rgb)?;
-        out.flush()?;
-        Ok(())
-    })
+    // Encoded to memory so the profile can be spliced in, then written through
+    // a scratch file: an export usually lands on top of the last one, and a
+    // write that stops halfway would otherwise have already truncated a JPEG
+    // that was fine.
+    let mut bytes = Vec::new();
+    let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, quality.max(1));
+    enc.encode_image(&rgb)?;
+    let bytes = with_icc_jpeg(bytes, &pe_color::icc::profile_for(space));
+    write_bytes_atomically(path, &bytes)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -577,20 +687,87 @@ mod tests {
         );
     }
 
+    /// The whole loop: write a file saying what it is, read it back, believe
+    /// it.
+    ///
+    /// Every piece is separately tested — the profile writer against the
+    /// reader, the reader against rubbish — and none of that would catch an
+    /// APP2 segment one byte too long or an `iCCP` chunk with a bad CRC. This
+    /// goes through the real containers and out through a decoder that has
+    /// never heard of our splicing code, which is the only way to know the
+    /// surgery held.
+    #[test]
+    fn an_exported_file_says_which_space_it_is_in() {
+        let dir = std::env::temp_dir().join("pe-io-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let img = test_chart(48, 32);
+        let space = &pe_color::space::DISPLAY_P3;
+
+        let jpeg = dir.join("tagged.jpg");
+        save_jpeg(&img, &jpeg, 92, space).unwrap();
+        assert_eq!(
+            load(&jpeg).unwrap().space,
+            Some("Display P3"),
+            "the APP2 segment did not survive the round trip"
+        );
+
+        let png = dir.join("tagged.png");
+        save_png(&img, &png, space).unwrap();
+        assert_eq!(
+            load(&png).unwrap().space,
+            Some("Display P3"),
+            "the iCCP chunk did not survive the round trip"
+        );
+
+        let wide = dir.join("tagged16.png");
+        let samples = vec![32768u16; 48 * 32 * 4];
+        save_png16(48, 32, &samples, &wide, space).unwrap();
+        assert_eq!(load(&wide).unwrap().space, Some("Display P3"));
+    }
+
+    /// And the pixels still decode, which splicing bytes into a container is
+    /// exactly the way to break.
+    #[test]
+    fn tagging_a_file_does_not_disturb_it() {
+        let dir = std::env::temp_dir().join("pe-io-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let img = test_chart(40, 24);
+
+        let path = dir.join("intact.png");
+        save_png(&img, &path, &pe_color::space::SRGB).unwrap();
+        let back = load(&path).unwrap();
+        assert_eq!(back.size(), img.size());
+        assert_eq!(
+            back.pixels, img.pixels,
+            "PNG is lossless; tagging it changed the picture"
+        );
+    }
+
     /// A file that says nothing about itself must say nothing, not guess.
     ///
     /// `None` and `Some("sRGB")` are different answers: the first lets the
-    /// caller keep whatever it had, the second overwrites it. Our own JPEG
-    /// encoder writes no profile, so this is also the round trip through the
-    /// decoder-based `load` — the rewrite that had to happen to see a profile
-    /// at all.
+    /// caller keep whatever it had, the second overwrites it. Most photographs
+    /// in the world carry no profile at all, so this is the common case, not
+    /// the corner one.
+    ///
+    /// Written by the encoder directly rather than through `save_jpeg`, which
+    /// now always attaches a profile — that being the entire point of it.
     #[test]
     fn a_file_with_no_profile_declares_nothing() {
         let img = test_chart(32, 32);
         let dir = std::env::temp_dir().join("pe-io-test");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("unprofiled.jpg");
-        save_jpeg(&img, &path, 90).unwrap();
+
+        let rgb = image::RgbImage::from_fn(img.width, img.height, |x, y| {
+            let p = img.pixel(x, y);
+            image::Rgb([p[0], p[1], p[2]])
+        });
+        let mut bytes = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 90)
+            .encode_image(&rgb)
+            .unwrap();
+        std::fs::write(&path, &bytes).unwrap();
 
         let back = load(&path).unwrap();
         assert_eq!(back.size(), img.size(), "the decoder path lost the pixels");
@@ -613,7 +790,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("chart.png");
 
-        save_png(&img, &path).unwrap();
+        save_png(&img, &path, &pe_color::space::SRGB).unwrap();
         let back = load(&path).unwrap();
 
         assert_eq!(back.size(), img.size());
@@ -632,7 +809,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("chart.jpg");
 
-        save_jpeg(&img, &path, 100).unwrap();
+        save_jpeg(&img, &path, 100, &pe_color::space::SRGB).unwrap();
         let back = load(&path).unwrap();
 
         assert_eq!(back.size(), img.size());

@@ -1712,6 +1712,7 @@ dependencies = [
 name = "pe-io"
 version = "0.0.1"
 dependencies = [
+ "flate2",
  "image",
  "pe-color",
  "thiserror 2.0.20",

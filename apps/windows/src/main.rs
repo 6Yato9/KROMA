@@ -1929,21 +1929,22 @@ fn file_page(ui: &mut egui::Ui, app: &mut App) -> bool {
     export_section(ui, app)
 }
 
-/// The colour spaces a source file may be read as.
+/// The colour spaces a file may be read as or written in.
 ///
-/// Not all seven that `pe-color` knows. The source is uploaded as an `...Srgb`
-/// texture and the *hardware* applies the sRGB EOTF when it is sampled — the
-/// transform shader only ever rotates the gamut, and says so in its own header.
-/// So a space belongs in this list exactly when its transfer function is the
-/// sRGB one. Anything else would be decoded with a curve it does not use, and
-/// the result would be wrong in the way that is hardest to catch: it looks like
-/// a grade.
+/// Not all seven that `pe-color` knows, and the reason is the same at both
+/// ends. Textures carry the transfer function: the source is sampled from an
+/// `...Srgb` texture and the 8-bit export is written into one, so the hardware
+/// applies the sRGB curve in both directions and the transform shader only ever
+/// rotates the gamut — it says so in its own header. A space belongs here
+/// exactly when its transfer function *is* the sRGB one. Anything else would be
+/// decoded, or encoded, with a curve it does not use, and the result would be
+/// wrong in the way that is hardest to catch: it looks like a grade.
 ///
 /// Derived from that rule rather than typed out, so the list cannot drift away
 /// from the reason for it. In practice nothing is lost — an 8-bit photograph is
 /// sRGB or Display P3, linear 8-bit files do not exist, and no camera writes
 /// 8-bit Rec.2020.
-fn source_spaces() -> impl Iterator<Item = &'static pe_color::ColorSpace> {
+fn display_spaces() -> impl Iterator<Item = &'static pe_color::ColorSpace> {
     pe_color::space::ALL
         .iter()
         .filter(|s| s.transfer == pe_color::TransferFn::Srgb)
@@ -1951,16 +1952,17 @@ fn source_spaces() -> impl Iterator<Item = &'static pe_color::ColorSpace> {
 
 /// What the file is, and what we are rendering it to.
 ///
-/// The input is a control because it is a fact about the photograph that only
-/// the person holding it knows. Assume sRGB and a Display P3 file — which is
-/// what every iPhone since the 7 writes — renders with its colours pulled in
-/// towards the sRGB primaries: not obviously broken, just quietly flatter than
-/// the photograph is, which is the worst way for a colour tool to be wrong.
+/// The input is a fact about the photograph that only the person holding it
+/// knows — unless the file says, which it now gets asked. Assume sRGB and a
+/// Display P3 file renders with its colours pulled in towards the sRGB
+/// primaries: not obviously broken, just quietly flatter than the photograph
+/// is, which is the worst way for a colour tool to be wrong.
 ///
-/// The output is not a control, and that is deliberate. Nothing we write
-/// carries an ICC profile yet, so every viewer in the world will read our
-/// exports as sRGB whatever we rendered them in. Offering Display P3 out would
-/// be offering a file that is wrong everywhere except this window.
+/// The output was a fact rather than a control until exports could say what
+/// they were rendered in. An untagged file is read as sRGB by every viewer
+/// there is, so offering Display P3 out would have been offering a file that
+/// is correct in this window and wrong everywhere else. They carry a profile
+/// now, so it is a choice.
 fn colour_section(ui: &mut egui::Ui, app: &mut App) {
     ui.label(
         egui::RichText::new("COLOUR")
@@ -1969,55 +1971,63 @@ fn colour_section(ui: &mut egui::Ui, app: &mut App) {
     );
     ui.add_space(4.0);
 
-    let current = app.history.document().color.input.clone();
-    let mut chosen = current.clone();
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            [resolve::LABEL_WIDTH, 18.0],
-            egui::Label::new(
-                egui::RichText::new("Source is")
-                    .small()
-                    .color(resolve::colour::LABEL),
-            ),
-        );
-        egui::ComboBox::from_id_salt("input_space")
-            .selected_text(&current)
-            .width(150.0)
-            .show_ui(ui, |ui| {
-                for space in source_spaces() {
-                    ui.selectable_value(&mut chosen, space.name.to_string(), space.name);
-                }
-            });
-    });
-    if chosen != current {
+    let picked_input = space_row(
+        ui,
+        "Source is",
+        "input_space",
+        &app.history.document().color.input,
+        "What the file is. Set from its ICC profile when it has one",
+    );
+    if let Some(space) = picked_input {
         app.history.edit("Source Colour Space", None, move |doc| {
-            doc.color.input = chosen;
+            doc.color.input = space;
         });
     }
 
     ui.add_space(2.0);
+    let picked_output = space_row(
+        ui,
+        "Rendered to",
+        "output_space",
+        &app.history.document().color.output,
+        "What the screen shows and what exports are written in — and say they          are written in, in an embedded profile",
+    );
+    if let Some(space) = picked_output {
+        app.history.edit("Output Colour Space", None, move |doc| {
+            doc.color.output = space;
+        });
+    }
+}
+
+/// One labelled colour-space chooser. Returns the new name if it changed.
+fn space_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    salt: &str,
+    current: &str,
+    hover: &str,
+) -> Option<String> {
+    let mut chosen = current.to_string();
     ui.horizontal(|ui| {
         ui.add_sized(
             [resolve::LABEL_WIDTH, 18.0],
             egui::Label::new(
-                egui::RichText::new("Rendered to")
+                egui::RichText::new(label)
                     .small()
                     .color(resolve::colour::LABEL),
             ),
-        );
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new(&app.history.document().color.output)
-                    .small()
-                    .monospace(),
-            )
-            .wrap(),
-        );
-    })
-    .response
-    .on_hover_text(
-        "Fixed until exports can carry an ICC profile — an untagged file in any          other space is read as sRGB by every viewer there is",
-    );
+        )
+        .on_hover_text(hover);
+        egui::ComboBox::from_id_salt(salt)
+            .selected_text(current)
+            .width(150.0)
+            .show_ui(ui, |ui| {
+                for space in display_spaces() {
+                    ui.selectable_value(&mut chosen, space.name.to_string(), space.name);
+                }
+            });
+    });
+    (chosen != current).then_some(chosen)
 }
 
 /// What the photograph gets written as, and the button that writes it.
@@ -2240,15 +2250,20 @@ fn write_export(
     chosen: settings::Export,
 ) -> Result<(u32, u32), String> {
     let (w, h) = pe_render::export::output_size(doc, image.width, image.height);
+    // The space the pipeline actually rendered to, which is what the file has
+    // to say it is in. Taken from the same settings the render read, so the two
+    // cannot disagree — a file labelled with anything else is a wrong answer
+    // stated confidently, and every reader will believe it.
+    let space = doc.color.pipeline().output;
     if chosen.format.is_sixteen_bit() {
         let pixels = preview.export_16(image, doc).map_err(|e| e.to_string())?;
-        pe_io::save_png16(w, h, &pixels, out).map_err(|e| e.to_string())?;
+        pe_io::save_png16(w, h, &pixels, out, &space).map_err(|e| e.to_string())?;
     } else {
         let pixels = preview.export(image, doc).map_err(|e| e.to_string())?;
         let img = pe_io::DecodedImage::new(w, h, pixels).map_err(|e| e.to_string())?;
         match chosen.format {
-            settings::Format::Jpeg => pe_io::save_jpeg(&img, out, chosen.quality),
-            _ => pe_io::save_png(&img, out),
+            settings::Format::Jpeg => pe_io::save_jpeg(&img, out, chosen.quality, &space),
+            _ => pe_io::save_png(&img, out, &space),
         }
         .map_err(|e| e.to_string())?;
     }
@@ -2548,9 +2563,9 @@ mod tests {
     /// is what says why not.
     #[test]
     fn every_offered_source_space_decodes_as_srgb() {
-        let offered: Vec<&str> = source_spaces().map(|s| s.name).collect();
+        let offered: Vec<&str> = display_spaces().map(|s| s.name).collect();
         assert!(!offered.is_empty(), "the source dropdown offers nothing");
-        for space in source_spaces() {
+        for space in display_spaces() {
             assert_eq!(
                 space.transfer,
                 pe_color::TransferFn::Srgb,

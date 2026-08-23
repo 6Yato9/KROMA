@@ -13,7 +13,10 @@ next.
 A photograph that carries an ICC profile is read as the space that profile
 describes, so a Display P3 file from a phone renders as Display P3 rather than
 being flattened into sRGB. Unrecognised profiles change nothing, and the File
-page lets you say what a file is when it does not say for itself.
+page lets you say what a file is when it does not say for itself. Exports carry
+a profile of their own — an APP2 segment in a JPEG, an `iCCP` chunk in a PNG —
+so what comes out says what it is rather than being read as sRGB by everything
+and hoping.
 
 Effect parameters follow Resolve's own — names, ranges and defaults read off
 Resolve's inspector and recorded in

@@ -73,7 +73,7 @@ pub fn assert_matches(name: &str, actual: &DecodedImage, tolerance: u8) {
 
     if updating() || !ref_path.exists() {
         std::fs::create_dir_all(refs_dir()).expect("create refs dir");
-        pe_io::save_png(actual, &ref_path).expect("write reference");
+        pe_io::save_png(actual, &ref_path, &pe_color::space::SRGB).expect("write reference");
         if !updating() {
             panic!(
                 "no reference for {name:?}; one has been written to {}.\n\
@@ -117,9 +117,17 @@ fn dump_failure(name: &str, actual: &DecodedImage, diff: Option<&DecodedImage>) 
     if std::fs::create_dir_all(out_dir()).is_err() {
         return;
     }
-    let _ = pe_io::save_png(actual, out_dir().join(format!("{name}.actual.png")));
+    let _ = pe_io::save_png(
+        actual,
+        out_dir().join(format!("{name}.actual.png")),
+        &pe_color::space::SRGB,
+    );
     if let Some(d) = diff {
-        let _ = pe_io::save_png(d, out_dir().join(format!("{name}.diff.png")));
+        let _ = pe_io::save_png(
+            d,
+            out_dir().join(format!("{name}.diff.png")),
+            &pe_color::space::SRGB,
+        );
     }
 }
 

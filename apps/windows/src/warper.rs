@@ -958,7 +958,13 @@ mod tests {
             let out = dir.join(format!("warper-{name}.png"));
             let decoded =
                 pe_io::DecodedImage::new(PLOT_TEXELS as u32, PLOT_TEXELS as u32, bytes).unwrap();
-            pe_io::save_jpeg(&decoded, out.with_extension("jpg"), 95).unwrap();
+            pe_io::save_jpeg(
+                &decoded,
+                out.with_extension("jpg"),
+                95,
+                &pe_color::space::SRGB,
+            )
+            .unwrap();
             eprintln!("wrote {}", out.with_extension("jpg").display());
         }
     }
