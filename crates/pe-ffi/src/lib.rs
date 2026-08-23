@@ -140,16 +140,44 @@ pub struct PeSession {
     last_error: Option<String>,
 }
 
+/// What a panic was about, as far as it can be recovered.
+///
+/// Almost every panic payload is a `&str` or a `String`; anything else is a
+/// deliberate `panic_any` and there is nothing useful to say about it.
+fn panic_text(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "the engine panicked".to_string()
+    }
+}
+
 /// Run `f` against a session, or return `fallback` for a null handle.
 ///
 /// `Copy` because the fallback is wanted in two places — the null branch and
 /// the panic branch — and every sentinel here is an integer, a `bool`, or a
 /// null pointer.
+///
+/// The panic is caught here rather than in [`guard`] because here there is a
+/// session to write the reason onto. Rule 3 stops the unwind; without this it
+/// would also stop the explanation, and a caught panic reporting only a status
+/// code is exactly the bug report nobody can write. A null handle is the one
+/// case with nowhere to record anything — there is no session — so it is also
+/// the one case where the sentinel arrives with `pe_session_last_error` unset,
+/// which is how the two are told apart.
 fn with<T: Copy>(s: *mut PeSession, fallback: T, f: impl FnOnce(&mut PeSession) -> T) -> T {
-    guard(fallback, || match unsafe { s.as_mut() } {
-        Some(s) => f(s),
-        None => fallback,
-    })
+    let Some(session) = (unsafe { s.as_mut() }) else {
+        return fallback;
+    };
+    match catch_unwind(AssertUnwindSafe(|| f(&mut *session))) {
+        Ok(value) => value,
+        Err(payload) => {
+            session.last_error = Some(panic_text(payload));
+            fallback
+        }
+    }
 }
 
 /// The same, for a call that returns a status code and may set an error.
@@ -732,6 +760,33 @@ mod tests {
         assert_eq!(unsafe { pe_session_snapshot_version(ptr::null_mut()) }, 0);
         assert_eq!(unsafe { pe_session_undo(ptr::null_mut()) }, -1);
         unsafe { pe_session_free(ptr::null_mut()) };
+    }
+
+    #[test]
+    fn a_panic_is_caught_and_says_what_it_was() {
+        // Rule 3 is that nothing unwinds into Swift. The corollary is that the
+        // reason has to survive the catch, or the shell is left holding a
+        // sentinel and no way to report what happened.
+        let s = pe_session_new();
+        let caught = with(s, -1i32, |_| panic!("the engine fell over"));
+        assert_eq!(caught, -1);
+
+        let msg = unsafe { pe_session_last_error(s) };
+        assert!(!msg.is_null(), "a caught panic left no explanation");
+        let text = unsafe { CStr::from_ptr(msg) }.to_str().unwrap().to_owned();
+        unsafe { pe_string_free(msg) };
+        assert!(text.contains("fell over"), "unhelpful panic text: {text}");
+
+        // And the session is still usable afterwards rather than poisoned.
+        assert_eq!(unsafe { pe_session_open_test_chart(s, 32, 32) }, 0);
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn a_null_handle_is_told_apart_from_a_panic_by_having_no_message() {
+        // Both return the same sentinel, so the message is what distinguishes
+        // them: there is no session to write one onto when the handle is null.
+        assert!(unsafe { pe_session_last_error(ptr::null_mut()) }.is_null());
     }
 
     #[test]
