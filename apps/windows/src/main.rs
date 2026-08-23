@@ -1883,14 +1883,6 @@ fn file_page(ui: &mut egui::Ui, app: &mut App) -> bool {
             format!("{w} x {h}")
         }),
         (
-            "Working space".into(),
-            format!(
-                "{} in, {} out",
-                app.history.document().color.input,
-                app.history.document().color.output
-            ),
-        ),
-        (
             "In the set".into(),
             format!(
                 "{} of {}",
@@ -1927,7 +1919,80 @@ fn file_page(ui: &mut egui::Ui, app: &mut App) -> bool {
     }
 
     ui.add_space(10.0);
+    colour_section(ui, app);
+    ui.add_space(10.0);
     export_section(ui, app)
+}
+
+/// What the file is, and what we are rendering it to.
+///
+/// The input is a control because it is a fact about the photograph that only
+/// the person holding it knows. Assume sRGB and a Display P3 file — which is
+/// what every iPhone since the 7 writes — renders with its colours pulled in
+/// towards the sRGB primaries: not obviously broken, just quietly flatter than
+/// the photograph is, which is the worst way for a colour tool to be wrong.
+///
+/// The output is not a control, and that is deliberate. Nothing we write
+/// carries an ICC profile yet, so every viewer in the world will read our
+/// exports as sRGB whatever we rendered them in. Offering Display P3 out would
+/// be offering a file that is wrong everywhere except this window.
+fn colour_section(ui: &mut egui::Ui, app: &mut App) {
+    ui.label(
+        egui::RichText::new("COLOUR")
+            .small()
+            .color(resolve::colour::DIM),
+    );
+    ui.add_space(4.0);
+
+    let current = app.history.document().color.input.clone();
+    let mut chosen = current.clone();
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            [resolve::LABEL_WIDTH, 18.0],
+            egui::Label::new(
+                egui::RichText::new("Source is")
+                    .small()
+                    .color(resolve::colour::LABEL),
+            ),
+        );
+        egui::ComboBox::from_id_salt("input_space")
+            .selected_text(&current)
+            .width(150.0)
+            .show_ui(ui, |ui| {
+                for space in pe_color::space::ALL {
+                    ui.selectable_value(&mut chosen, space.name.to_string(), space.name);
+                }
+            });
+    });
+    if chosen != current {
+        app.history.edit("Source Colour Space", None, move |doc| {
+            doc.color.input = chosen;
+        });
+    }
+
+    ui.add_space(2.0);
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            [resolve::LABEL_WIDTH, 18.0],
+            egui::Label::new(
+                egui::RichText::new("Rendered to")
+                    .small()
+                    .color(resolve::colour::LABEL),
+            ),
+        );
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(&app.history.document().color.output)
+                    .small()
+                    .monospace(),
+            )
+            .wrap(),
+        );
+    })
+    .response
+    .on_hover_text(
+        "Fixed until exports can carry an ICC profile — an untagged file in any          other space is read as sRGB by every viewer there is",
+    );
 }
 
 /// What the photograph gets written as, and the button that writes it.

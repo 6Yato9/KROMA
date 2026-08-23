@@ -176,3 +176,44 @@ fn an_oversized_photograph_is_refused_rather_than_fatal() {
     assert!(text.contains(&too_wide.to_string()), "unhelpful: {text}");
     assert!(text.contains(&max.to_string()), "unhelpful: {text}");
 }
+
+/// Telling the application what the source file is has to change what it
+/// renders.
+///
+/// Every iPhone since the 7 writes Display P3 JPEGs. Read as sRGB, their
+/// colours land pulled in towards the sRGB primaries — not obviously broken,
+/// just quietly flatter than the photograph is, which is the worst way for a
+/// colour tool to be wrong. The document has carried an input space all along;
+/// this is the assertion that it is wired to something.
+#[test]
+fn the_source_colour_space_changes_what_is_rendered() {
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    // A saturated red, which is where two gamuts differ most.
+    let src = DecodedImage::new(2, 2, [230, 20, 20, 255].repeat(4)).expect("source");
+
+    let mut as_srgb = pe_core::Document::from_path("a.jpg");
+    as_srgb.color.input = "sRGB".into();
+    let mut as_p3 = as_srgb.clone();
+    as_p3.color.input = "Display P3".into();
+
+    let renderer = pe_render::EffectRenderer::new(&gpu.device);
+    let one =
+        pe_render::render_full(gpu, &renderer, 2, 2, &src.pixels, &as_srgb).expect("sRGB render");
+    let two = pe_render::render_full(gpu, &renderer, 2, 2, &src.pixels, &as_p3).expect("P3 render");
+
+    assert_ne!(
+        one, two,
+        "the source colour space made no difference — the control is decorative"
+    );
+    // P3 primaries are wider, so the same numbers mean a more saturated red;
+    // brought back to sRGB for output it should clip harder, not softer.
+    assert!(
+        two[0] >= one[0],
+        "reading the file as Display P3 made its red weaker, not stronger: \
+         {} against {}",
+        two[0],
+        one[0]
+    );
+}
