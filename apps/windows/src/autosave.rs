@@ -214,6 +214,34 @@ mod tests {
         assert!(!w.pending());
     }
 
+    /// The gap the exit flush exists to close.
+    ///
+    /// Between an edit and the timer firing there is a window under a second
+    /// wide where the work is real and unwritten. Everything that takes the
+    /// photograph away — switching, removing it from the set, closing the
+    /// window — has to ask `pending` and write, because inside this window the
+    /// throttle is holding on to the only copy.
+    #[test]
+    fn work_is_pending_for_the_whole_gap_before_the_timer_fires() {
+        let mut w = Watcher::new();
+        let start = Instant::now();
+        w.tick(1, start);
+
+        // Every moment up to the deadline: still owed a write.
+        for ms in [0, 1, 100, 450, 899] {
+            let at = start + Duration::from_millis(ms);
+            assert!(!w.tick(1, at), "wrote early, at {ms}ms");
+            assert!(
+                w.pending(),
+                "at {ms}ms the watcher says nothing is owed — closing the window                  here would lose the edit"
+            );
+        }
+
+        // And once it has fired, nothing is owed and a flush is a no-op.
+        assert!(w.tick(1, start + IDLE + Duration::from_millis(1)));
+        assert!(!w.pending());
+    }
+
     #[test]
     fn a_second_change_after_a_write_is_written_too() {
         let mut w = Watcher::new();

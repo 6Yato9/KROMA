@@ -287,6 +287,21 @@ impl App {
         self.settings.remember_session(&paths, index);
     }
 
+    /// Write the work in progress now, throttle or no throttle.
+    ///
+    /// The timer exists so that a slider drag is one write rather than sixty.
+    /// It is the right answer while editing and the wrong one at every moment
+    /// where the thing being edited is about to stop being what is in front of
+    /// you — and those moments are exactly when the last edit is the one most
+    /// likely to be lost.
+    fn flush_autosave(&mut self) {
+        if let Some(path) = self.path.clone()
+            && self.autosave.pending()
+        {
+            autosave::store(&path, self.history.document());
+        }
+    }
+
     fn select(&mut self, index: usize, ctx: &egui::Context) {
         if index >= self.library.len() || index == self.library.current() {
             return;
@@ -313,11 +328,7 @@ impl App {
         // Anything unwritten goes out before the photograph does. The
         // throttle is beside the point here: the thing that would have
         // triggered the write is about to stop being the thing on screen.
-        if let Some(old) = self.path.clone()
-            && self.autosave.pending()
-        {
-            autosave::store(&old, self.history.document());
-        }
+        self.flush_autosave();
 
         // Swap in a placeholder so the outgoing history can be moved out
         // wholesale rather than cloned; `History` deliberately is not `Clone`,
@@ -382,6 +393,12 @@ impl App {
             return;
         }
         let was_current = index == self.library.current();
+        // Its edit goes out first. Taking a photograph out of the set is not
+        // "throw away what I did to it" — the file is untouched, and if it is
+        // opened again the work should still be there.
+        if was_current {
+            self.flush_autosave();
+        }
         self.library.remove(index);
         self.remember_session();
         if self.library.is_empty() {
@@ -606,6 +623,7 @@ impl App {
             done: 0,
             failed: 0,
             export: self.settings.export,
+            taken: std::collections::HashSet::new(),
         });
     }
 
@@ -641,7 +659,11 @@ impl App {
             return true;
         };
         let chosen = batch.export;
-        let out = export_path(&batch.dir, &path, chosen.format);
+        let dir = batch.dir.clone();
+        let Some(b) = self.batch.as_mut() else {
+            return false;
+        };
+        let out = unclaimed_export_path(&dir, &path, chosen.format, &mut b.taken);
         if self.would_overwrite_a_source(&out) {
             // Counted as a failure rather than stopping the run: one collision
             // should not abandon the other sixty-five, and the summary at the
@@ -861,6 +883,20 @@ impl App {
 }
 
 impl eframe::App for App {
+    /// The last thing that happens, and what makes closing the window free.
+    ///
+    /// The autosave writes a moment after you stop moving, which leaves a gap
+    /// under a second wide. It is a small gap and it is precisely the one
+    /// somebody falls into: the last thing you do before closing a window is
+    /// the last thing you did, and it is the edit most likely to be lost.
+    ///
+    /// Belt and braces with the throttle, not a replacement for it. This does
+    /// not run if the process is killed or the machine loses power, which is
+    /// what the atomic write and the nine-hundred-millisecond timer are for.
+    fn on_exit(&mut self) {
+        self.flush_autosave();
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Thumbnails arriving from the worker.
         if self.library.collect(ctx) {
@@ -2066,6 +2102,12 @@ struct Batch {
     /// Changing the format halfway through a batch would otherwise leave a
     /// folder half JPEG and half PNG, with no record of where the line fell.
     export: settings::Export,
+    /// Names already written by this run, folded to lower case.
+    ///
+    /// A batch writes into one directory, and the set it is writing can come
+    /// from several: open `holiday/a.jpg` and `work/a.jpg` together and both
+    /// want to be `a_KROMA.jpg`.
+    taken: std::collections::HashSet<String>,
 }
 
 impl Batch {
@@ -2131,8 +2173,43 @@ fn export_name(source: &Path, format: settings::Format) -> String {
     format!("{stem}_KROMA.{}", format.extension())
 }
 
-fn export_path(dir: &Path, source: &Path, format: settings::Format) -> PathBuf {
-    dir.join(export_name(source, format))
+/// An export name for this photograph that nothing in this run has used yet.
+///
+/// A batch writes every photograph into one directory, and the set it is
+/// writing can have come from several. Two files called `sunset.jpg` in
+/// different folders both want to be `sunset_KROMA.jpg`, and without this the
+/// second lands on the first: one file on disc, two successes reported, and
+/// nothing anywhere saying which one you kept.
+///
+/// Numbered rather than refused. Losing an original is unrecoverable and worth
+/// being rude about; two of your own exports wanting one name is an ordinary
+/// thing that has an obvious right answer.
+///
+/// Compared in lower case, because the directory this is being written into is
+/// on Windows more often than not, and `A_KROMA.jpg` and `a_KROMA.jpg` are one
+/// file there.
+fn unclaimed_export_path(
+    dir: &Path,
+    source: &Path,
+    format: settings::Format,
+    taken: &mut std::collections::HashSet<String>,
+) -> PathBuf {
+    let first = export_name(source, format);
+    if taken.insert(first.to_lowercase()) {
+        return dir.join(first);
+    }
+    let stem = source
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "export".to_string());
+    // Two is where a human starts counting a second one of something.
+    for n in 2u32.. {
+        let name = format!("{stem}_KROMA_{n}.{}", format.extension());
+        if taken.insert(name.to_lowercase()) {
+            return dir.join(name);
+        }
+    }
+    unreachable!("u32 ran out of numbers")
 }
 
 /// Whether two paths name the same file, as far as can be told without
@@ -2367,6 +2444,17 @@ fn draw(ui: &egui::Ui, rect: egui::Rect, framing: &Framing) -> egui::Rect {
 mod tests {
     use super::*;
 
+    /// Where the batch would actually write one photograph.
+    ///
+    /// The safety tests go through this rather than a simpler helper of their
+    /// own, because the export path the application uses is the one that has
+    /// to be safe. A test that checks a function nothing calls is the exact
+    /// shape of a safety test that passes while the real path is unguarded.
+    fn batch_path(dir: &str, source: &str, format: settings::Format) -> PathBuf {
+        let mut taken = std::collections::HashSet::new();
+        unclaimed_export_path(Path::new(dir), Path::new(source), format, &mut taken)
+    }
+
     /// The whole point of the two kinds: one leaves on its own, the other
     /// waits to be read.
     ///
@@ -2435,8 +2523,8 @@ mod tests {
                 "a.b.c.png",
                 "shot.PNG",
             ] {
+                let out = batch_path(".", source, format);
                 let source = Path::new(source);
-                let out = export_path(Path::new("."), source, format);
                 assert!(
                     !same_file(source, &out),
                     "{} exports to itself as {} ({:?})",
@@ -2472,11 +2560,71 @@ mod tests {
     #[test]
     fn a_png_source_exported_as_png_is_still_safe() {
         let source = Path::new("shots/sunset.png");
-        let out = export_path(Path::new("shots"), source, settings::Format::Png);
+        let out = batch_path("shots", "shots/sunset.png", settings::Format::Png);
         assert!(
             !same_file(source, &out),
             "a PNG exported as PNG landed on itself: {}",
             out.display()
+        );
+    }
+
+    /// A batch writes into one folder from a set that may span several.
+    ///
+    /// Two photographs called `sunset.jpg` in different directories both want
+    /// `sunset_KROMA.jpg`. Silently, the second used to land on the first: one
+    /// file on disc, two successes counted, and nothing saying which survived.
+    #[test]
+    fn two_photographs_with_one_name_do_not_share_an_export() {
+        let mut taken = std::collections::HashSet::new();
+        let out = Path::new("exports");
+        let first = unclaimed_export_path(
+            out,
+            Path::new("holiday/sunset.jpg"),
+            settings::Format::Jpeg,
+            &mut taken,
+        );
+        let second = unclaimed_export_path(
+            out,
+            Path::new("work/sunset.jpg"),
+            settings::Format::Jpeg,
+            &mut taken,
+        );
+        let third = unclaimed_export_path(
+            out,
+            Path::new("archive/sunset.jpg"),
+            settings::Format::Jpeg,
+            &mut taken,
+        );
+
+        assert_eq!(first, Path::new("exports/sunset_KROMA.jpg"));
+        assert_eq!(second, Path::new("exports/sunset_KROMA_2.jpg"));
+        assert_eq!(third, Path::new("exports/sunset_KROMA_3.jpg"));
+        assert_ne!(first, second);
+        assert_ne!(second, third);
+    }
+
+    /// And the same trap as everywhere else: on Windows these are one file.
+    #[test]
+    fn export_names_collide_regardless_of_case() {
+        let mut taken = std::collections::HashSet::new();
+        let out = Path::new("exports");
+        let lower = unclaimed_export_path(
+            out,
+            Path::new("a/sunset.jpg"),
+            settings::Format::Jpeg,
+            &mut taken,
+        );
+        let upper = unclaimed_export_path(
+            out,
+            Path::new("b/SUNSET.jpg"),
+            settings::Format::Jpeg,
+            &mut taken,
+        );
+        assert!(
+            !same_file(&lower, &upper),
+            "{} and {} are the same file on Windows",
+            lower.display(),
+            upper.display()
         );
     }
 
@@ -2504,7 +2652,7 @@ mod tests {
     #[test]
     fn exporting_an_export_does_not_land_on_it() {
         let once = Path::new("photo_KROMA.jpg");
-        let twice = export_path(Path::new("."), once, settings::Format::Jpeg);
+        let twice = batch_path(".", "photo_KROMA.jpg", settings::Format::Jpeg);
         assert!(!same_file(once, &twice));
         assert_eq!(
             export_name(once, settings::Format::Jpeg),
