@@ -10,6 +10,7 @@
 //! original" is not a Windows rule.
 
 pub mod autosave;
+pub mod export;
 pub mod support;
 pub mod surface;
 

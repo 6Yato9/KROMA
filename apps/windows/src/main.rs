@@ -29,6 +29,7 @@ mod wheels;
 use std::path::{Path, PathBuf};
 
 use pe_core::{Document, History, RowIdGenerator, Stack};
+use pe_session::export::{export_name, same_file, unclaimed_export_path};
 use pe_session::{Support, autosave};
 
 use crate::library::Library;
@@ -915,8 +916,13 @@ impl App {
     /// original is not a thing to recover from, and there is no undo that
     /// reaches outside the process.
     fn would_overwrite_a_source(&self, out: &Path) -> bool {
-        self.path.iter().any(|p| same_file(p, out))
-            || self.library.paths().iter().any(|p| same_file(p, out))
+        let open: Vec<PathBuf> = self
+            .path
+            .iter()
+            .cloned()
+            .chain(self.library.paths().iter().map(|p| p.to_path_buf()))
+            .collect();
+        pe_session::export::would_overwrite_a_source(&open, out)
     }
 
     fn export(&mut self) {
@@ -2334,74 +2340,6 @@ fn write_export(
     Ok((w, h))
 }
 
-fn export_name(source: &Path, format: settings::Format) -> String {
-    let stem = source
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "export".to_string());
-    format!("{stem}_KROMA.{}", format.extension())
-}
-
-/// An export name for this photograph that nothing in this run has used yet.
-///
-/// A batch writes every photograph into one directory, and the set it is
-/// writing can have come from several. Two files called `sunset.jpg` in
-/// different folders both want to be `sunset_KROMA.jpg`, and without this the
-/// second lands on the first: one file on disc, two successes reported, and
-/// nothing anywhere saying which one you kept.
-///
-/// Numbered rather than refused. Losing an original is unrecoverable and worth
-/// being rude about; two of your own exports wanting one name is an ordinary
-/// thing that has an obvious right answer.
-///
-/// Compared in lower case, because the directory this is being written into is
-/// on Windows more often than not, and `A_KROMA.jpg` and `a_KROMA.jpg` are one
-/// file there.
-fn unclaimed_export_path(
-    dir: &Path,
-    source: &Path,
-    format: settings::Format,
-    taken: &mut std::collections::HashSet<String>,
-) -> PathBuf {
-    let first = export_name(source, format);
-    if taken.insert(first.to_lowercase()) {
-        return dir.join(first);
-    }
-    let stem = source
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "export".to_string());
-    // Two is where a human starts counting a second one of something.
-    for n in 2u32.. {
-        let name = format!("{stem}_KROMA_{n}.{}", format.extension());
-        if taken.insert(name.to_lowercase()) {
-            return dir.join(name);
-        }
-    }
-    unreachable!("u32 ran out of numbers")
-}
-
-/// Whether two paths name the same file, as far as can be told without
-/// creating one.
-///
-/// `canonicalize` is the right answer and it only works on files that already
-/// exist — which an output path usually does not. So the *directories* are
-/// canonicalised, which do exist, and the file names compared without regard
-/// to case. Windows treats `photo.JPG` and `photo.jpg` as one file, and a
-/// comparison that did not is exactly the comparison that would let a batch
-/// export eat a folder of originals.
-fn same_file(a: &Path, b: &Path) -> bool {
-    let dir = |p: &Path| {
-        let d = p.parent().unwrap_or(Path::new("."));
-        std::fs::canonicalize(d).unwrap_or_else(|_| d.to_path_buf())
-    };
-    let name = |p: &Path| p.file_name().map(|n| n.to_string_lossy().to_lowercase());
-    match (name(a), name(b)) {
-        (Some(x), Some(y)) => x == y && dir(a) == dir(b),
-        _ => false,
-    }
-}
-
 /// How the graded picture is being held up against the ungraded one.
 ///
 /// Both modes exist because they answer different questions. A wipe is for
@@ -2714,17 +2652,6 @@ mod tests {
         );
     }
 
-    /// Where the batch would actually write one photograph.
-    ///
-    /// The safety tests go through this rather than a simpler helper of their
-    /// own, because the export path the application uses is the one that has
-    /// to be safe. A test that checks a function nothing calls is the exact
-    /// shape of a safety test that passes while the real path is unguarded.
-    fn batch_path(dir: &str, source: &str, format: settings::Format) -> PathBuf {
-        let mut taken = std::collections::HashSet::new();
-        unclaimed_export_path(Path::new(dir), Path::new(source), format, &mut taken)
-    }
-
     /// The whole point of the two kinds: one leaves on its own, the other
     /// waits to be read.
     ///
@@ -2769,164 +2696,6 @@ mod tests {
             seen,
             vec![Compare::Off, Compare::Wipe, Compare::Side, Compare::Off],
             "three presses should visit every mode and land back on off"
-        );
-    }
-
-    /// The rule this whole pair of functions exists for: never write over a
-    /// photograph somebody gave us.
-    ///
-    /// It is asserted rather than reasoned about because the reasoning was
-    /// wrong once already. `export_path` used to build `<stem>.jpg`, which on
-    /// a case-insensitive filesystem *is* `<stem>.JPG` — so one "Export all…"
-    /// into the folder you opened would have written over every original in
-    /// it. There is no undo that reaches outside the process.
-    #[test]
-    fn an_export_is_never_named_after_its_source() {
-        // Both formats, because a PNG export of a PNG source is the case the
-        // extension change no longer saves us from — `a.b.c.png` written as a
-        // PNG is only safe because of the suffix.
-        for format in [settings::Format::Jpeg, settings::Format::Png] {
-            for source in [
-                "DJI_0001.JPG",
-                "photo.jpg",
-                "no_extension",
-                "a.b.c.png",
-                "shot.PNG",
-            ] {
-                let out = batch_path(".", source, format);
-                let source = Path::new(source);
-                assert!(
-                    !same_file(source, &out),
-                    "{} exports to itself as {} ({:?})",
-                    source.display(),
-                    out.display(),
-                    format
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn the_export_carries_the_kroma_suffix() {
-        use settings::Format::{Jpeg, Png};
-        assert_eq!(
-            export_name(Path::new("DJI_0001.JPG"), Jpeg),
-            "DJI_0001_KROMA.jpg"
-        );
-        assert_eq!(
-            export_name(Path::new("photo.jpeg"), Jpeg),
-            "photo_KROMA.jpg"
-        );
-        assert_eq!(export_name(Path::new("sunset"), Jpeg), "sunset_KROMA.jpg");
-        assert_eq!(export_name(Path::new("photo.jpg"), Png), "photo_KROMA.png");
-        assert_eq!(export_name(Path::new("shot.PNG"), Png), "shot_KROMA.png");
-    }
-
-    /// The suffix is what makes an export safe, not the extension.
-    ///
-    /// Easy to talk yourself out of: "a JPEG source exports to .png, so the
-    /// names differ anyway". They do not, when the source is a PNG — and the
-    /// panel lets anybody choose that in one click.
-    #[test]
-    fn a_png_source_exported_as_png_is_still_safe() {
-        let source = Path::new("shots/sunset.png");
-        let out = batch_path("shots", "shots/sunset.png", settings::Format::Png);
-        assert!(
-            !same_file(source, &out),
-            "a PNG exported as PNG landed on itself: {}",
-            out.display()
-        );
-    }
-
-    /// A batch writes into one folder from a set that may span several.
-    ///
-    /// Two photographs called `sunset.jpg` in different directories both want
-    /// `sunset_KROMA.jpg`. Silently, the second used to land on the first: one
-    /// file on disc, two successes counted, and nothing saying which survived.
-    #[test]
-    fn two_photographs_with_one_name_do_not_share_an_export() {
-        let mut taken = std::collections::HashSet::new();
-        let out = Path::new("exports");
-        let first = unclaimed_export_path(
-            out,
-            Path::new("holiday/sunset.jpg"),
-            settings::Format::Jpeg,
-            &mut taken,
-        );
-        let second = unclaimed_export_path(
-            out,
-            Path::new("work/sunset.jpg"),
-            settings::Format::Jpeg,
-            &mut taken,
-        );
-        let third = unclaimed_export_path(
-            out,
-            Path::new("archive/sunset.jpg"),
-            settings::Format::Jpeg,
-            &mut taken,
-        );
-
-        assert_eq!(first, Path::new("exports/sunset_KROMA.jpg"));
-        assert_eq!(second, Path::new("exports/sunset_KROMA_2.jpg"));
-        assert_eq!(third, Path::new("exports/sunset_KROMA_3.jpg"));
-        assert_ne!(first, second);
-        assert_ne!(second, third);
-    }
-
-    /// And the same trap as everywhere else: on Windows these are one file.
-    #[test]
-    fn export_names_collide_regardless_of_case() {
-        let mut taken = std::collections::HashSet::new();
-        let out = Path::new("exports");
-        let lower = unclaimed_export_path(
-            out,
-            Path::new("a/sunset.jpg"),
-            settings::Format::Jpeg,
-            &mut taken,
-        );
-        let upper = unclaimed_export_path(
-            out,
-            Path::new("b/SUNSET.jpg"),
-            settings::Format::Jpeg,
-            &mut taken,
-        );
-        assert!(
-            !same_file(&lower, &upper),
-            "{} and {} are the same file on Windows",
-            lower.display(),
-            upper.display()
-        );
-    }
-
-    /// Case is the trap. Windows treats these as one file, and a comparison
-    /// that did not is the comparison that would have eaten the originals.
-    #[test]
-    fn two_names_differing_only_in_case_are_the_same_file() {
-        assert!(same_file(
-            Path::new("shots/DJI_0001.JPG"),
-            Path::new("shots/dji_0001.jpg")
-        ));
-        assert!(!same_file(
-            Path::new("shots/DJI_0001.JPG"),
-            Path::new("shots/DJI_0002.JPG")
-        ));
-        // Same name, different folder.
-        assert!(!same_file(
-            Path::new("a/photo.jpg"),
-            Path::new("b/photo.jpg")
-        ));
-    }
-
-    /// And exporting a photograph that is *already* an export must not land on
-    /// the export. Round-tripping is a normal thing to do by accident.
-    #[test]
-    fn exporting_an_export_does_not_land_on_it() {
-        let once = Path::new("photo_KROMA.jpg");
-        let twice = batch_path(".", "photo_KROMA.jpg", settings::Format::Jpeg);
-        assert!(!same_file(once, &twice));
-        assert_eq!(
-            export_name(once, settings::Format::Jpeg),
-            "photo_KROMA_KROMA.jpg"
         );
     }
 }

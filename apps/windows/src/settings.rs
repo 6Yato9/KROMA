@@ -15,6 +15,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+pub use pe_session::export::{Export, Format};
+
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -40,65 +42,6 @@ pub struct Settings {
     /// so that running an older version does not silently discard it.
     #[serde(flatten)]
     unknown: serde_json::Map<String, serde_json::Value>,
-}
-
-/// What an export is written as.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
-pub enum Format {
-    /// Small, universal, and eight bits with a lossy step on top. The right
-    /// answer for a photograph that is finished and going somewhere.
-    #[default]
-    Jpeg,
-    /// Eight bits, no lossy step. For anything that will be looked at closely
-    /// or composited onto.
-    Png,
-    /// Sixteen bits. Where the wide working space stops being theoretical: a
-    /// gradient pushed about by a dozen rows holds more distinct values than
-    /// eight bits can name, and this is the only way out that keeps them.
-    Png16,
-}
-
-impl Format {
-    pub fn extension(self) -> &'static str {
-        match self {
-            Format::Jpeg => "jpg",
-            Format::Png | Format::Png16 => "png",
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Format::Jpeg => "JPEG",
-            Format::Png => "PNG 8",
-            Format::Png16 => "PNG 16",
-        }
-    }
-
-    /// Whether the export path has to read the frame back at full depth.
-    pub fn is_sixteen_bit(self) -> bool {
-        self == Format::Png16
-    }
-}
-
-/// The export settings, kept together so they can be handed about as one.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct Export {
-    pub format: Format,
-    /// JPEG only, 1-100.
-    ///
-    /// 95 rather than 100: the last few points of a JPEG quality scale buy
-    /// almost nothing you can see and cost a great deal of file, and 100 is
-    /// still lossy — a person who wants no loss wants PNG, not a bigger JPEG.
-    pub quality: u8,
-}
-
-impl Default for Export {
-    fn default() -> Self {
-        Self {
-            format: Format::default(),
-            quality: 95,
-        }
-    }
 }
 
 impl Settings {
