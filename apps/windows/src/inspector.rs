@@ -178,7 +178,7 @@ fn browser(
                 }
             }
 
-            for group in [Group::Basic, Group::Color, Group::Film, Group::Optics] {
+            for group in Group::ALL {
                 let available: Vec<_> = pe_effects::all()
                     .iter()
                     .filter(|e| e.group == group)

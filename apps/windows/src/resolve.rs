@@ -901,6 +901,106 @@ mod tests {
         fired
     }
 
+    /// Type something into a row's number box and report what the row ends up
+    /// holding.
+    ///
+    /// Driven for real because the question is what egui's number parser
+    /// accepts, and that is egui's answer to give. Reasoning about it would be
+    /// reasoning about somebody else's `from_str`.
+    fn type_into_the_number_box(text: &str) -> f32 {
+        let ctx = egui::Context::default();
+        let width = 300.0;
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(width, 400.0));
+        let mut value = 0.5_f32;
+
+        let frame = |input: egui::RawInput, value: &mut f32| {
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                    slider_row(
+                        &mut child,
+                        egui::Id::new("row"),
+                        "Exposure",
+                        value,
+                        0.0..=1.0,
+                        3,
+                    );
+                });
+            });
+        };
+
+        let base = egui::RawInput {
+            screen_rect: Some(rect),
+            ..Default::default()
+        };
+        frame(base.clone(), &mut value);
+
+        let at = egui::pos2(
+            rect.max.x - RESET_W - GAP - VALUE_W * 0.5,
+            rect.min.y + ROW_H * 0.5,
+        );
+        let mut click = base.clone();
+        click.events = vec![
+            egui::Event::PointerMoved(at),
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: Default::default(),
+            },
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            },
+        ];
+        frame(click, &mut value);
+        frame(base.clone(), &mut value);
+
+        // Select everything already there, then type over it and commit.
+        let mut typing = base.clone();
+        typing.events = vec![
+            egui::Event::Key {
+                key: egui::Key::A,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            },
+            egui::Event::Text(text.to_string()),
+            egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            },
+        ];
+        frame(typing, &mut value);
+        frame(base, &mut value);
+        value
+    }
+
+    /// Nothing a person can type may leave a parameter holding a value that
+    /// cannot be written down.
+    ///
+    /// `serde_json` writes a non-finite float as `null` and then refuses to
+    /// read `null` back as a number, so one NaN in one parameter makes the
+    /// whole document unloadable — and the autosave writes without being asked
+    /// and ignores its own errors, so the way you find out is that a grade is
+    /// simply gone.
+    #[test]
+    fn a_typed_number_is_always_a_number() {
+        for text in ["nan", "NaN", "inf", "-inf", "infinity", "1e999", "abc"] {
+            let got = type_into_the_number_box(text);
+            assert!(
+                got.is_finite(),
+                "typing {text:?} left the parameter holding {got}"
+            );
+        }
+    }
+
     /// Click into a row's number box, then press Left arrow the way the
     /// application does: consumed at the top of the frame, before any panel
     /// is drawn.

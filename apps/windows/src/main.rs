@@ -807,7 +807,12 @@ impl App {
             self.status.problem("open a photo first");
             return;
         };
-        let fresh = pe_effects::new_document(path.to_string_lossy().to_string());
+        // Through the same helper every other fresh document goes through, so
+        // reverting returns the photograph to how it opened rather than to a
+        // guess. Built by hand, this threw away what the file said its colour
+        // space was and reset it to sRGB — undoing a correction the user never
+        // made and cannot see was made.
+        let fresh = library::fresh_document(&path, self.image.space);
         self.history.edit("Revert", None, move |doc| *doc = fresh);
         self.ids = RowIdGenerator::resuming(self.history.document());
         autosave::forget(&path);

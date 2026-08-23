@@ -332,9 +332,15 @@ impl Library {
             if i == current {
                 continue;
             }
-            let path = entry.path.to_string_lossy().to_string();
             let (history, ids) = entry.parked.take().unwrap_or_else(|| {
-                let doc = pe_effects::new_document(path);
+                // A photograph nobody has opened this session may still have an
+                // edit saved beside it, and this used to throw it away: the
+                // grade landed on a blank document, taking the crop with it.
+                // Which is precisely what the paragraph above promises not to
+                // do — and the promise held or not depending on whether you
+                // happened to have visited the photograph.
+                let doc =
+                    load_edit(&entry.path).unwrap_or_else(|| fresh_document(&entry.path, None));
                 let ids = RowIdGenerator::resuming(&doc);
                 (History::new(doc), ids)
             });
@@ -558,6 +564,80 @@ mod tests {
         assert!(
             !lib.entries()[1].edited(),
             "merely visiting a photo is not editing it"
+        );
+    }
+
+    /// The case that was actually broken: an edit saved beside a photograph
+    /// nobody has opened this session.
+    ///
+    /// Paste to all used to hand those a blank document, so a crop saved in a
+    /// sidecar was thrown away by an action that promises to leave framing
+    /// alone. Whether the promise held depended on whether you had happened to
+    /// click on the photograph — the worst kind of inconsistency, because the
+    /// thing that changes the behaviour leaves no trace.
+    ///
+    /// Through a real file on disc, because the whole bug lives in the branch
+    /// that reads one.
+    #[test]
+    fn a_pasted_grade_leaves_a_saved_crop_alone() {
+        let dir = std::env::temp_dir().join("kroma-paste-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let photo = dir.join("never-opened.jpg");
+        let sidecar = photo.with_extension("peproj");
+
+        let mut saved = pe_effects::new_document(photo.to_string_lossy().to_string());
+        saved.geometry.size = [0.4, 0.4];
+        std::fs::write(&sidecar, saved.to_json().unwrap()).unwrap();
+        // Nothing in the autosave store for it, so the sidecar is what is read.
+        crate::autosave::forget(&photo);
+
+        let mut lib = Library::new(vec![PathBuf::from("in-hand.jpg"), photo.clone()]);
+        let mut stack = pe_core::Stack::default();
+        stack.push(pe_core::StackRow::new(pe_core::RowId(7), "grain"));
+        assert_eq!(lib.paste_stack_to_all(&stack), 1);
+
+        let after = lib.entries()[1].document().expect("pasted");
+        assert_eq!(after.stack.len(), 1, "the grade did not arrive");
+        assert_eq!(
+            after.geometry.size,
+            [0.4, 0.4],
+            "a crop saved beside the photograph was thrown away by a paste"
+        );
+        let _ = std::fs::remove_file(&sidecar);
+    }
+
+    /// The grade travels; the framing stays where it was.
+    ///
+    /// The module says so, and it was only true for photographs that happened
+    /// to have been opened this session — the rest had their whole document
+    /// replaced, crop and all. This pins the promise for the case that used to
+    /// break it: an entry whose edit is sitting parked rather than in hand.
+    #[test]
+    fn a_pasted_grade_leaves_the_crop_alone() {
+        let mut lib = library(&["a.jpg", "b.jpg"]);
+
+        // Visit b, crop it, and come back — which parks b's edit the way the
+        // application does rather than reaching into the entry.
+        let (mut b, b_ids) = lib.switch(
+            1,
+            History::new(Document::from_path("a.jpg")),
+            RowIdGenerator::default(),
+            None,
+        );
+        b.edit("Crop", None, |doc| doc.geometry.size = [0.5, 0.5]);
+        let (a, a_ids) = lib.switch(0, b, b_ids, None);
+        let _ = (a, a_ids);
+
+        let mut stack = pe_core::Stack::default();
+        stack.push(pe_core::StackRow::new(pe_core::RowId(7), "grain"));
+        lib.paste_stack_to_all(&stack);
+
+        let after = lib.entries()[1].document().expect("pasted");
+        assert_eq!(after.stack.len(), 1, "the grade did not arrive");
+        assert_eq!(
+            after.geometry.size,
+            [0.5, 0.5],
+            "the crop was replaced along with the grade"
         );
     }
 

@@ -38,6 +38,14 @@ pub enum Group {
 }
 
 impl Group {
+    /// Every group, in the order the effect browser lists them.
+    ///
+    /// Here rather than in the browser so that adding a variant and forgetting
+    /// to list it is a compile error in one place instead of an effect that is
+    /// in the registry, is fully implemented, has a shader, passes its tests —
+    /// and cannot be added to a stack, because nothing draws a heading for it.
+    pub const ALL: [Group; 4] = [Group::Basic, Group::Color, Group::Film, Group::Optics];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Group::Basic => "Basic",
@@ -337,6 +345,33 @@ impl EffectDef {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every effect has to be somewhere a person can find it.
+    ///
+    /// The browser walks `Group::ALL` and draws a heading per group. An effect
+    /// whose group is missing from that list is not merely hard to find — there
+    /// is no heading it belongs under, so it is never drawn at all, and the only
+    /// symptom is a tool nobody can add.
+    #[test]
+    fn every_effect_belongs_to_a_group_the_browser_lists() {
+        for e in all() {
+            assert!(
+                Group::ALL.contains(&e.group),
+                "{} is in {:?}, which the browser never lists",
+                e.key,
+                e.group
+            );
+        }
+    }
+
+    /// And no group is listed twice, which would draw its effects twice.
+    #[test]
+    fn the_group_list_has_no_repeats() {
+        let mut seen = Group::ALL.to_vec();
+        seen.sort_by_key(|g| g.as_str());
+        seen.dedup();
+        assert_eq!(seen.len(), Group::ALL.len());
+    }
 
     #[test]
     fn default_params_cover_every_declared_parameter() {
