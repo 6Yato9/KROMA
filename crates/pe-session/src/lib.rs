@@ -11,8 +11,10 @@
 
 pub mod autosave;
 pub mod export;
+pub mod session;
 pub mod support;
 pub mod surface;
 
+pub use session::{Session, SessionError};
 pub use support::Support;
 pub use surface::Attached;
