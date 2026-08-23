@@ -2139,8 +2139,11 @@ Add to the test module in `session.rs`:
         let mut s = Session::new();
         s.set_support_dir(tmp.path().join("support"));
         s.open_path(&photo).unwrap();
-        let row = s.add_effect("exposure").unwrap();
-        s.set_float(row, "ev", 1.5).unwrap();
+        // Sharpen rather than exposure: exposure is one of the pinned rows
+        // every fresh document already carries, so `find` on that key would
+        // hit the pinned row rather than the one this test adds and edits.
+        let row = s.add_effect("sharpen").unwrap();
+        s.set_float(row, "amount", 1.5).unwrap();
         s.write_autosave();
 
         let mut again = Session::new();
@@ -2150,8 +2153,8 @@ Add to the test module in `session.rs`:
         let restored = doc
             .stack
             .iter()
-            .find(|r| r.effect == "exposure")
-            .and_then(|r| r.params.get("ev"))
+            .find(|r| r.effect == "sharpen")
+            .and_then(|r| r.params.get("amount"))
             .and_then(|v| v.as_float());
         assert_eq!(restored, Some(1.5));
     }
@@ -2165,8 +2168,10 @@ Add to the test module in `session.rs`:
         let mut s = Session::new();
         s.set_support_dir(tmp.path().join("support"));
         s.open_path(&photo).unwrap();
-        let row = s.add_effect("exposure").unwrap();
-        s.set_float(row, "ev", 1.5).unwrap();
+        // Not exposure: it is pinned, so every fresh document has one and the
+        // assertion below could never hold for any document at all.
+        let row = s.add_effect("sharpen").unwrap();
+        s.set_float(row, "amount", 1.5).unwrap();
         s.write_autosave();
         s.revert().unwrap();
 
@@ -2174,7 +2179,7 @@ Add to the test module in `session.rs`:
         again.set_support_dir(tmp.path().join("support"));
         again.open_path(&photo).unwrap();
         assert!(
-            again.document().unwrap().stack.iter().all(|r| r.effect != "exposure"),
+            again.document().unwrap().stack.iter().all(|r| r.effect != "sharpen"),
             "the reverted edit came back"
         );
     }
