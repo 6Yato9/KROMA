@@ -61,7 +61,12 @@ Exports are named after the original with `_KROMA` on the end —
 export named after its source, in the folder its source lives in, *is* its
 source on a filesystem that ignores case, and Windows ignores case. The naming
 and the check are two separate defences on purpose: a scheme that happens to
-differ is not a guarantee.
+differ is not a guarantee — and it would not hold anyway once you can export a
+PNG of a PNG, which the File page lets you do in one click.
+
+Format and JPEG quality live on the File page rather than behind a dialog.
+They are settings, not a question: a dialog asks the same thing every time and
+gets the same answer every time, and the panel keeps yours between sessions.
 
 The only other thing written beside a photograph is its `.peproj` sidecar,
 which holds the edit and appears only when you ask for it with Save edit or

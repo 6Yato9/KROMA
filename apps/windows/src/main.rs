@@ -605,6 +605,7 @@ impl App {
             dir,
             done: 0,
             failed: 0,
+            export: self.settings.export,
         });
     }
 
@@ -639,7 +640,8 @@ impl App {
             batch.failed += 1;
             return true;
         };
-        let out = export_path(&batch.dir, &path);
+        let chosen = batch.export;
+        let out = export_path(&batch.dir, &path, chosen.format);
         if self.would_overwrite_a_source(&out) {
             // Counted as a failure rather than stopping the run: one collision
             // should not abandon the other sixty-five, and the summary at the
@@ -685,7 +687,10 @@ impl App {
             .map_err(|e| e.to_string())
             .and_then(|pixels| {
                 pe_io::DecodedImage::new(w, h, pixels)
-                    .and_then(|img| pe_io::save_jpeg(&img, &out, 95))
+                    .and_then(|img| match chosen.format {
+                        settings::Format::Jpeg => pe_io::save_jpeg(&img, &out, chosen.quality),
+                        settings::Format::Png => pe_io::save_png(&img, &out),
+                    })
                     .map_err(|e| e.to_string())
             });
         if let Some(b) = self.batch.as_mut() {
@@ -847,7 +852,8 @@ impl App {
             return;
         };
         let source = self.path.clone().unwrap_or_else(|| PathBuf::from("export"));
-        let out = source.with_file_name(export_name(&source));
+        let chosen = self.settings.export;
+        let out = source.with_file_name(export_name(&source, chosen.format));
         if self.would_overwrite_a_source(&out) {
             self.status.problem(format!(
                 "refused: {} is one of your photographs",
@@ -868,8 +874,11 @@ impl App {
 
         match preview.export(&self.image, self.history.document()) {
             Ok(pixels) => {
-                let saved = pe_io::DecodedImage::new(w, h, pixels)
-                    .and_then(|img| pe_io::save_jpeg(&img, &out, 95));
+                let saved =
+                    pe_io::DecodedImage::new(w, h, pixels).and_then(|img| match chosen.format {
+                        settings::Format::Jpeg => pe_io::save_jpeg(&img, &out, chosen.quality),
+                        settings::Format::Png => pe_io::save_png(&img, &out),
+                    });
                 match saved {
                     Ok(()) => self
                         .status
@@ -1093,9 +1102,17 @@ impl eframe::App for App {
                 });
                 ui.menu_button("Export", |ui| {
                     ui.set_min_width(MENU_W);
+                    // Named for what it does, not for a format: which format
+                    // is a setting on the File page now, and a menu item that
+                    // says JPEG while the panel says PNG is a menu item that
+                    // lies.
+                    let writes = format!(
+                        "Beside the original, named <photo>_KROMA.{}",
+                        self.settings.export.format.extension()
+                    );
                     if ui
-                        .add(egui::Button::new("Export JPEG").shortcut_text("Ctrl+E"))
-                        .on_hover_text("Beside the original, named <photo>_KROMA.jpg")
+                        .add(egui::Button::new("Export").shortcut_text("Ctrl+E"))
+                        .on_hover_text(writes)
                         .clicked()
                     {
                         self.export();
@@ -1451,7 +1468,11 @@ impl eframe::App for App {
                             self.view.fit();
                         }
                     }
-                    Tab::File => file_page(ui, self),
+                    Tab::File => {
+                        if file_page(ui, self) {
+                            export_requested = true;
+                        }
+                    }
                 });
             });
 
@@ -1826,7 +1847,7 @@ fn tab_row(ui: &mut egui::Ui, current: &mut Tab) {
 }
 
 /// The File page: where the photograph came from and what it is.
-fn file_page(ui: &mut egui::Ui, app: &App) {
+fn file_page(ui: &mut egui::Ui, app: &mut App) -> bool {
     let rows: Vec<(String, String)> = vec![
         (
             "Name".into(),
@@ -1899,6 +1920,111 @@ fn file_page(ui: &mut egui::Ui, app: &App) {
         });
         ui.add_space(2.0);
     }
+
+    ui.add_space(10.0);
+    export_section(ui, app)
+}
+
+/// What the photograph gets written as, and the button that writes it.
+///
+/// On the File page rather than behind the Export button, because these are
+/// settings and not a question. A dialog asks the same thing every time and is
+/// answered the same way every time; a panel states the answer, keeps it, and
+/// stays out of the way of somebody exporting sixty frames.
+fn export_section(ui: &mut egui::Ui, app: &mut App) -> bool {
+    ui.label(
+        egui::RichText::new("EXPORT")
+            .small()
+            .color(resolve::colour::DIM),
+    );
+    ui.add_space(4.0);
+
+    let mut chosen = app.settings.export;
+
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            [resolve::LABEL_WIDTH, 18.0],
+            egui::Label::new(
+                egui::RichText::new("Format")
+                    .small()
+                    .color(resolve::colour::LABEL),
+            ),
+        );
+        for format in [settings::Format::Jpeg, settings::Format::Png] {
+            if ui
+                .selectable_label(chosen.format == format, format.label())
+                .clicked()
+            {
+                chosen.format = format;
+            }
+        }
+    });
+    ui.add_space(2.0);
+
+    // Greyed rather than hidden for a PNG. A control that vanishes takes its
+    // explanation with it — the row staying put, dimmed, says "quality is a
+    // JPEG idea" far better than an empty space does.
+    let is_jpeg = chosen.format == settings::Format::Jpeg;
+    ui.add_enabled_ui(is_jpeg, |ui| {
+        let mut quality = chosen.quality as f32;
+        if resolve::slider_row(
+            ui,
+            ui.id().with("export_quality"),
+            "Quality",
+            &mut quality,
+            1.0..=100.0,
+            0,
+        )
+        .changed
+        {
+            chosen.quality = quality.round().clamp(1.0, 100.0) as u8;
+        }
+    });
+
+    // What it will actually be called, spelled out. The _KROMA rule is the
+    // thing standing between an export and somebody's original, and a rule you
+    // can see working is one you can trust.
+    let name = match app.path.as_ref() {
+        Some(p) => export_name(p, chosen.format),
+        None => format!("<photo>_KROMA.{}", chosen.format.extension()),
+    };
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            [resolve::LABEL_WIDTH, 18.0],
+            egui::Label::new(
+                egui::RichText::new("Writes")
+                    .small()
+                    .color(resolve::colour::LABEL),
+            ),
+        );
+        ui.add(egui::Label::new(egui::RichText::new(name).small().monospace()).wrap());
+    });
+
+    if chosen != app.settings.export {
+        app.settings.export = chosen;
+        app.settings.save();
+    }
+
+    ui.add_space(8.0);
+    let mut pressed = false;
+    ui.horizontal(|ui| {
+        ui.add_space(resolve::LABEL_WIDTH + 4.0);
+        pressed = ui
+            .add(egui::Button::new("Export").shortcut_text("Ctrl+E"))
+            .on_hover_text("Beside the original, never over it")
+            .clicked();
+        ui.add_enabled_ui(app.library.len() > 1 && app.batch.is_none(), |ui| {
+            if ui
+                .button("Export all…")
+                .on_hover_text("Every photo in the set, into a folder you choose")
+                .clicked()
+            {
+                app.batch_export();
+            }
+        });
+    });
+    pressed
 }
 
 /// One line of feedback at the bottom of the window.
@@ -1963,6 +2089,10 @@ struct Batch {
     dir: PathBuf,
     done: usize,
     failed: usize,
+    /// Taken once, when the run starts, rather than read per photograph.
+    /// Changing the format halfway through a batch would otherwise leave a
+    /// folder half JPEG and half PNG, with no record of where the line fell.
+    export: settings::Export,
 }
 
 impl Batch {
@@ -1987,16 +2117,16 @@ impl Batch {
 ///
 /// The name is one half of that fix and [`would_overwrite`] is the other. A
 /// naming scheme that happens to differ is not a guarantee; a check is.
-fn export_name(source: &Path) -> String {
+fn export_name(source: &Path, format: settings::Format) -> String {
     let stem = source
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "export".to_string());
-    format!("{stem}_KROMA.jpg")
+    format!("{stem}_KROMA.{}", format.extension())
 }
 
-fn export_path(dir: &Path, source: &Path) -> PathBuf {
-    dir.join(export_name(source))
+fn export_path(dir: &Path, source: &Path, format: settings::Format) -> PathBuf {
+    dir.join(export_name(source, format))
 }
 
 /// Whether two paths name the same file, as far as can be told without
@@ -2288,23 +2418,60 @@ mod tests {
     /// it. There is no undo that reaches outside the process.
     #[test]
     fn an_export_is_never_named_after_its_source() {
-        for source in ["DJI_0001.JPG", "photo.jpg", "no_extension", "a.b.c.png"] {
-            let source = Path::new(source);
-            let out = export_path(Path::new("."), source);
-            assert!(
-                !same_file(source, &out),
-                "{} exports to itself as {}",
-                source.display(),
-                out.display()
-            );
+        // Both formats, because a PNG export of a PNG source is the case the
+        // extension change no longer saves us from — `a.b.c.png` written as a
+        // PNG is only safe because of the suffix.
+        for format in [settings::Format::Jpeg, settings::Format::Png] {
+            for source in [
+                "DJI_0001.JPG",
+                "photo.jpg",
+                "no_extension",
+                "a.b.c.png",
+                "shot.PNG",
+            ] {
+                let source = Path::new(source);
+                let out = export_path(Path::new("."), source, format);
+                assert!(
+                    !same_file(source, &out),
+                    "{} exports to itself as {} ({:?})",
+                    source.display(),
+                    out.display(),
+                    format
+                );
+            }
         }
     }
 
     #[test]
     fn the_export_carries_the_kroma_suffix() {
-        assert_eq!(export_name(Path::new("DJI_0001.JPG")), "DJI_0001_KROMA.jpg");
-        assert_eq!(export_name(Path::new("photo.jpeg")), "photo_KROMA.jpg");
-        assert_eq!(export_name(Path::new("sunset")), "sunset_KROMA.jpg");
+        use settings::Format::{Jpeg, Png};
+        assert_eq!(
+            export_name(Path::new("DJI_0001.JPG"), Jpeg),
+            "DJI_0001_KROMA.jpg"
+        );
+        assert_eq!(
+            export_name(Path::new("photo.jpeg"), Jpeg),
+            "photo_KROMA.jpg"
+        );
+        assert_eq!(export_name(Path::new("sunset"), Jpeg), "sunset_KROMA.jpg");
+        assert_eq!(export_name(Path::new("photo.jpg"), Png), "photo_KROMA.png");
+        assert_eq!(export_name(Path::new("shot.PNG"), Png), "shot_KROMA.png");
+    }
+
+    /// The suffix is what makes an export safe, not the extension.
+    ///
+    /// Easy to talk yourself out of: "a JPEG source exports to .png, so the
+    /// names differ anyway". They do not, when the source is a PNG — and the
+    /// panel lets anybody choose that in one click.
+    #[test]
+    fn a_png_source_exported_as_png_is_still_safe() {
+        let source = Path::new("shots/sunset.png");
+        let out = export_path(Path::new("shots"), source, settings::Format::Png);
+        assert!(
+            !same_file(source, &out),
+            "a PNG exported as PNG landed on itself: {}",
+            out.display()
+        );
     }
 
     /// Case is the trap. Windows treats these as one file, and a comparison
@@ -2331,8 +2498,11 @@ mod tests {
     #[test]
     fn exporting_an_export_does_not_land_on_it() {
         let once = Path::new("photo_KROMA.jpg");
-        let twice = export_path(Path::new("."), once);
+        let twice = export_path(Path::new("."), once, settings::Format::Jpeg);
         assert!(!same_file(once, &twice));
-        assert_eq!(export_name(once), "photo_KROMA_KROMA.jpg");
+        assert_eq!(
+            export_name(once, settings::Format::Jpeg),
+            "photo_KROMA_KROMA.jpg"
+        );
     }
 }

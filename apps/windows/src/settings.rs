@@ -30,10 +30,65 @@ pub struct Settings {
     session: Vec<String>,
     #[serde(default)]
     session_index: usize,
+    /// How the last export was written. Remembered because it is a decision
+    /// about the work rather than about one photograph — somebody exporting
+    /// JPEGs at 92 is going to keep doing it, and asking again every time is
+    /// asking them to answer a question they have already answered.
+    #[serde(default)]
+    pub export: Export,
     /// Anything a newer build wrote that this one does not know about, kept
     /// so that running an older version does not silently discard it.
     #[serde(flatten)]
     unknown: serde_json::Map<String, serde_json::Value>,
+}
+
+/// What an export is written as.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+pub enum Format {
+    /// Small, universal, and eight bits with a lossy step on top. The right
+    /// answer for a photograph that is finished and going somewhere.
+    #[default]
+    Jpeg,
+    /// Eight bits, no lossy step. For anything that will be looked at closely
+    /// or composited onto.
+    Png,
+}
+
+impl Format {
+    pub fn extension(self) -> &'static str {
+        match self {
+            Format::Jpeg => "jpg",
+            Format::Png => "png",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Format::Jpeg => "JPEG",
+            Format::Png => "PNG",
+        }
+    }
+}
+
+/// The export settings, kept together so they can be handed about as one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct Export {
+    pub format: Format,
+    /// JPEG only, 1-100.
+    ///
+    /// 95 rather than 100: the last few points of a JPEG quality scale buy
+    /// almost nothing you can see and cost a great deal of file, and 100 is
+    /// still lossy — a person who wants no loss wants PNG, not a bigger JPEG.
+    pub quality: u8,
+}
+
+impl Default for Export {
+    fn default() -> Self {
+        Self {
+            format: Format::default(),
+            quality: 95,
+        }
+    }
 }
 
 impl Settings {
@@ -171,12 +226,14 @@ mod tests {
         let missing = dir.join("deleted.jpg");
         let _ = std::fs::remove_file(&missing);
 
-        let mut s = Settings::default();
-        s.session = std::iter::once(missing.display().to_string())
-            .chain(names.iter().map(|n| dir.join(n).display().to_string()))
-            .collect();
-        // "c.jpg" — third of the survivors, fourth in the remembered list.
-        s.session_index = 3;
+        let s = Settings {
+            session: std::iter::once(missing.display().to_string())
+                .chain(names.iter().map(|n| dir.join(n).display().to_string()))
+                .collect(),
+            // "c.jpg" — third of the survivors, fourth in the remembered list.
+            session_index: 3,
+            ..Default::default()
+        };
 
         let (paths, index) = s.session();
         assert_eq!(paths.len(), 3, "the missing photograph should be dropped");
@@ -197,12 +254,14 @@ mod tests {
         let gone = dir.join("gone.jpg");
         let _ = std::fs::remove_file(&gone);
 
-        let mut s = Settings::default();
-        s.session = vec![
-            dir.join("kept.jpg").display().to_string(),
-            gone.display().to_string(),
-        ];
-        s.session_index = 1;
+        let s = Settings {
+            session: vec![
+                dir.join("kept.jpg").display().to_string(),
+                gone.display().to_string(),
+            ],
+            session_index: 1,
+            ..Default::default()
+        };
 
         let (paths, index) = s.session();
         assert_eq!(paths.len(), 1);
