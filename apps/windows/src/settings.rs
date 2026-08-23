@@ -52,21 +52,31 @@ pub enum Format {
     /// Eight bits, no lossy step. For anything that will be looked at closely
     /// or composited onto.
     Png,
+    /// Sixteen bits. Where the wide working space stops being theoretical: a
+    /// gradient pushed about by a dozen rows holds more distinct values than
+    /// eight bits can name, and this is the only way out that keeps them.
+    Png16,
 }
 
 impl Format {
     pub fn extension(self) -> &'static str {
         match self {
             Format::Jpeg => "jpg",
-            Format::Png => "png",
+            Format::Png | Format::Png16 => "png",
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
             Format::Jpeg => "JPEG",
-            Format::Png => "PNG",
+            Format::Png => "PNG 8",
+            Format::Png16 => "PNG 16",
         }
+    }
+
+    /// Whether the export path has to read the frame back at full depth.
+    pub fn is_sixteen_bit(self) -> bool {
+        self == Format::Png16
     }
 }
 

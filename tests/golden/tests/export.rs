@@ -241,3 +241,104 @@ fn export_memory_is_independent_of_stack_depth() {
         "caching per row costs {per_row_cached}, ping-pong costs {ping_pong}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Sixteen bits
+// ---------------------------------------------------------------------------
+
+/// A smooth horizontal ramp, which is what shows banding if there is any.
+fn ramp_16(width: u32, height: u32) -> DecodedImage {
+    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+    for _ in 0..height {
+        for x in 0..width {
+            let v = (x * 255 / (width - 1).max(1)) as u8;
+            pixels.extend_from_slice(&[v, v, v, 255]);
+        }
+    }
+    DecodedImage::new(width, height, pixels).expect("ramp")
+}
+
+/// The claim the whole 16-bit path rests on: the transfer function applied on
+/// the CPU is the one the hardware applies for the 8-bit path.
+///
+/// The 8-bit export writes into an `...Srgb` render target and the GPU encodes
+/// on the write. There is no 16-bit equivalent of that format, so the 16-bit
+/// path reads back linear samples and runs `pe-color`'s own encode over them.
+/// Two different machines doing the same arithmetic — and if they ever stop
+/// agreeing, every 16-bit export is quietly the wrong brightness while looking
+/// perfectly plausible.
+///
+/// One code of tolerance, because the 8-bit path rounds to 256 levels and this
+/// rounds to 65536 before being reduced; the last bit is allowed to disagree.
+#[test]
+fn sixteen_bits_reduced_to_eight_is_the_eight_bit_export() {
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let src = ramp_16(64, 4);
+    let doc = doc_with(&[
+        ("exposure", &[("exposure", ParamValue::Float(0.4))]),
+        ("contrast", &[("contrast", ParamValue::Float(0.25))]),
+    ]);
+    let renderer = EffectRenderer::new(&gpu.device);
+
+    let eight =
+        pe_render::render_full(gpu, &renderer, src.width, src.height, &src.pixels, &doc).unwrap();
+    let sixteen =
+        pe_render::export::render_full_16(gpu, &renderer, src.width, src.height, &src.pixels, &doc)
+            .unwrap();
+
+    assert_eq!(
+        sixteen.len(),
+        eight.len(),
+        "the two depths disagree on size"
+    );
+    let mut worst = 0i32;
+    for (i, (&wide, &narrow)) in sixteen.iter().zip(eight.iter()).enumerate() {
+        // 65535 down to 255 is an exact divide by 257.
+        let reduced = (wide as f32 / 257.0).round() as i32;
+        let diff = (reduced - narrow as i32).abs();
+        assert!(
+            diff <= 1,
+            "sample {i} reads {narrow} at 8 bits and {wide} at 16 ({reduced} reduced) — \
+             the CPU transfer function does not match the hardware's"
+        );
+        worst = worst.max(diff);
+    }
+    assert!(worst <= 1, "worst disagreement was {worst} codes");
+}
+
+/// And the point of it: a graded ramp holds more distinct values than eight
+/// bits can name.
+///
+/// Without this the previous test would pass just as happily on a 16-bit file
+/// that was an 8-bit one padded with zeroes, which is the obvious way to get
+/// this wrong and the hardest to notice by looking.
+#[test]
+fn sixteen_bits_actually_carries_more_than_eight() {
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    // A narrow slice of the range, pulled wide: this is the case where 8 bits
+    // runs out and the working space has not.
+    let src = ramp_16(256, 2);
+    let doc = doc_with(&[("contrast", &[("contrast", ParamValue::Float(-0.8))])]);
+    let renderer = EffectRenderer::new(&gpu.device);
+
+    let eight =
+        pe_render::render_full(gpu, &renderer, src.width, src.height, &src.pixels, &doc).unwrap();
+    let sixteen =
+        pe_render::export::render_full_16(gpu, &renderer, src.width, src.height, &src.pixels, &doc)
+            .unwrap();
+
+    // Red channel only; the source is neutral so all three agree.
+    let levels_8: std::collections::HashSet<u8> = eight.iter().step_by(4).copied().collect();
+    let levels_16: std::collections::HashSet<u16> = sixteen.iter().step_by(4).copied().collect();
+    assert!(
+        levels_16.len() > levels_8.len(),
+        "16-bit export has {} distinct levels against 8-bit's {} — it is not \
+         carrying any more than the narrow path",
+        levels_16.len(),
+        levels_8.len()
+    );
+}

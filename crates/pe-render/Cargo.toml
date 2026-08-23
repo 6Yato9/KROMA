@@ -8,6 +8,10 @@ license.workspace = true
 
 [dependencies]
 bytemuck = { version = "1.25.2", features = ["derive"] }
+# Already in the tree via wgpu; a direct dependency so the half-float decode
+# on the 16-bit export path is the well-tested one rather than fifteen lines
+# of bit-twiddling whose mistakes would look like ordinary highlights.
+half = "2.7.1"
 pe-color = { version = "0.0.1", path = "../pe-color" }
 pe-core = { version = "0.0.1", path = "../pe-core" }
 pe-effects = { version = "0.0.1", path = "../pe-effects" }

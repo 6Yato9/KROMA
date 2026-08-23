@@ -67,6 +67,10 @@ PNG of a PNG, which the File page lets you do in one click.
 Format and JPEG quality live on the File page rather than behind a dialog.
 They are settings, not a question: a dialog asks the same thing every time and
 gets the same answer every time, and the panel keeps yours between sessions.
+JPEG, 8-bit PNG and 16-bit PNG. The last one is where a wide working space
+stops being theoretical — a gradient pushed about by a dozen rows holds more
+distinct values than 8 bits can name, and it is the only way out that keeps
+them.
 
 The only other thing written beside a photograph is its `.peproj` sidecar,
 which holds the edit and appears only when you ask for it with Save edit or

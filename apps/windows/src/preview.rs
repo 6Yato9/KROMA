@@ -506,6 +506,18 @@ impl Preview {
             doc,
         )
     }
+
+    /// The same render, read back at full depth.
+    pub fn export_16(&self, image: &DecodedImage, doc: &Document) -> Result<Vec<u16>, RenderError> {
+        pe_render::export::render_full_16(
+            &self.gpu,
+            &self.renderer,
+            image.width,
+            image.height,
+            &image.pixels,
+            doc,
+        )
+    }
 }
 
 /// Everything the framing decision produces, worked out without touching a GPU

@@ -681,21 +681,10 @@ impl App {
             }
         };
 
-        let (w, h) = pe_render::export::output_size(&doc, image.width, image.height);
-        let result = preview
-            .export(&image, &doc)
-            .map_err(|e| e.to_string())
-            .and_then(|pixels| {
-                pe_io::DecodedImage::new(w, h, pixels)
-                    .and_then(|img| match chosen.format {
-                        settings::Format::Jpeg => pe_io::save_jpeg(&img, &out, chosen.quality),
-                        settings::Format::Png => pe_io::save_png(&img, &out),
-                    })
-                    .map_err(|e| e.to_string())
-            });
+        let result = write_export(preview, &image, &doc, &out, chosen);
         if let Some(b) = self.batch.as_mut() {
             match result {
-                Ok(()) => b.done += 1,
+                Ok(_) => b.done += 1,
                 Err(_) => b.failed += 1,
             }
         }
@@ -862,30 +851,10 @@ impl App {
             return;
         }
 
-        // The crop decides how much picture there is and the resize decides
-        // how many pixels it comes in; neither is the source's size, and
-        // assuming it was would hand the encoder the wrong dimensions for
-        // every cropped export.
-        let (w, h) = pe_render::export::output_size(
-            self.history.document(),
-            self.image.width,
-            self.image.height,
-        );
-
-        match preview.export(&self.image, self.history.document()) {
-            Ok(pixels) => {
-                let saved =
-                    pe_io::DecodedImage::new(w, h, pixels).and_then(|img| match chosen.format {
-                        settings::Format::Jpeg => pe_io::save_jpeg(&img, &out, chosen.quality),
-                        settings::Format::Png => pe_io::save_png(&img, &out),
-                    });
-                match saved {
-                    Ok(()) => self
-                        .status
-                        .done(format!("exported {} at {w}x{h}", out.display())),
-                    Err(e) => self.status.problem(format!("export failed: {e}")),
-                }
-            }
+        match write_export(preview, &self.image, self.history.document(), &out, chosen) {
+            Ok((w, h)) => self
+                .status
+                .done(format!("exported {} at {w}x{h}", out.display())),
             Err(e) => self.status.problem(format!("export failed: {e}")),
         }
     }
@@ -1950,7 +1919,11 @@ fn export_section(ui: &mut egui::Ui, app: &mut App) -> bool {
                     .color(resolve::colour::LABEL),
             ),
         );
-        for format in [settings::Format::Jpeg, settings::Format::Png] {
+        for format in [
+            settings::Format::Jpeg,
+            settings::Format::Png,
+            settings::Format::Png16,
+        ] {
             if ui
                 .selectable_label(chosen.format == format, format.label())
                 .clicked()
@@ -2117,6 +2090,39 @@ impl Batch {
 ///
 /// The name is one half of that fix and [`would_overwrite`] is the other. A
 /// naming scheme that happens to differ is not a guarantee; a check is.
+/// Render one photograph and write it, in whichever format was chosen.
+///
+/// One function for both the single export and the batch. They used to hold
+/// two copies of the same three lines, which is two places for a format to be
+/// handled and one of them to be forgotten — and the failure would be a folder
+/// of JPEGs from a run that said PNG.
+///
+/// Returns the size actually written, which is not the source's: the crop
+/// decides how much picture there is and the resize decides how many pixels it
+/// comes in.
+fn write_export(
+    preview: &Preview,
+    image: &pe_io::DecodedImage,
+    doc: &pe_core::Document,
+    out: &Path,
+    chosen: settings::Export,
+) -> Result<(u32, u32), String> {
+    let (w, h) = pe_render::export::output_size(doc, image.width, image.height);
+    if chosen.format.is_sixteen_bit() {
+        let pixels = preview.export_16(image, doc).map_err(|e| e.to_string())?;
+        pe_io::save_png16(w, h, &pixels, out).map_err(|e| e.to_string())?;
+    } else {
+        let pixels = preview.export(image, doc).map_err(|e| e.to_string())?;
+        let img = pe_io::DecodedImage::new(w, h, pixels).map_err(|e| e.to_string())?;
+        match chosen.format {
+            settings::Format::Jpeg => pe_io::save_jpeg(&img, out, chosen.quality),
+            _ => pe_io::save_png(&img, out),
+        }
+        .map_err(|e| e.to_string())?;
+    }
+    Ok((w, h))
+}
+
 fn export_name(source: &Path, format: settings::Format) -> String {
     let stem = source
         .file_stem()

@@ -262,6 +262,39 @@ pub fn save_png(img: &DecodedImage, path: impl AsRef<Path>) -> Result<(), IoErro
     Ok(())
 }
 
+/// Write 16-bit RGBA out as a PNG.
+///
+/// Takes the samples loose rather than a `DecodedImage`, which is 8-bit by
+/// definition and should stay that way: it is what a *decoded photograph* is,
+/// and a 16-bit export is not that — it is the far end of the pipeline on its
+/// way to disc, and it exists for exactly one call.
+pub fn save_png16(
+    width: u32,
+    height: u32,
+    rgba: &[u16],
+    path: impl AsRef<Path>,
+) -> Result<(), IoError> {
+    let expected = width as usize * height as usize * 4;
+    if rgba.len() != expected {
+        return Err(IoError::PixelCountMismatch {
+            expected,
+            found: rgba.len(),
+        });
+    }
+    let buf: image::ImageBuffer<image::Rgba<u16>, Vec<u16>> =
+        image::ImageBuffer::from_raw(width, height, rgba.to_vec()).ok_or(
+            IoError::PixelCountMismatch {
+                expected,
+                found: rgba.len(),
+            },
+        )?;
+    write_atomically(path, |file| {
+        let mut out = std::io::BufWriter::new(file);
+        buf.write_to(&mut out, image::ImageFormat::Png)?;
+        Ok(())
+    })
+}
+
 pub fn save_jpeg(img: &DecodedImage, path: impl AsRef<Path>, quality: u8) -> Result<(), IoError> {
     let rgb = image::RgbImage::from_fn(img.width, img.height, |x, y| {
         let p = img.pixel(x, y);

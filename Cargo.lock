@@ -1721,6 +1721,7 @@ name = "pe-render"
 version = "0.0.1"
 dependencies = [
  "bytemuck",
+ "half",
  "pe-color",
  "pe-core",
  "pe-effects",

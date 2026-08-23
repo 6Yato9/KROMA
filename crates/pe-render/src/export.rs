@@ -20,7 +20,7 @@ use crate::device::GpuContext;
 use crate::effect::EffectRenderer;
 use crate::texture::{ImageTexture, SOURCE_FORMAT};
 use crate::transform::TransformPass;
-use crate::{RenderError, read_rgba8};
+use crate::{RenderError, read_rgba8, read_rgba16f};
 
 /// The pixel dimensions [`render_full`] will produce for a document.
 ///
@@ -36,14 +36,21 @@ pub fn output_size(doc: &Document, source_w: u32, source_h: u32) -> (u32, u32) {
 /// `pixels` is tightly packed 8-bit RGBA in the document's input colour space,
 /// at the *source's* size. Returns the same layout in the document's output
 /// space at [`output_size`], ready to be written to a file.
-pub fn render_full(
+/// The stack, run at full resolution, left in the working space.
+///
+/// Split out because the two exports differ only in what happens after this:
+/// eight bits writes through an sRGB texture and lets the hardware encode,
+/// sixteen has no such format to write through and does it here. Everything
+/// before that point — geometry, the rows, the resize — has to be the same or
+/// the two depths are two different pictures.
+fn render_to_working(
     gpu: &GpuContext,
     renderer: &EffectRenderer,
     width: u32,
     height: u32,
     pixels: &[u8],
     doc: &Document,
-) -> Result<Vec<u8>, RenderError> {
+) -> Result<(ImageTexture, pe_color::Pipeline), RenderError> {
     let pipeline = doc.color.pipeline();
 
     let source = ImageTexture::upload_rgba8(
@@ -128,16 +135,72 @@ pub fn render_full(
         front = to_working.resample(gpu, &front, w, h);
     }
 
-    // Working space out to the document's output space.
+    Ok((front, pipeline))
+}
+
+/// Run the stack and read the result back as 8-bit RGBA.
+///
+/// The output transfer function is applied by the hardware, on the write into
+/// an `...Srgb` render target. That is the whole reason this is three lines and
+/// the 16-bit path is not.
+pub fn render_full(
+    gpu: &GpuContext,
+    renderer: &EffectRenderer,
+    width: u32,
+    height: u32,
+    pixels: &[u8],
+    doc: &Document,
+) -> Result<Vec<u8>, RenderError> {
+    let (front, pipeline) = render_to_working(gpu, renderer, width, height, pixels, doc)?;
+    let out = to_output(gpu, &front, &pipeline, SOURCE_FORMAT);
+    read_rgba8(gpu, &out)
+}
+
+/// Run the stack and read the result back as 16-bit RGBA.
+///
+/// Sixteen bits is where the argument for a wide working space stops being
+/// theoretical: a gradient that has been pushed about by a dozen rows has more
+/// distinct values in it than 8 bits can name, and writing it out as 8 bits
+/// throws that away at the last possible moment.
+///
+/// There is no 16-bit sRGB texture format, so the hardware cannot apply the
+/// transfer function on the way out the way it does for the 8-bit path. It is
+/// applied here instead, from `pe-color`'s own implementation — the same code
+/// the golden tests treat as the oracle, not a second copy of the curve. This
+/// is a deliberate exception to "transfer functions belong to texture formats",
+/// and the only one: there is no format that would do it.
+pub fn render_full_16(
+    gpu: &GpuContext,
+    renderer: &EffectRenderer,
+    width: u32,
+    height: u32,
+    pixels: &[u8],
+    doc: &Document,
+) -> Result<Vec<u16>, RenderError> {
+    let (front, pipeline) = render_to_working(gpu, renderer, width, height, pixels, doc)?;
+    // Rotated into the output gamut but still linear, because that is all the
+    // shader ever does.
+    let out = to_output(gpu, &front, &pipeline, crate::WORKING_FORMAT);
+    let curve = EncodeCurve::for_transfer(pipeline.output.transfer);
+    read_rgba16f(gpu, &out, |linear| curve.apply(linear))
+}
+
+/// The last pass: working space out to the document's output gamut.
+fn to_output(
+    gpu: &GpuContext,
+    front: &ImageTexture,
+    pipeline: &pe_color::Pipeline,
+    format: wgpu::TextureFormat,
+) -> ImageTexture {
     let out = ImageTexture::new(
         &gpu.device,
-        out_w,
-        out_h,
-        SOURCE_FORMAT,
+        front.width,
+        front.height,
+        format,
         wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         "export-out",
     );
-    let to_display = TransformPass::new(&gpu.device, SOURCE_FORMAT);
+    let to_display = TransformPass::new(&gpu.device, format);
     let mut encoder = gpu
         .device
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -152,8 +215,41 @@ pub fn render_full(
         &pipeline.output,
     );
     gpu.queue.submit([encoder.finish()]);
+    out
+}
 
-    read_rgba8(gpu, &out)
+/// The output transfer function, tabulated.
+///
+/// Applying it per sample would be 72 million `powf` calls on a 24-megapixel
+/// frame, which is seconds of an export spent on a curve that only has one
+/// shape. Sampled once at each of 65536 points and interpolated between them,
+/// the worst error works out around 1e-10 — some four orders of magnitude
+/// under one 16-bit code, so the table is exact as far as the output can tell.
+struct EncodeCurve {
+    table: Vec<f32>,
+}
+
+impl EncodeCurve {
+    const STEPS: usize = 1 << 16;
+
+    fn for_transfer(transfer: pe_color::TransferFn) -> Self {
+        let table = (0..=Self::STEPS)
+            .map(|i| transfer.encode(i as f64 / Self::STEPS as f64) as f32)
+            .collect();
+        Self { table }
+    }
+
+    /// One linear sample to a 16-bit code.
+    fn apply(&self, linear: f32) -> u16 {
+        // Clamped because the working space holds values the output cannot.
+        // The 8-bit path clamps too — a `Unorm` render target does it in
+        // hardware — so this is matching that, not inventing a policy.
+        let v = linear.clamp(0.0, 1.0) * Self::STEPS as f32;
+        let i = (v as usize).min(Self::STEPS - 1);
+        let t = v - i as f32;
+        let encoded = self.table[i] + (self.table[i + 1] - self.table[i]) * t;
+        (encoded.clamp(0.0, 1.0) * u16::MAX as f32).round() as u16
+    }
 }
 
 /// Peak VRAM the export path needs, in bytes, for reporting and for deciding

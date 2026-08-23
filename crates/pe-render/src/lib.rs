@@ -23,7 +23,7 @@ pub use cache::{RenderContext, RenderPlan, RowFingerprint, StageCache, fingerpri
 pub use device::GpuContext;
 pub use effect::{EffectRenderer, Scratch};
 pub use export::render_full;
-pub use readback::read_rgba8;
+pub use readback::{read_rgba8, read_rgba16f};
 pub use texture::padded_bytes_per_row;
 pub use texture::{ImageTexture, SOURCE_FORMAT, WORKING_FORMAT};
 pub use transform::TransformPass;
