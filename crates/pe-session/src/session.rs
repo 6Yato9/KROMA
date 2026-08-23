@@ -56,8 +56,7 @@ struct Gpu {
     context: Option<GpuContext>,
     /// The layer a shell handed us. Written here so the device and the
     /// surface it must be compatible with live together; read by the
-    /// present path, which is not in this file yet.
-    #[allow(dead_code, reason = "held for the present path; nothing reads it yet")]
+    /// present path.
     attached: Option<Attached>,
     renderer: Option<EffectRenderer>,
     to_working: Option<TransformPass>,
@@ -479,6 +478,139 @@ impl Session {
         self.needs_render = false;
         pe_render::read_rgba8(gpu, &target).map_err(|e| SessionError::Render(e.to_string()))
     }
+
+    // ---- the screen -----------------------------------------------------
+
+    /// Adopt a `CAMetalLayer` the host owns.
+    ///
+    /// # Safety
+    /// `layer` must be a live `CAMetalLayer` that outlives the attachment. The
+    /// Swift side guarantees this by holding it on a view it owns and calling
+    /// [`Session::detach_layer`] before that view goes away.
+    pub unsafe fn attach_layer(
+        &mut self,
+        layer: *mut std::ffi::c_void,
+        width: u32,
+        height: u32,
+    ) -> Result<(), SessionError> {
+        if layer.is_null() {
+            return Err(SessionError::NoLayer);
+        }
+        // The adapter must come from the instance the surface belongs to, and
+        // must be told about the surface: on a machine with more than one GPU,
+        // the one picked otherwise may not be able to present to this window.
+        let probe = unsafe {
+            self.instance
+                .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(layer))
+        }
+        .map_err(|e| SessionError::NoGpu(e.to_string()))?;
+        if self.gpu.context.is_none() {
+            let gpu = pollster::block_on(GpuContext::from_instance(&self.instance, Some(&probe)))
+                .map_err(|e| SessionError::NoGpu(e.to_string()))?;
+            self.gpu.context = Some(gpu);
+        }
+        drop(probe);
+
+        let gpu = self.gpu.context.as_ref().expect("built above");
+        let attached = unsafe {
+            Attached::new(
+                &self.instance,
+                &gpu.adapter,
+                &gpu.device,
+                layer,
+                width,
+                height,
+            )
+        }?;
+        self.gpu.attached = Some(attached);
+        self.needs_render = true;
+        Ok(())
+    }
+
+    pub fn resize_layer(&mut self, width: u32, height: u32) {
+        if let (Some(a), Some(gpu)) = (self.gpu.attached.as_mut(), self.gpu.context.as_ref()) {
+            a.resize(&gpu.device, width, height);
+            // The working texture was built for the old size, and so was every
+            // cached stage that reads it.
+            self.gpu.working_size = (0, 0);
+            self.needs_render = true;
+        }
+    }
+
+    pub fn detach_layer(&mut self) {
+        self.gpu.attached = None;
+    }
+
+    /// Draw the current state into the attached layer and present it.
+    pub fn present(&mut self) -> Result<(), SessionError> {
+        let (width, height) = match self.gpu.attached.as_ref() {
+            Some(a) => a.size(),
+            None => return Err(SessionError::NoLayer),
+        };
+        if self.photo.is_none() {
+            // Nothing open yet — the viewer's background, not an error.
+            //
+            // `self.context()` returns a reference tied to `&mut self`, which
+            // would keep the whole of `self` borrowed for as long as `gpu` is
+            // alive — colliding with the separate borrow of `self.gpu.attached`
+            // below. Called for its side effect only and re-borrowed through
+            // the field, the two borrows are disjoint and coexist, the same
+            // split `graded` relies on.
+            self.context()?;
+            let gpu = self.gpu.context.as_ref().expect("built above");
+            let attached = self.gpu.attached.as_ref().expect("checked above");
+            // `false` means the swapchain was rebuilt and nothing was drawn, so
+            // `needs_render` deliberately stays set and the next tick tries again.
+            if attached.present_clear(&gpu.device, &gpu.queue, [0.06, 0.06, 0.07, 1.0])? {
+                self.needs_render = false;
+            }
+            return Ok(());
+        }
+
+        let graded_view = self.graded(width, height)?;
+        let output = self
+            .photo
+            .as_ref()
+            .expect("checked above")
+            .history
+            .document()
+            .color
+            .pipeline()
+            .output;
+        let gpu = self.gpu.context.as_ref().expect("built by graded");
+        let attached = self.gpu.attached.as_ref().expect("checked above");
+
+        // Through `acquire` rather than the surface directly: a resize or a
+        // move to another display invalidates the swapchain, and rebuilding it
+        // is the whole recovery. `None` is "no frame this tick", not a failure.
+        let Some(frame) = attached.acquire(&gpu.device)? else {
+            return Ok(());
+        };
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("present"),
+            });
+        self.gpu
+            .to_display
+            .as_ref()
+            .expect("built by graded")
+            .encode(
+                gpu,
+                &mut encoder,
+                &graded_view,
+                &view,
+                &space::ACESCG,
+                &output,
+            );
+        gpu.queue.submit([encoder.finish()]);
+        frame.present();
+        self.needs_render = false;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -570,5 +702,18 @@ mod tests {
         let mut s = chart_session();
         let row = s.add_effect("exposure").unwrap();
         assert!(s.set_float(row, "not_a_parameter", 1.0).is_err());
+    }
+
+    #[test]
+    fn presenting_without_a_layer_says_so_rather_than_crashing() {
+        let mut s = chart_session();
+        assert!(matches!(s.present(), Err(SessionError::NoLayer)));
+    }
+
+    #[test]
+    fn attaching_a_null_layer_is_refused() {
+        let mut s = Session::new();
+        let rc = unsafe { s.attach_layer(std::ptr::null_mut(), 100, 100) };
+        assert!(rc.is_err());
     }
 }
