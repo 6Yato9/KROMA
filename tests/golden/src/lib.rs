@@ -137,6 +137,7 @@ pub fn difference_map(a: &DecodedImage, b: &DecodedImage) -> DecodedImage {
         })
         .collect();
     DecodedImage {
+        space: None,
         width: a.width,
         height: a.height,
         pixels,
@@ -173,6 +174,7 @@ pub fn render_reference(
         })
         .collect();
     DecodedImage {
+        space: None,
         width: src.width,
         height: src.height,
         pixels,

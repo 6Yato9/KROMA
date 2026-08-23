@@ -30,6 +30,7 @@
 //! makes lift controls behave in the deep shadows. As a bonus, third-party film
 //! emulation LUTs already target ACES.
 
+pub mod icc;
 pub mod matrix;
 pub mod pipeline;
 pub mod primaries;

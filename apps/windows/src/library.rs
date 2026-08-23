@@ -253,17 +253,22 @@ impl Library {
     ///
     /// The caller is responsible for the pixels; this moves only the edit,
     /// which is the part that must not be lost.
+    ///
+    /// `declared` is the colour space the incoming photograph's file claims,
+    /// which only matters if this is the first time it has been opened — see
+    /// [`fresh_document`].
     pub fn switch(
         &mut self,
         index: usize,
         outgoing: History,
         outgoing_ids: RowIdGenerator,
+        declared: Option<&'static str>,
     ) -> (History, RowIdGenerator) {
         if let Some(entry) = self.entries.get_mut(self.current) {
             entry.parked = Some((outgoing, outgoing_ids));
         }
         self.current = index.min(self.entries.len().saturating_sub(1));
-        self.take_current()
+        self.take_current(declared)
     }
 
     /// Take the edit belonging to the photograph currently pointed at,
@@ -272,7 +277,7 @@ impl Library {
     /// Separate from [`Library::switch`] for the one case where there is
     /// nothing to park: the edit in hand belonged to a photograph that has
     /// just been taken out of the set.
-    pub fn take_current(&mut self) -> (History, RowIdGenerator) {
+    pub fn take_current(&mut self, declared: Option<&'static str>) -> (History, RowIdGenerator) {
         let Some(entry) = self.entries.get_mut(self.current) else {
             return (
                 History::new(Document::from_path(String::new())),
@@ -285,8 +290,8 @@ impl Library {
                 // Never opened. An edit saved beside it is worth honouring —
                 // that is the whole point of writing one — and a fresh
                 // document otherwise.
-                let name = entry.path.to_string_lossy().to_string();
-                let doc = load_edit(&entry.path).unwrap_or_else(|| pe_effects::new_document(name));
+                let doc =
+                    load_edit(&entry.path).unwrap_or_else(|| fresh_document(&entry.path, declared));
                 let ids = RowIdGenerator::resuming(&doc);
                 (History::new(doc), ids)
             }
@@ -348,6 +353,21 @@ impl Library {
 /// which case the autosave is what you were actually looking at.
 ///
 /// "Load edit" stays the explicit way to pull a sidecar back over the top.
+/// A document for a photograph that has never been opened, believing what the
+/// file said about itself.
+///
+/// The declared space is applied here and only here, at the moment a document
+/// is invented. A document that already exists has an answer — either this one,
+/// given to it the first time, or one a person chose afterwards — and a file's
+/// claim is not grounds to overrule a person.
+pub fn fresh_document(path: &Path, declared: Option<&'static str>) -> pe_core::Document {
+    let mut doc = pe_effects::new_document(path.to_string_lossy().to_string());
+    if let Some(space) = declared {
+        doc.color.input = space.to_string();
+    }
+    doc
+}
+
 pub fn load_edit(path: &Path) -> Option<pe_core::Document> {
     if let Some(doc) = crate::autosave::load(path) {
         return Some(doc);
@@ -377,7 +397,7 @@ mod tests {
             PathBuf::from("Z:/none/a.jpg"),
             PathBuf::from("Z:/none/b.jpg"),
         ]);
-        let (mut history, ids) = library.take_current();
+        let (mut history, ids) = library.take_current(None);
         let id = history
             .document()
             .stack
@@ -389,7 +409,7 @@ mod tests {
             }
         });
 
-        let (next, _) = library.switch(1, history, ids);
+        let (next, _) = library.switch(1, history, ids, None);
         let carried = next
             .document()
             .stack
@@ -408,7 +428,7 @@ mod tests {
             PathBuf::from("Z:/none/a.jpg"),
             PathBuf::from("Z:/none/b.jpg"),
         ]);
-        let (mut history, ids) = library.take_current();
+        let (mut history, ids) = library.take_current(None);
         let id = history
             .document()
             .stack
@@ -420,8 +440,8 @@ mod tests {
             }
         });
 
-        let (b, b_ids) = library.switch(1, history, ids);
-        let (a, _) = library.switch(0, b, b_ids);
+        let (b, b_ids) = library.switch(1, history, ids, None);
+        let (a, _) = library.switch(0, b, b_ids, None);
         let back = a
             .document()
             .stack
@@ -465,6 +485,7 @@ mod tests {
             0,
             History::new(Document::from_path("a.jpg")),
             RowIdGenerator::default(),
+            None,
         );
         history.edit("Exposure", None, |doc| {
             doc.stack
@@ -472,10 +493,10 @@ mod tests {
         });
         assert!(history.can_undo());
 
-        let (other, other_ids) = lib.switch(1, history, ids);
+        let (other, other_ids) = lib.switch(1, history, ids, None);
         assert!(!other.can_undo(), "photo b arrived with a stack from a");
 
-        let (back, _) = lib.switch(0, other, other_ids);
+        let (back, _) = lib.switch(0, other, other_ids, None);
         assert!(back.can_undo(), "photo a's history was lost");
         assert_eq!(back.document().stack.len(), 1);
     }
@@ -493,9 +514,10 @@ mod tests {
             0,
             History::new(Document::from_path("a.jpg")),
             RowIdGenerator::default(),
+            None,
         );
-        let (h, ids) = lib.switch(1, h, ids);
-        let _ = lib.switch(0, h, ids);
+        let (h, ids) = lib.switch(1, h, ids, None);
+        let _ = lib.switch(0, h, ids, None);
         assert!(
             !lib.entries()[1].edited(),
             "merely visiting a photo is not editing it"
@@ -533,6 +555,7 @@ mod tests {
             1,
             History::new(Document::from_path("a.jpg")),
             RowIdGenerator::default(),
+            None,
         );
         assert!(history.can_undo());
         history.undo();
@@ -552,6 +575,7 @@ mod tests {
             2,
             History::new(Document::from_path("a.jpg")),
             RowIdGenerator::default(),
+            None,
         );
         let _ = (h, ids);
         assert_eq!(lib.current(), 2);
@@ -571,6 +595,7 @@ mod tests {
             1,
             History::new(Document::from_path("a.jpg")),
             RowIdGenerator::default(),
+            None,
         );
         let _ = (h, ids);
         lib.remove(1);

@@ -16,6 +16,12 @@ pub struct DecodedImage {
     pub width: u32,
     pub height: u32,
     pub pixels: Vec<u8>,
+    /// The colour space the file said it was in, if it said and we knew the
+    /// name. `None` covers a file with no profile, one with a profile we do not
+    /// recognise, and one whose profile is damaged — all three mean the same
+    /// thing to a caller: nothing was declared, assume what you were going to
+    /// assume.
+    pub space: Option<&'static str>,
 }
 
 impl std::fmt::Debug for DecodedImage {
@@ -42,6 +48,9 @@ impl DecodedImage {
             width,
             height,
             pixels,
+            // Only `load` knows what a file declared; anything constructed from
+            // loose pixels is declaring nothing.
+            space: None,
         })
     }
 
@@ -90,15 +99,32 @@ impl DecodedImage {
 }
 
 pub fn load(path: impl AsRef<Path>) -> Result<DecodedImage, IoError> {
-    let img = image::open(path.as_ref())?.to_rgba8();
-    let (width, height) = img.dimensions();
-    DecodedImage::new(width, height, img.into_raw())
+    let reader = image::ImageReader::open(path.as_ref())?.with_guessed_format()?;
+    decode(reader.into_decoder()?)
 }
 
 pub fn load_from_memory(bytes: &[u8]) -> Result<DecodedImage, IoError> {
-    let img = image::load_from_memory(bytes)?.to_rgba8();
+    let reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?;
+    decode(reader.into_decoder()?)
+}
+
+/// Decode, taking the embedded profile on the way past.
+///
+/// Through a decoder rather than `image::open`, which throws the profile away
+/// before we ever see it. The profile has to be read *before* the pixels,
+/// because decoding consumes the decoder — which is why this is one function
+/// rather than two calls at the call site that could be put in the wrong order.
+fn decode<'a>(mut decoder: impl image::ImageDecoder + 'a) -> Result<DecodedImage, IoError> {
+    // A profile we cannot read is not a reason to refuse the photograph.
+    let profile = decoder.icc_profile().ok().flatten();
+    let img = image::DynamicImage::from_decoder(decoder)?.to_rgba8();
     let (width, height) = img.dimensions();
-    DecodedImage::new(width, height, img.into_raw())
+    let mut out = DecodedImage::new(width, height, img.into_raw())?;
+    out.space = profile
+        .as_deref()
+        .and_then(pe_color::icc::identify)
+        .map(|space| space.name);
+    Ok(out)
 }
 
 /// The sRGB decode, tabulated. Two hundred and fifty-six entries, so a
@@ -355,6 +381,8 @@ pub fn test_chart(width: u32, height: u32) -> DecodedImage {
         width,
         height,
         pixels,
+        // It is built, not loaded, and it is built in sRGB.
+        space: Some("sRGB"),
     }
 }
 
@@ -546,6 +574,29 @@ mod tests {
         assert!(
             leftovers.is_empty(),
             "scratch files left behind: {leftovers:?}"
+        );
+    }
+
+    /// A file that says nothing about itself must say nothing, not guess.
+    ///
+    /// `None` and `Some("sRGB")` are different answers: the first lets the
+    /// caller keep whatever it had, the second overwrites it. Our own JPEG
+    /// encoder writes no profile, so this is also the round trip through the
+    /// decoder-based `load` — the rewrite that had to happen to see a profile
+    /// at all.
+    #[test]
+    fn a_file_with_no_profile_declares_nothing() {
+        let img = test_chart(32, 32);
+        let dir = std::env::temp_dir().join("pe-io-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("unprofiled.jpg");
+        save_jpeg(&img, &path, 90).unwrap();
+
+        let back = load(&path).unwrap();
+        assert_eq!(back.size(), img.size(), "the decoder path lost the pixels");
+        assert_eq!(
+            back.space, None,
+            "a file with no profile was reported as declaring one"
         );
     }
 

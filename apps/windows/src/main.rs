@@ -199,7 +199,7 @@ impl App {
         theme::apply(&cc.egui_ctx);
 
         let doc = match &path {
-            Some(p) => pe_effects::new_document(p.to_string_lossy().to_string()),
+            Some(p) => library::fresh_document(p, image.space),
             None => pe_effects::new_document("<test chart>"),
         };
 
@@ -338,7 +338,9 @@ impl App {
             History::new(Document::from_path(String::new())),
         );
         let outgoing_ids = std::mem::take(&mut self.ids);
-        let (history, ids) = self.library.switch(index, outgoing, outgoing_ids);
+        let (history, ids) = self
+            .library
+            .switch(index, outgoing, outgoing_ids, image.space);
         self.history = history;
         self.ids = ids;
 
@@ -409,7 +411,7 @@ impl App {
             // The edit in hand belonged to the photograph just removed, so
             // there is nothing to park — and no index to compare against
             // either, which is why this cannot go through `select`.
-            let (history, ids) = self.library.take_current();
+            let (history, ids) = self.library.take_current(None);
             self.history = history;
             self.ids = ids;
             self.load_current(ctx);
@@ -442,7 +444,7 @@ impl App {
         }
 
         let doc = library::load_edit(&path)
-            .unwrap_or_else(|| pe_effects::new_document(path.to_string_lossy().to_string()));
+            .unwrap_or_else(|| library::fresh_document(&path, image.space));
         self.ids = RowIdGenerator::resuming(&doc);
         self.history = History::new(doc);
         self.status.done(format!("opened {}", path.display()));
@@ -674,21 +676,12 @@ impl App {
             return true;
         }
 
-        // The photograph in hand has its edit in the live history; every other
-        // one has it parked, or has none at all and gets the defaults.
-        let doc = if index == self.library.current() {
-            self.history.document().clone()
-        } else {
-            match self.library.entries()[index].document() {
-                Some(d) => d.clone(),
-                None => library::load_edit(&path).unwrap_or_else(|| {
-                    pe_effects::new_document(path.to_string_lossy().to_string())
-                }),
-            }
-        };
-
         // Decoded here rather than held: the whole reason a set is navigable
         // is that only one frame is in memory at a time.
+        //
+        // Before the document, not after, because a photograph that has never
+        // been opened has no document yet and the file is the only thing that
+        // can say what colour space it is in.
         let image = if index == self.library.current() {
             self.image.clone()
         } else {
@@ -700,6 +693,18 @@ impl App {
                     }
                     return true;
                 }
+            }
+        };
+
+        // The photograph in hand has its edit in the live history; every other
+        // one has it parked, or has none at all and gets the defaults.
+        let doc = if index == self.library.current() {
+            self.history.document().clone()
+        } else {
+            match self.library.entries()[index].document() {
+                Some(d) => d.clone(),
+                None => library::load_edit(&path)
+                    .unwrap_or_else(|| library::fresh_document(&path, image.space)),
             }
         };
 
@@ -1924,6 +1929,26 @@ fn file_page(ui: &mut egui::Ui, app: &mut App) -> bool {
     export_section(ui, app)
 }
 
+/// The colour spaces a source file may be read as.
+///
+/// Not all seven that `pe-color` knows. The source is uploaded as an `...Srgb`
+/// texture and the *hardware* applies the sRGB EOTF when it is sampled — the
+/// transform shader only ever rotates the gamut, and says so in its own header.
+/// So a space belongs in this list exactly when its transfer function is the
+/// sRGB one. Anything else would be decoded with a curve it does not use, and
+/// the result would be wrong in the way that is hardest to catch: it looks like
+/// a grade.
+///
+/// Derived from that rule rather than typed out, so the list cannot drift away
+/// from the reason for it. In practice nothing is lost — an 8-bit photograph is
+/// sRGB or Display P3, linear 8-bit files do not exist, and no camera writes
+/// 8-bit Rec.2020.
+fn source_spaces() -> impl Iterator<Item = &'static pe_color::ColorSpace> {
+    pe_color::space::ALL
+        .iter()
+        .filter(|s| s.transfer == pe_color::TransferFn::Srgb)
+}
+
 /// What the file is, and what we are rendering it to.
 ///
 /// The input is a control because it is a fact about the photograph that only
@@ -1959,7 +1984,7 @@ fn colour_section(ui: &mut egui::Ui, app: &mut App) {
             .selected_text(&current)
             .width(150.0)
             .show_ui(ui, |ui| {
-                for space in pe_color::space::ALL {
+                for space in source_spaces() {
                     ui.selectable_value(&mut chosen, space.name.to_string(), space.name);
                 }
             });
@@ -2508,6 +2533,38 @@ fn draw(ui: &egui::Ui, rect: egui::Rect, framing: &Framing) -> egui::Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The source dropdown may only offer spaces the upload path can honestly
+    /// decode.
+    ///
+    /// The source texture is `Rgba8UnormSrgb`, so the hardware applies the sRGB
+    /// EOTF on every sample and the shader never touches the transfer function
+    /// at all. Offer a space with any other curve and the picture is decoded
+    /// wrongly — not crashed, not obviously broken, just wrong in a way that
+    /// reads as somebody's grade.
+    ///
+    /// This is the assertion, not the filter: the filter can be edited, and
+    /// the day somebody offers "the user should be able to pick ACEScg" this
+    /// is what says why not.
+    #[test]
+    fn every_offered_source_space_decodes_as_srgb() {
+        let offered: Vec<&str> = source_spaces().map(|s| s.name).collect();
+        assert!(!offered.is_empty(), "the source dropdown offers nothing");
+        for space in source_spaces() {
+            assert_eq!(
+                space.transfer,
+                pe_color::TransferFn::Srgb,
+                "{} is offered as a source space but is not sRGB-encoded — the                  hardware would decode it with the wrong curve",
+                space.name
+            );
+        }
+        // The two that matter, and the reason the control exists at all.
+        assert!(offered.contains(&"sRGB"));
+        assert!(
+            offered.contains(&"Display P3"),
+            "Display P3 is what every iPhone writes; it has to be offerable"
+        );
+    }
 
     /// Where the batch would actually write one photograph.
     ///

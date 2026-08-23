@@ -10,6 +10,11 @@ and six secondaries — the Colour Warper's three views, wheels, scopes, crop an
 straighten, a filmstrip, batch export. Isolation (qualifier, power windows) is
 next.
 
+A photograph that carries an ICC profile is read as the space that profile
+describes, so a Display P3 file from a phone renders as Display P3 rather than
+being flattened into sRGB. Unrecognised profiles change nothing, and the File
+page lets you say what a file is when it does not say for itself.
+
 Effect parameters follow Resolve's own — names, ranges and defaults read off
 Resolve's inspector and recorded in
 [docs/resolve-parameters.md](docs/resolve-parameters.md), which marks each value
