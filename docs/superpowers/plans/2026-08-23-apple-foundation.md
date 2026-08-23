@@ -1460,6 +1460,8 @@ pub enum SessionError {
     Write(String),
     #[error("no layer attached")]
     NoLayer,
+    #[error(transparent)]
+    Surface(#[from] crate::surface::SurfaceError),
 }
 
 /// The photograph that is open, and its edit.
@@ -2021,7 +2023,7 @@ Add to `impl Session` in `session.rs`:
                 height,
             )
         }
-        .map_err(SessionError::NoGpu)?;
+        ?;
         self.gpu.attached = Some(attached);
         self.needs_render = true;
         Ok(())
@@ -2044,16 +2046,19 @@ Add to `impl Session` in `session.rs`:
     /// Draw the current state into the attached layer and present it.
     pub fn present(&mut self) -> Result<(), SessionError> {
         let (width, height) = match self.gpu.attached.as_ref() {
-            Some(a) => (a.config.width, a.config.height),
+            Some(a) => a.size(),
             None => return Err(SessionError::NoLayer),
         };
         if self.photo.is_none() {
             // Nothing open yet — the viewer's background, not an error.
             let gpu = self.context()?;
             let attached = self.gpu.attached.as_ref().expect("checked above");
-            return attached
-                .present_clear(&gpu.device, &gpu.queue, [0.06, 0.06, 0.07, 1.0])
-                .map_err(SessionError::Render);
+            // `false` means the swapchain was rebuilt and nothing was drawn, so
+            // `needs_render` deliberately stays set and the next tick tries again.
+            if attached.present_clear(&gpu.device, &gpu.queue, [0.06, 0.06, 0.07, 1.0])? {
+                self.needs_render = false;
+            }
+            return Ok(());
         }
 
         let graded_view = self.graded(width, height)?;
@@ -2069,10 +2074,12 @@ Add to `impl Session` in `session.rs`:
         let gpu = self.gpu.context.as_ref().expect("built by graded");
         let attached = self.gpu.attached.as_ref().expect("checked above");
 
-        let frame = attached
-            .surface
-            .get_current_texture()
-            .map_err(|e| SessionError::Render(e.to_string()))?;
+        // Through `acquire` rather than the surface directly: a resize or a
+        // move to another display invalidates the swapchain, and rebuilding it
+        // is the whole recovery. `None` is "no frame this tick", not a failure.
+        let Some(frame) = attached.acquire(&gpu.device)? else {
+            return Ok(());
+        };
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());

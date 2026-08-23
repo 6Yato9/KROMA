@@ -153,7 +153,12 @@ pub unsafe extern "C" fn pe_spike_attach_and_clear(
             Err(_) => return -4,
         };
         match attached.present_clear(&gpu.device, &gpu.queue, [0.85, 0.45, 0.10, 1.0]) {
-            Ok(()) => 0,
+            Ok(true) => 0,
+            // The swapchain was stale and has been rebuilt, so nothing reached
+            // the screen. Distinguished from success because a spike whose
+            // whole purpose is "did a colour arrive" must not report that it
+            // did when it did not.
+            Ok(false) => -6,
             Err(_) => -5,
         }
     })
