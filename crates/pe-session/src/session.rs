@@ -61,6 +61,17 @@ struct Gpu {
     renderer: Option<EffectRenderer>,
     to_working: Option<TransformPass>,
     to_display: Option<TransformPass>,
+    /// The display transform for the attached layer, and the format it was
+    /// built for.
+    ///
+    /// Separate from `to_display`, which targets `SOURCE_FORMAT` because that
+    /// is what an offscreen read-back is. A layer picks its own format — a
+    /// `CAMetalLayer` prefers `Bgra8UnormSrgb` — and a pipeline built for one
+    /// format cannot be bound in a pass targeting another; wgpu refuses it as
+    /// a validation error rather than swizzling quietly. Both are sRGB, so the
+    /// transfer function is still applied exactly once, on write.
+    to_screen: Option<TransformPass>,
+    screen_format: Option<wgpu::TextureFormat>,
     source: Option<ImageTexture>,
     working: Option<ImageTexture>,
     working_size: (u32, u32),
@@ -606,6 +617,15 @@ impl Session {
             .color
             .pipeline()
             .output;
+        // Built here rather than in `graded`, because the format belongs to the
+        // layer and nothing knows it until one is attached.
+        let format = self.gpu.attached.as_ref().expect("checked above").format();
+        if self.gpu.screen_format != Some(format) {
+            let device = &self.gpu.context.as_ref().expect("built by graded").device;
+            self.gpu.to_screen = Some(TransformPass::new(device, format));
+            self.gpu.screen_format = Some(format);
+        }
+
         let gpu = self.gpu.context.as_ref().expect("built by graded");
         let attached = self.gpu.attached.as_ref().expect("checked above");
 
@@ -623,18 +643,14 @@ impl Session {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("present"),
             });
-        self.gpu
-            .to_display
-            .as_ref()
-            .expect("built by graded")
-            .encode(
-                gpu,
-                &mut encoder,
-                &graded_view,
-                &view,
-                &space::ACESCG,
-                &output,
-            );
+        self.gpu.to_screen.as_ref().expect("built above").encode(
+            gpu,
+            &mut encoder,
+            &graded_view,
+            &view,
+            &space::ACESCG,
+            &output,
+        );
         gpu.queue.submit([encoder.finish()]);
         frame.present();
         self.needs_render = false;
