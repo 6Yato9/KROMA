@@ -18,7 +18,47 @@ pub const LUT_SIZE: usize = 256;
 impl Curve {
     /// Evaluate the curve at `x`, clamped to 0..1.
     pub fn sample(&self, x: f32) -> f32 {
-        let pts = self.sorted();
+        Prepared::of(self).at(x)
+    }
+
+    /// Bake to a LUT for upload to the GPU.
+    ///
+    /// Prepared once and then evaluated, which is the whole reason [`Prepared`]
+    /// exists. Sampling used to sort the points and solve the tangents on every
+    /// call, and this makes two hundred and fifty-six of them: one `Curves` row
+    /// carries ten curves, so a frame spent two and a half thousand sorts and
+    /// five thousand allocations arriving at the same answer it had already
+    /// worked out. Measured at 455µs a row on release, against a 16.7ms budget
+    /// — nearly three per cent of a frame, on the interactive path, for
+    /// nothing.
+    pub fn bake(&self) -> [f32; LUT_SIZE] {
+        let prepared = Prepared::of(self);
+        std::array::from_fn(|i| prepared.at(i as f32 / (LUT_SIZE - 1) as f32))
+    }
+}
+
+/// A curve with its points in order and its tangents solved.
+///
+/// Everything about evaluating a curve that does not depend on *where* you are
+/// evaluating it.
+struct Prepared {
+    pts: Vec<[f32; 2]>,
+    tangents: Vec<f32>,
+}
+
+impl Prepared {
+    fn of(curve: &Curve) -> Self {
+        let pts = curve.sorted();
+        let tangents = if pts.len() < 2 {
+            Vec::new()
+        } else {
+            monotone_tangents(&pts)
+        };
+        Self { pts, tangents }
+    }
+
+    fn at(&self, x: f32) -> f32 {
+        let pts = &self.pts;
         if pts.len() < 2 {
             return x.clamp(0.0, 1.0);
         }
@@ -33,7 +73,6 @@ impl Curve {
             return pts[pts.len() - 1][1].clamp(0.0, 1.0);
         }
 
-        let tangents = monotone_tangents(&pts);
         let i = pts
             .windows(2)
             .position(|w| x >= w[0][0] && x <= w[1][0])
@@ -55,17 +94,8 @@ impl Curve {
         let h01 = -2.0 * t3 + 3.0 * t2;
         let h11 = t3 - t2;
 
-        let y = h00 * y0 + h10 * h * tangents[i] + h01 * y1 + h11 * h * tangents[i + 1];
+        let y = h00 * y0 + h10 * h * self.tangents[i] + h01 * y1 + h11 * h * self.tangents[i + 1];
         y.clamp(0.0, 1.0)
-    }
-
-    /// Bake to a LUT for upload to the GPU.
-    pub fn bake(&self) -> [f32; LUT_SIZE] {
-        let mut out = [0.0f32; LUT_SIZE];
-        for (i, slot) in out.iter_mut().enumerate() {
-            *slot = self.sample(i as f32 / (LUT_SIZE - 1) as f32);
-        }
-        out
     }
 }
 
@@ -124,6 +154,41 @@ mod tests {
     fn curve(points: &[[f32; 2]]) -> Curve {
         Curve {
             points: points.to_vec(),
+        }
+    }
+
+    /// The two ways of evaluating a curve must not drift apart.
+    ///
+    /// `sample` and `bake` were one function until baking started preparing
+    /// the interpolation once instead of two hundred and fifty-six times. They
+    /// are two call sites into the same evaluator now, and this is what says so
+    /// — if one ever gains a special case the other lacks, a curve would look
+    /// one way in the editor and behave another on the picture.
+    #[test]
+    fn baking_agrees_with_sampling_exactly() {
+        let curves = [
+            Curve::default(),
+            Curve::flat(),
+            curve(&[[0.0, 0.0], [0.25, 0.1], [0.6, 0.75], [1.0, 1.0]]),
+            // Out of order, which `sorted` is there to handle.
+            curve(&[[0.0, 0.0], [0.8, 0.4], [0.3, 0.9], [1.0, 1.0]]),
+            // Two points at the same x, which the tangent solver divides by.
+            curve(&[[0.0, 0.0], [0.5, 0.2], [0.5, 0.8], [1.0, 1.0]]),
+            // Fewer than two points, the degenerate case.
+            curve(&[[0.5, 0.5]]),
+            curve(&[]),
+        ];
+        for c in curves {
+            let baked = c.bake();
+            for (i, got) in baked.iter().enumerate() {
+                let x = i as f32 / (LUT_SIZE - 1) as f32;
+                assert_eq!(
+                    *got,
+                    c.sample(x),
+                    "entry {i} of {:?} disagrees with sampling at {x}",
+                    c.points
+                );
+            }
         }
     }
 
