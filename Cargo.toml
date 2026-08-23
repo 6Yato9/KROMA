@@ -7,6 +7,7 @@ members = [
     "crates/pe-render",
     "crates/pe-scopes",
     "crates/pe-io",
+    "crates/pe-session",
     "crates/pe-ffi",
     "apps/windows",
     "tests/golden",

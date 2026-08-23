@@ -1,0 +1,22 @@
+[package]
+name = "pe-session"
+description = "The workflow layer: the open photograph, its edit, and the rules about writing files"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pe-color = { version = "0.0.1", path = "../pe-color" }
+pe-core = { version = "0.0.1", path = "../pe-core" }
+pe-effects = { version = "0.0.1", path = "../pe-effects" }
+pe-io = { version = "0.0.1", path = "../pe-io" }
+pe-render = { version = "0.0.1", path = "../pe-render" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2.0.20"
+wgpu = "27"
+pollster = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
