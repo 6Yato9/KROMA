@@ -151,6 +151,16 @@ impl Library {
         self.entries.iter().map(|e| e.path.as_path()).collect()
     }
 
+    /// Where a photograph sits in the set, if it is still in it.
+    ///
+    /// A linear walk. The alternative is an index kept in step with every
+    /// insertion and removal, which is the bug this exists to avoid rather
+    /// than a faster version of it — and a set is tens of photographs, not
+    /// millions.
+    pub fn index_of(&self, path: &Path) -> Option<usize> {
+        self.entries.iter().position(|e| e.path == path)
+    }
+
     pub fn path(&self, index: usize) -> Option<&Path> {
         self.entries.get(index).map(|e| e.path.as_path())
     }
@@ -391,6 +401,33 @@ mod tests {
     /// asserting rather than reading, because the failure is quiet and looks
     /// exactly like a colour-management bug: the new picture simply comes up
     /// looking wrong.
+    /// A batch holds paths, so the set may change under it. This is the
+    /// lookup that makes that safe, and the case it has to survive.
+    #[test]
+    fn a_photograph_keeps_its_identity_when_the_set_shifts() {
+        let mut lib = Library::new(vec![
+            PathBuf::from("a.jpg"),
+            PathBuf::from("b.jpg"),
+            PathBuf::from("c.jpg"),
+        ]);
+        let c = PathBuf::from("c.jpg");
+        assert_eq!(lib.index_of(&c), Some(2));
+
+        // Take one out from in front of it: every position after slides.
+        lib.remove(0);
+        assert_eq!(
+            lib.index_of(&c),
+            Some(1),
+            "the lookup did not follow the photograph"
+        );
+        assert_eq!(lib.path(2), None, "the old position is now off the end");
+
+        // And once it is gone it is gone, rather than resolving to a
+        // neighbour — which is what an index would have done.
+        lib.remove(1);
+        assert_eq!(lib.index_of(&c), None);
+    }
+
     #[test]
     fn switching_does_not_carry_a_grade_to_the_next_photograph() {
         let mut library = Library::new(vec![

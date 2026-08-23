@@ -57,21 +57,7 @@ fn main() -> eframe::Result {
         paths = saved;
         index = at;
     }
-    let path = paths.get(index).cloned();
-
-    let image = match &path {
-        Some(p) => match pe_io::load(p) {
-            Ok(img) => img,
-            Err(e) => {
-                eprintln!("could not open {}: {e}", p.display());
-                std::process::exit(1);
-            }
-        },
-        None => {
-            eprintln!("no image given, showing the built-in test chart");
-            pe_io::test_chart(1600, 1200)
-        }
-    };
+    let (image, path, trouble) = open_something(&paths, &mut index);
 
     // eframe asks the GPU for a texture limit of 8192 on a side, which is a 4K
     // display with room over and a camera from about 2015. It is not a
@@ -110,8 +96,60 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "KROMA",
         options,
-        Box::new(move |cc| Ok(Box::new(App::new(cc, image, path, paths, index)))),
+        Box::new(move |cc| Ok(Box::new(App::new(cc, image, path, paths, index, trouble)))),
     )
+}
+
+/// Open the photograph the session wanted, or the next one that will open, or
+/// the test chart.
+///
+/// The window opens either way. This used to print to stderr and exit, which is
+/// a defensible answer to a bad file named on a command line and no answer at
+/// all to the restored session — nobody asked for that photograph, nobody sees
+/// stderr when the application was started from a folder, and the only symptom
+/// is a window that never appears. One unreadable file in a remembered session
+/// would keep the application from ever starting again, with no way to say so
+/// from inside it and no way out but deleting a settings file.
+fn open_something(
+    paths: &[PathBuf],
+    index: &mut usize,
+) -> (pe_io::DecodedImage, Option<PathBuf>, Option<String>) {
+    if paths.is_empty() {
+        return (pe_io::test_chart(1600, 1200), None, None);
+    }
+
+    // The one asked for first, then the rest of the set in order. A set of
+    // sixty where the first is corrupt should open on the second, not on a
+    // test chart.
+    let order = std::iter::once(*index).chain(0..paths.len());
+    let mut first_failure = None;
+    for candidate in order {
+        let Some(path) = paths.get(candidate) else {
+            continue;
+        };
+        match pe_io::load(path) {
+            Ok(image) => {
+                let trouble = first_failure.map(|(p, e): (&PathBuf, String)| {
+                    format!("could not open {}: {e}", p.display())
+                });
+                *index = candidate;
+                return (image, Some(path.clone()), trouble);
+            }
+            Err(e) => {
+                if first_failure.is_none() {
+                    first_failure = Some((path, e.to_string()));
+                }
+            }
+        }
+    }
+
+    let trouble = first_failure.map(|(p, e)| {
+        format!(
+            "could not open {} ({e}) — showing the test chart",
+            p.display()
+        )
+    });
+    (pe_io::test_chart(1600, 1200), None, trouble)
 }
 
 pub struct App {
@@ -194,6 +232,7 @@ impl App {
         path: Option<PathBuf>,
         session: Vec<PathBuf>,
         at: usize,
+        trouble: Option<String>,
     ) -> Self {
         // The scheme, before a single frame is drawn with it.
         theme::apply(&cc.egui_ctx);
@@ -203,7 +242,7 @@ impl App {
             None => pe_effects::new_document("<test chart>"),
         };
 
-        let (preview, gpu_name, trouble) = match cc.wgpu_render_state.as_ref() {
+        let (preview, gpu_name, gpu_trouble) = match cc.wgpu_render_state.as_ref() {
             Some(rs) => {
                 let gpu =
                     GpuContext::from_parts(rs.adapter.clone(), rs.device.clone(), rs.queue.clone());
@@ -220,7 +259,8 @@ impl App {
             None => (None, "no wgpu render state".to_string(), None),
         };
         let mut status = Status::default();
-        if let Some(trouble) = trouble {
+        // Whichever went wrong; the GPU one is the more serious if both did.
+        if let Some(trouble) = gpu_trouble.or(trouble) {
             status.problem(trouble);
         }
 
@@ -619,7 +659,12 @@ impl App {
             return;
         };
         self.batch = Some(Batch {
-            targets: (0..self.library.len()).collect(),
+            targets: self
+                .library
+                .paths()
+                .iter()
+                .map(|p| p.to_path_buf())
+                .collect(),
             next: 0,
             dir,
             done: 0,
@@ -635,7 +680,7 @@ impl App {
         let Some(batch) = self.batch.as_mut() else {
             return false;
         };
-        let Some(&index) = batch.targets.get(batch.next) else {
+        let Some(path) = batch.targets.get(batch.next).cloned() else {
             let (done, failed) = (batch.done, batch.failed);
             let dir = batch.dir.clone();
             self.batch = None;
@@ -656,10 +701,10 @@ impl App {
             batch.failed += 1;
             return true;
         };
-        let Some(path) = self.library.path(index).map(|p| p.to_path_buf()) else {
-            batch.failed += 1;
-            return true;
-        };
+        // Where it sits *now*, which is not where it sat when the run started
+        // and may be nowhere at all — a photograph taken out of the set part
+        // way through is still on disc and still worth exporting.
+        let index = self.library.index_of(&path);
         let chosen = batch.export;
         let dir = batch.dir.clone();
         let Some(b) = self.batch.as_mut() else {
@@ -682,7 +727,8 @@ impl App {
         // Before the document, not after, because a photograph that has never
         // been opened has no document yet and the file is the only thing that
         // can say what colour space it is in.
-        let image = if index == self.library.current() {
+        let in_hand = index == Some(self.library.current());
+        let image = if in_hand {
             self.image.clone()
         } else {
             match pe_io::load(&path) {
@@ -698,10 +744,10 @@ impl App {
 
         // The photograph in hand has its edit in the live history; every other
         // one has it parked, or has none at all and gets the defaults.
-        let doc = if index == self.library.current() {
+        let doc = if in_hand {
             self.history.document().clone()
         } else {
-            match self.library.entries()[index].document() {
+            match index.and_then(|i| self.library.entries()[i].document()) {
                 Some(d) => d.clone(),
                 None => library::load_edit(&path)
                     .unwrap_or_else(|| library::fresh_document(&path, image.space)),
@@ -2193,7 +2239,14 @@ impl Status {
 /// visible hitch per frame for a progress readout that cannot lie and no
 /// second render path to keep in step with the first.
 struct Batch {
-    targets: Vec<usize>,
+    /// The photographs to write, by path rather than by position.
+    ///
+    /// The set can change underneath a run — "Remove from set" is right there
+    /// in the filmstrip and nothing disables it — and every position after a
+    /// removal slides down by one. A list of indices would then export one
+    /// photograph twice, miss another entirely, and report both as successes.
+    /// A path means the same photograph whatever happens to the list.
+    targets: Vec<PathBuf>,
     next: usize,
     dir: PathBuf,
     done: usize,
@@ -2548,6 +2601,55 @@ fn draw(ui: &egui::Ui, rect: egui::Rect, framing: &Framing) -> egui::Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One unreadable photograph must not keep the window from opening.
+    ///
+    /// The restored session is the case that matters. Nobody asked for those
+    /// photographs, nobody sees stderr when the application was started from a
+    /// folder, and a corrupt file in the remembered set used to mean the window
+    /// simply never appeared — every launch, until somebody thought to delete a
+    /// settings file.
+    #[test]
+    fn a_broken_photograph_does_not_stop_the_window_opening() {
+        let dir = std::env::temp_dir().join("kroma-startup-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let broken = dir.join("broken.jpg");
+        std::fs::write(&broken, b"this is not a photograph").unwrap();
+        let good = dir.join("good.png");
+        pe_io::save_png(&pe_io::test_chart(16, 16), &good, &pe_color::space::SRGB).unwrap();
+
+        // Asked for the broken one; the set also holds a good one.
+        let paths = vec![broken.clone(), good.clone()];
+        let mut index = 0;
+        let (image, path, trouble) = open_something(&paths, &mut index);
+
+        assert_eq!(
+            path.as_deref(),
+            Some(good.as_path()),
+            "it did not fall through to the photograph that opens"
+        );
+        assert_eq!(index, 1, "the index must follow what actually opened");
+        assert_eq!(image.size(), (16, 16));
+        assert!(
+            trouble.is_some_and(|t| t.contains("broken")),
+            "the failure was swallowed instead of being reported"
+        );
+    }
+
+    /// And when nothing in the set opens, it still opens.
+    #[test]
+    fn a_set_of_nothing_readable_still_gives_a_window() {
+        let dir = std::env::temp_dir().join("kroma-startup-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let broken = dir.join("all-broken.jpg");
+        std::fs::write(&broken, b"nope").unwrap();
+
+        let mut index = 0;
+        let (image, path, trouble) = open_something(&[broken], &mut index);
+        assert!(path.is_none(), "it claimed to have opened something");
+        assert!(image.width > 0, "no test chart to fall back on");
+        assert!(trouble.is_some(), "it failed silently");
+    }
 
     /// The source dropdown may only offer spaces the upload path can honestly
     /// decode.
