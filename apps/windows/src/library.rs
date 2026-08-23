@@ -609,7 +609,10 @@ mod tests {
         saved.geometry.size = [0.4, 0.4];
         std::fs::write(&sidecar, saved.to_json().unwrap()).unwrap();
         // Nothing in the autosave store for it, so the sidecar is what is read.
-        autosave::forget(&Support::default(), &photo);
+        // Guaranteed by the `Support::default()` the library below is built
+        // with, which has nowhere to read from — this used to be arranged by
+        // deleting the entry out of the developer's own autosave directory,
+        // which is not a thing a test should be reaching into.
 
         let mut lib = Library::new(
             vec![PathBuf::from("in-hand.jpg"), photo.clone()],
