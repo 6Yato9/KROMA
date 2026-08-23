@@ -112,11 +112,12 @@ crates/
   pe-render/   wgpu device, 16f textures, the stage cache
   pe-scopes/   waveform / parade / vectorscope / histogram (CPU reference)
   pe-io/       image decode and encode
+  pe-session/  the workflow layer: the open photograph, autosave, export rules
   pe-ffi/      C ABI surface for Swift
 shaders/       .wgsl, shared by every platform
 apps/
   windows/     Rust shell — contains no image processing
-  macos/       SwiftUI scaffold — built at M6
+  apple/       the Xcode project, and the C ABI's Swift side
 tests/golden/  reference renders, diffed by CI
 docs/          the two decision records worth reading first
 ```
@@ -127,6 +128,11 @@ docs/          the two decision records worth reading first
 vocabulary is: read the stack, mutate a parameter, ask `pe-render` for a
 texture, draw it. The day a convenience function that touches pixels appears in
 a UI crate is the day the Mac port silently becomes a rewrite.
+
+The rule extends downward as well. `pe-session` holds the things that are
+neither pixels nor interface — which photograph is open, where work in progress
+is kept, and what may be written where. "Never write over an original" is not a
+Windows rule, and a rule implemented twice is a rule that will differ.
 
 ## Two ideas everything else follows from
 
@@ -192,6 +198,14 @@ small card.
 
 **Halation is a single-pass approximation** at M1. A separable multi-pass blur
 is M2; the current version shows its seams at large radii.
+
+**Building the Apple side from a network share does not work.** Cargo's
+defaults assume local disk: incremental compilation cannot take its locks over
+SMB or NFS, and a half-written artefact fails to load with an error that blames
+the dependency rather than the disc that dropped it. The fix is
+`CARGO_INCREMENTAL=0` and a `CARGO_TARGET_DIR` on local disk —
+`build-engine.sh` already honours the latter, writing the universal library
+back inside the repository so `project.yml` stays machine-independent.
 
 ## Licence
 

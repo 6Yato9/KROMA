@@ -36,8 +36,14 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets
 
+      # --no-fail-fast, because cargo test otherwise stops at the first
+      # failing test *binary* and every crate after it in the run order never
+      # runs at all. The count that comes back is then not the number of
+      # failures, it is the number of failures before the first one — which is
+      # the same shape of answer as no answer, and reads like a smaller
+      # problem than it is.
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --no-fail-fast
 
       # Golden references are committed. If a shader or colour change alters
       # output, the diff images explain what moved.
@@ -65,3 +71,26 @@ jobs:
         run: cbindgen --config cbindgen.toml --crate pe-ffi --output /tmp/pe_ffi.h
       - name: Show header
         run: cat /tmp/pe_ffi.h
+
+  apple:
+    name: the Apple shells build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Install tools
+        run: brew install xcodegen && cargo install cbindgen --locked
+      # The fixtures the Swift tests decode are committed. If a field is added
+      # in Rust and not regenerated, this is where it is noticed — before the
+      # Swift side fails to decode something it has never seen.
+      - name: Fixtures are current
+        run: cargo test -p pe-session --test fixtures
+      - name: Build the spike
+        run: |
+          cd apps/apple
+          xcodegen generate
+          xcodebuild -project PhotoEditor.xcodeproj -scheme Spike \
+                     -configuration Debug build CODE_SIGNING_ALLOWED=NO
