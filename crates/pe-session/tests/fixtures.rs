@@ -49,3 +49,16 @@ fn the_registry_fixture_is_current() {
     let json = serde_json::to_string_pretty(&pe_session::describe::registry()).unwrap();
     check("registry.json", json);
 }
+
+#[test]
+fn the_snapshot_fixture_is_current() {
+    // A session with something in it, so the fixture exercises rows,
+    // parameters, undo labels and the colour settings rather than the empty
+    // case. Deterministic: no clock, no GPU, no file.
+    let mut s = pe_session::Session::new();
+    s.open_test_chart(64, 64).unwrap();
+    let id = s.add_effect("exposure").unwrap();
+    s.set_float(id, "ev", 0.75).unwrap();
+    let json = serde_json::to_string_pretty(&pe_session::describe::snapshot(&s)).unwrap();
+    check("snapshot.json", json);
+}

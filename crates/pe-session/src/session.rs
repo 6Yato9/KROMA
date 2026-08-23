@@ -146,6 +146,31 @@ impl Session {
         self.photo.as_ref()?.path.as_deref()
     }
 
+    /// The source photograph's pixel dimensions, or zeroes when nothing is
+    /// open. Zeroes rather than an `Option` because the shell divides by them
+    /// to fit the view and wants one branch, not two.
+    pub fn image_size(&self) -> (u32, u32) {
+        self.photo
+            .as_ref()
+            .map_or((0, 0), |p| (p.image.width, p.image.height))
+    }
+
+    pub fn undo_label(&self) -> Option<String> {
+        self.photo
+            .as_ref()?
+            .history
+            .undo_label()
+            .map(str::to_string)
+    }
+
+    pub fn redo_label(&self) -> Option<String> {
+        self.photo
+            .as_ref()?
+            .history
+            .redo_label()
+            .map(str::to_string)
+    }
+
     // ---- opening --------------------------------------------------------
 
     /// Open a photograph, restoring whatever was being done to it last time.

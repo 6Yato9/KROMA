@@ -206,6 +206,116 @@ pub fn registry() -> Registry {
     }
 }
 
+/// Everything a shell needs to draw itself, in one document.
+///
+/// Derived from the session, never authored. Mutations go one way in through
+/// typed calls; this comes one way back out. Two directions and one source of
+/// truth, which is what keeps a Swift `@Observable` idiomatic without becoming
+/// a second implementation of the document model.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Snapshot {
+    /// Bumped by every mutation. Compare before decoding.
+    pub version: u64,
+    pub is_open: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// File name alone, for the title bar.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub width: u32,
+    pub height: u32,
+    pub rows: Vec<Row>,
+    pub color: Color,
+    /// Passes the last frame executed. The number that proves the stage cache
+    /// works: with a nine-row stack, dragging the deepest slider reads 1.
+    pub passes: usize,
+    pub can_undo: bool,
+    pub can_redo: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub undo_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub redo_label: Option<String>,
+    pub export_format: String,
+    pub export_quality: u8,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Row {
+    pub id: u64,
+    pub effect: String,
+    pub enabled: bool,
+    pub opacity: f32,
+    pub blend: String,
+    /// Fixed panels, which cannot be removed or reordered.
+    pub pinned: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// The document's own parameter representation, verbatim — `{"t":"float",
+    /// "v":0.35}`. One shape on the wire rather than two.
+    pub params: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Color {
+    pub input: String,
+    pub output: String,
+}
+
+pub fn snapshot(session: &crate::Session) -> Snapshot {
+    let doc = session.document();
+    let (width, height) = session.image_size();
+    let rows = doc
+        .map(|d| {
+            d.stack
+                .iter()
+                .map(|r| Row {
+                    id: r.id.0,
+                    effect: r.effect.clone(),
+                    enabled: r.enabled,
+                    opacity: r.opacity,
+                    blend: serde_json::to_value(r.blend)
+                        .ok()
+                        .and_then(|v| v.as_str().map(str::to_string))
+                        .unwrap_or_else(|| "normal".into()),
+                    pinned: r.pinned,
+                    label: r.label.clone(),
+                    params: r
+                        .params
+                        .0
+                        .iter()
+                        .filter_map(|(k, v)| Some((k.clone(), serde_json::to_value(v).ok()?)))
+                        .collect(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let export = session.export_settings();
+    Snapshot {
+        version: session.snapshot_version(),
+        is_open: session.is_open(),
+        path: session.path().map(|p| p.display().to_string()),
+        name: session
+            .path()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string()),
+        width,
+        height,
+        rows,
+        color: Color {
+            input: doc.map(|d| d.color.input.clone()).unwrap_or_default(),
+            output: doc.map(|d| d.color.output.clone()).unwrap_or_default(),
+        },
+        passes: session.last_passes(),
+        can_undo: session.can_undo(),
+        can_redo: session.can_redo(),
+        undo_label: session.undo_label(),
+        redo_label: session.redo_label(),
+        export_format: export.format.name().to_string(),
+        export_quality: export.quality,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,5 +387,57 @@ mod tests {
         assert!(!g.by.is_empty());
         assert!(!g.params.is_empty());
         assert!(["true", "false", "positive", "is", "drawn"].contains(&g.when.as_str()));
+    }
+
+    #[test]
+    fn a_snapshot_of_nothing_is_still_a_snapshot() {
+        // The shell draws an empty viewer from this rather than from a null.
+        let s = crate::Session::new();
+        let snap = snapshot(&s);
+        assert!(!snap.is_open);
+        assert!(snap.rows.is_empty());
+        assert!(!snap.can_undo);
+    }
+
+    #[test]
+    fn a_row_carries_everything_the_inspector_draws() {
+        let mut s = crate::Session::new();
+        s.open_test_chart(64, 64).unwrap();
+        let id = s.add_effect("exposure").unwrap();
+        s.set_float(id, "ev", 0.75).unwrap();
+
+        let snap = snapshot(&s);
+        let row = snap.rows.iter().find(|r| r.id == id.0).unwrap();
+        assert_eq!(row.effect, "exposure");
+        assert!(row.enabled);
+        assert_eq!(row.blend, "normal");
+        assert!(!row.pinned);
+        // Parameters keep the document's own representation, so there is one
+        // shape on the wire and not two.
+        let ev = row.params.get("ev").unwrap();
+        assert_eq!(ev["t"], "float");
+        assert_eq!(ev["v"], 0.75);
+    }
+
+    #[test]
+    fn undo_shows_in_the_snapshot_and_says_what_it_would_undo() {
+        let mut s = crate::Session::new();
+        s.open_test_chart(64, 64).unwrap();
+        s.add_effect("exposure").unwrap();
+        let snap = snapshot(&s);
+        assert!(snap.can_undo);
+        assert_eq!(snap.undo_label.as_deref(), Some("Add Exposure"));
+    }
+
+    #[test]
+    fn the_version_moves_on_a_change_and_not_otherwise() {
+        // What lets a shell skip decoding an unchanged frame for the cost of
+        // one integer comparison.
+        let mut s = crate::Session::new();
+        s.open_test_chart(64, 64).unwrap();
+        let before = snapshot(&s).version;
+        assert_eq!(snapshot(&s).version, before);
+        s.add_effect("exposure").unwrap();
+        assert!(snapshot(&s).version > before);
     }
 }
