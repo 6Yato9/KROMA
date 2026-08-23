@@ -18,14 +18,23 @@ fi
 
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
+# Where cargo puts the objects, which is not necessarily inside the repository.
+# A checkout on a network share is the case that forces this: incremental
+# compilation cannot lock there, and a half-written artefact fails to load with
+# an error that blames the dependency rather than the disc.
+BUILD_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
+
 cargo build -p pe-ffi --target aarch64-apple-darwin $PROFILE_FLAG
 cargo build -p pe-ffi --target x86_64-apple-darwin  $PROFILE_FLAG
 
-mkdir -p "target/universal/$PROFILE_DIR"
+# The universal library lands inside the repository wherever the objects were
+# built, because `LIBRARY_SEARCH_PATHS` in project.yml has to name a path that
+# is the same on every machine. It is a few megabytes; the objects are gigabytes.
+mkdir -p "$ROOT/target/universal/$PROFILE_DIR"
 lipo -create \
-  "target/aarch64-apple-darwin/$PROFILE_DIR/libpe_ffi.a" \
-  "target/x86_64-apple-darwin/$PROFILE_DIR/libpe_ffi.a" \
-  -output "target/universal/$PROFILE_DIR/libpe_ffi.a"
+  "$BUILD_DIR/aarch64-apple-darwin/$PROFILE_DIR/libpe_ffi.a" \
+  "$BUILD_DIR/x86_64-apple-darwin/$PROFILE_DIR/libpe_ffi.a" \
+  -output "$ROOT/target/universal/$PROFILE_DIR/libpe_ffi.a"
 
 # The header is generated, never hand-edited, so it cannot drift from the Rust.
 if command -v cbindgen >/dev/null 2>&1; then
