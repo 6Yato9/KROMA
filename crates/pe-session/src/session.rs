@@ -76,8 +76,11 @@ pub struct Session {
     /// What an export would be written as. Kept on the session because it
     /// is a property of the sitting rather than of a photograph; nothing
     /// reads it until the export path lands.
-    #[allow(dead_code, reason = "settings the export path will read")]
     export_settings: export::Export,
+    /// Every photograph currently open, for the collision check. The one on
+    /// screen is in here too. A batch writes into one folder and the name it
+    /// builds for photo A can collide with photo B sitting right beside it.
+    open_set: Vec<PathBuf>,
     watcher: autosave::Watcher,
     /// Bumped by every mutation, so a shell can ask "is this still what I last
     /// saw?" with one integer instead of a JSON parse.
@@ -102,6 +105,7 @@ impl Session {
             photo: None,
             support: Support::default(),
             export_settings: export::Export::default(),
+            open_set: Vec::new(),
             watcher: autosave::Watcher::new(),
             snapshot_version: 0,
             interaction: None,
@@ -611,6 +615,190 @@ impl Session {
         self.needs_render = false;
         Ok(())
     }
+
+    // ---- persistence ------------------------------------------------------
+
+    /// Every photograph the collision check must consider.
+    pub fn set_open_set(&mut self, paths: Vec<PathBuf>) {
+        self.open_set = paths;
+    }
+
+    /// Called every frame. Writes the work in progress once the user has
+    /// stopped moving. See [`autosave::Watcher`].
+    pub fn tick(&mut self) {
+        let Some(photo) = self.photo.as_ref() else {
+            return;
+        };
+        let revision = photo.history.revision();
+        if self.watcher.tick(revision, std::time::Instant::now()) {
+            self.write_autosave();
+        }
+    }
+
+    /// Write the work in progress now, throttle or no throttle.
+    ///
+    /// Called when leaving a photograph, where the throttle is beside the
+    /// point: the thing that would have triggered the write is about to stop
+    /// being the thing on screen.
+    pub fn write_autosave(&mut self) {
+        let Some(photo) = self.photo.as_ref() else {
+            return;
+        };
+        let Some(path) = photo.path.as_ref() else {
+            return;
+        };
+        autosave::store(&self.support, path, photo.history.document());
+        let revision = photo.history.revision();
+        self.watcher.reset(revision);
+    }
+
+    /// The explicit save: a `.peproj` beside the photograph.
+    ///
+    /// A sidecar is a decision — *this* is the edit, keep it, move it with the
+    /// photograph. The autosave is just where you happened to stop.
+    pub fn save_sidecar(&mut self) -> Result<PathBuf, SessionError> {
+        let photo = self.photo.as_ref().ok_or(SessionError::NothingOpen)?;
+        let path = photo.path.as_ref().ok_or(SessionError::NothingOpen)?;
+        let out = path.with_extension("peproj");
+        let json = photo
+            .history
+            .document()
+            .to_json()
+            .map_err(|e| SessionError::Write(e.to_string()))?;
+        pe_io::write_bytes_atomically(&out, json.as_bytes())
+            .map_err(|e| SessionError::Write(e.to_string()))?;
+        Ok(out)
+    }
+
+    /// Pull a sidecar back over the top of whatever is showing.
+    pub fn load_sidecar(&mut self, path: impl AsRef<Path>) -> Result<(), SessionError> {
+        let text = std::fs::read_to_string(path.as_ref()).map_err(|e| SessionError::Read {
+            path: path.as_ref().display().to_string(),
+            message: e.to_string(),
+        })?;
+        let doc = Document::from_json(&text).map_err(|e| SessionError::Read {
+            path: path.as_ref().display().to_string(),
+            message: e.to_string(),
+        })?;
+        let photo = self.photo.as_mut().ok_or(SessionError::NothingOpen)?;
+        photo.ids = RowIdGenerator::resuming(&doc);
+        photo.history.edit("Load edit", None, move |d| *d = doc);
+        self.gpu.working_geometry = None;
+        if let Some(r) = self.gpu.renderer.as_mut() {
+            r.invalidate();
+        }
+        self.touched();
+        Ok(())
+    }
+
+    /// Throw the edit and the saved work away.
+    ///
+    /// An edit that comes back every time you open a photograph, with no way
+    /// to be rid of it, is not a convenience — it is a photograph you can no
+    /// longer see.
+    pub fn revert(&mut self) -> Result<(), SessionError> {
+        let photo = self.photo.as_mut().ok_or(SessionError::NothingOpen)?;
+        let source = photo
+            .path
+            .clone()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "test-chart".to_string());
+        let fresh = pe_effects::new_document(source);
+        photo.ids = RowIdGenerator::resuming(&fresh);
+        photo.history.edit("Revert", None, move |d| *d = fresh);
+        if let Some(path) = photo.path.clone() {
+            autosave::forget(&self.support, &path);
+        }
+        let revision = self.photo.as_ref().expect("still open").history.revision();
+        self.watcher.reset(revision);
+        if let Some(r) = self.gpu.renderer.as_mut() {
+            r.invalidate();
+        }
+        self.gpu.working_geometry = None;
+        self.touched();
+        Ok(())
+    }
+
+    // ---- export -------------------------------------------------------
+
+    pub fn set_export(&mut self, format: export::Format, quality: u8) {
+        self.export_settings = export::Export {
+            format,
+            quality: quality.clamp(1, 100),
+        };
+    }
+
+    pub fn export_settings(&self) -> export::Export {
+        self.export_settings
+    }
+
+    /// Write the graded photograph beside its original, refusing a collision.
+    pub fn export_current(&mut self) -> Result<PathBuf, SessionError> {
+        let photo = self.photo.as_ref().ok_or(SessionError::NothingOpen)?;
+        let source = photo
+            .path
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("export"));
+        let chosen = self.export_settings;
+        let out = source.with_file_name(export::export_name(&source, chosen.format));
+
+        // Both defences, in order. The naming keeps them apart; the check is
+        // what makes it a guarantee rather than a scheme that happens to work.
+        let mut open = self.open_set.clone();
+        open.push(source.clone());
+        if export::would_overwrite_a_source(&open, &out) {
+            return Err(SessionError::WouldOverwriteSource(
+                out.display().to_string(),
+            ));
+        }
+
+        self.context()?;
+        let gpu = self.gpu.context.as_ref().expect("built above");
+        if self.gpu.renderer.is_none() {
+            self.gpu.renderer = Some(EffectRenderer::new(&gpu.device));
+        }
+        let renderer = self.gpu.renderer.as_ref().expect("built above");
+        let photo = self.photo.as_ref().expect("checked above");
+        let doc = photo.history.document();
+        let (w, h) = pe_render::export::output_size(doc, photo.image.width, photo.image.height);
+        // The space the pipeline actually rendered to, which is what the file
+        // has to say it is in. Taken from the same settings the render read, so
+        // the two cannot disagree — a file labelled with anything else is a
+        // wrong answer stated confidently, and every reader will believe it.
+        let out_space = doc.color.pipeline().output;
+
+        if chosen.format.is_sixteen_bit() {
+            let pixels = pe_render::export::render_full_16(
+                gpu,
+                renderer,
+                photo.image.width,
+                photo.image.height,
+                &photo.image.pixels,
+                doc,
+            )
+            .map_err(|e| SessionError::Render(e.to_string()))?;
+            pe_io::save_png16(w, h, &pixels, &out, &out_space)
+                .map_err(|e| SessionError::Write(e.to_string()))?;
+        } else {
+            let pixels = pe_render::render_full(
+                gpu,
+                renderer,
+                photo.image.width,
+                photo.image.height,
+                &photo.image.pixels,
+                doc,
+            )
+            .map_err(|e| SessionError::Render(e.to_string()))?;
+            let img = pe_io::DecodedImage::new(w, h, pixels)
+                .map_err(|e| SessionError::Write(e.to_string()))?;
+            match chosen.format {
+                export::Format::Jpeg => pe_io::save_jpeg(&img, &out, chosen.quality, &out_space),
+                _ => pe_io::save_png(&img, &out, &out_space),
+            }
+            .map_err(|e| SessionError::Write(e.to_string()))?;
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -715,5 +903,101 @@ mod tests {
         let mut s = Session::new();
         let rc = unsafe { s.attach_layer(std::ptr::null_mut(), 100, 100) };
         assert!(rc.is_err());
+    }
+
+    #[test]
+    fn work_in_progress_comes_back_when_the_photograph_is_reopened() {
+        let tmp = tempfile::tempdir().unwrap();
+        let photo = tmp.path().join("a.png");
+        let chart = pe_io::test_chart(64, 64);
+        pe_io::save_png(&chart, &photo, &pe_color::space::SRGB).unwrap();
+
+        let mut s = Session::new();
+        s.set_support_dir(tmp.path().join("support"));
+        s.open_path(&photo).unwrap();
+        // Sharpen rather than exposure: exposure is one of the pinned rows
+        // every fresh document already carries, so `find` on that key would
+        // hit the pinned row rather than the one this test adds and edits.
+        let row = s.add_effect("sharpen").unwrap();
+        s.set_float(row, "amount", 1.5).unwrap();
+        s.write_autosave();
+
+        let mut again = Session::new();
+        again.set_support_dir(tmp.path().join("support"));
+        again.open_path(&photo).unwrap();
+        let doc = again.document().unwrap();
+        let restored = doc
+            .stack
+            .iter()
+            .find(|r| r.effect == "sharpen")
+            .and_then(|r| r.params.get("amount"))
+            .and_then(|v| v.as_float());
+        assert_eq!(restored, Some(1.5));
+    }
+
+    #[test]
+    fn reverting_leaves_nothing_to_come_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let photo = tmp.path().join("a.png");
+        pe_io::save_png(&pe_io::test_chart(64, 64), &photo, &pe_color::space::SRGB).unwrap();
+
+        let mut s = Session::new();
+        s.set_support_dir(tmp.path().join("support"));
+        s.open_path(&photo).unwrap();
+        // Sharpen rather than exposure: exposure is one of the pinned rows
+        // every fresh document already carries, so a document with none of
+        // that key can never exist and the assertion below could never pass.
+        let row = s.add_effect("sharpen").unwrap();
+        s.set_float(row, "amount", 1.5).unwrap();
+        s.write_autosave();
+        s.revert().unwrap();
+
+        let mut again = Session::new();
+        again.set_support_dir(tmp.path().join("support"));
+        again.open_path(&photo).unwrap();
+        assert!(
+            again
+                .document()
+                .unwrap()
+                .stack
+                .iter()
+                .all(|r| r.effect != "sharpen"),
+            "the reverted edit came back"
+        );
+    }
+
+    #[test]
+    fn an_export_is_written_beside_the_original_with_the_suffix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let photo = tmp.path().join("sunset.png");
+        pe_io::save_png(&pe_io::test_chart(64, 64), &photo, &pe_color::space::SRGB).unwrap();
+
+        let mut s = Session::new();
+        s.open_path(&photo).unwrap();
+        let out = s.export_current().unwrap();
+        assert_eq!(out.file_name().unwrap(), "sunset_KROMA.jpg");
+        assert!(out.exists());
+        // And the original is untouched.
+        assert!(photo.exists());
+    }
+
+    #[test]
+    fn an_export_that_would_land_on_an_original_is_refused() {
+        // Contrived deliberately: a file already named as an export. Opening it
+        // and exporting must not write over it.
+        let tmp = tempfile::tempdir().unwrap();
+        let photo = tmp.path().join("sunset_KROMA.jpg");
+        let chart = pe_io::test_chart(64, 64);
+        pe_io::save_jpeg(&chart, &photo, 95, &pe_color::space::SRGB).unwrap();
+
+        let mut s = Session::new();
+        s.open_path(&photo).unwrap();
+        // Its export would be sunset_KROMA_KROMA.jpg, which is safe — so to
+        // exercise the refusal, claim the output name is one of ours.
+        s.set_open_set(vec![tmp.path().join("sunset_KROMA_KROMA.jpg")]);
+        assert!(matches!(
+            s.export_current(),
+            Err(SessionError::WouldOverwriteSource(_))
+        ));
     }
 }
