@@ -9,6 +9,7 @@
 //! a rule implemented twice is a rule that will differ. "Never write over an
 //! original" is not a Windows rule.
 
+pub mod autosave;
 pub mod support;
 pub mod surface;
 

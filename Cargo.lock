@@ -1780,6 +1780,7 @@ dependencies = [
  "pe-io",
  "pe-render",
  "pe-scopes",
+ "pe-session",
  "rfd",
  "serde",
  "serde_json",

@@ -10,7 +10,6 @@
 //! Resolve wheels come next, as pinned rows at the head of the same stack the
 //! effects list already uses.
 
-mod autosave;
 mod basic;
 mod crop;
 mod curve;
@@ -30,6 +29,7 @@ mod wheels;
 use std::path::{Path, PathBuf};
 
 use pe_core::{Document, History, RowIdGenerator, Stack};
+use pe_session::{Support, autosave};
 
 use crate::library::Library;
 use pe_render::GpuContext;
@@ -201,6 +201,10 @@ pub struct App {
     /// What the application remembers between runs: starred effects, and
     /// whatever joins that list later.
     settings: settings::Settings,
+    /// Where this platform keeps what belongs to the application. The one
+    /// place a `cfg!` about directories is correct: the shell knows what
+    /// platform it is.
+    support: Support,
     /// Decides when the work in progress is written out. See `autosave`.
     autosave: autosave::Watcher,
     /// The effect under the pointer in the browser, previewed on the picture
@@ -273,7 +277,8 @@ impl App {
         } else {
             session
         };
-        let mut library = Library::new(library_paths);
+        let support = platform_support();
+        let mut library = Library::new(library_paths, support.clone());
         library.focus(at);
         let show_strip = library.len() > 1;
 
@@ -302,6 +307,7 @@ impl App {
             scope_textures: scopes::Textures::default(),
             tab: Tab::Colour,
             settings: settings::Settings::load(),
+            support,
             autosave: autosave::Watcher::new(),
             preview_effect: None,
             dragging_effect: None,
@@ -338,7 +344,7 @@ impl App {
         if let Some(path) = self.path.clone()
             && self.autosave.pending()
         {
-            autosave::store(&path, self.history.document());
+            autosave::store(&self.support, &path, self.history.document());
         }
     }
 
@@ -483,7 +489,7 @@ impl App {
             return;
         }
 
-        let doc = library::load_edit(&path)
+        let doc = library::load_edit(&self.support, &path)
             .unwrap_or_else(|| library::fresh_document(&path, image.space));
         self.ids = RowIdGenerator::resuming(&doc);
         self.history = History::new(doc);
@@ -749,7 +755,7 @@ impl App {
         } else {
             match index.and_then(|i| self.library.entries()[i].document()) {
                 Some(d) => d.clone(),
-                None => library::load_edit(&path)
+                None => library::load_edit(&self.support, &path)
                     .unwrap_or_else(|| library::fresh_document(&path, image.space)),
             }
         };
@@ -815,7 +821,7 @@ impl App {
         let fresh = library::fresh_document(&path, self.image.space);
         self.history.edit("Revert", None, move |doc| *doc = fresh);
         self.ids = RowIdGenerator::resuming(self.history.document());
-        autosave::forget(&path);
+        autosave::forget(&self.support, &path);
         self.autosave.reset(self.history.revision());
         self.status.done(format!("reverted {}", path.display()));
     }
@@ -1079,7 +1085,7 @@ impl eframe::App for App {
                 .autosave
                 .tick(self.history.revision(), std::time::Instant::now())
         {
-            autosave::store(&path, self.history.document());
+            autosave::store(&self.support, &path, self.history.document());
         }
         // Kept awake so the write happens even if nothing else is moving. A
         // repaint a second after the last edit is not a cost worth measuring,
@@ -2553,6 +2559,26 @@ fn label(ui: &egui::Ui, at: egui::Pos2, text: &str, align: egui::Align2) {
 /// pinned one. The row draws, and nothing that acts on it works.
 fn ids_for(doc: &Document) -> RowIdGenerator {
     RowIdGenerator::resuming(doc)
+}
+
+/// Where a Windows or Linux build keeps its own files.
+///
+/// The Mac and iOS shells answer this differently and pass their own answer
+/// down, which is why `pe-session` takes it as an argument rather than working
+/// it out.
+fn platform_support() -> Support {
+    let base = if cfg!(windows) {
+        std::env::var_os("APPDATA").map(PathBuf::from)
+    } else {
+        match std::env::var_os("XDG_CONFIG_HOME") {
+            Some(v) => Some(PathBuf::from(v)),
+            None => std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")),
+        }
+    };
+    match base {
+        Some(b) => Support::at(b.join("Kroma")),
+        None => Support::default(),
+    }
 }
 
 /// The id the hover preview borrows.
