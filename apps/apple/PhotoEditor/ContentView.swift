@@ -4,15 +4,36 @@ struct ContentView: View {
     let store: SessionStore
 
     var body: some View {
-        VStack(spacing: 0) {
-            MetalViewer(store: store)
-                .frame(minWidth: 480, minHeight: 320)
-            statusBar
+        HSplitView {
+            VStack(spacing: 0) {
+                MetalViewer(store: store)
+                    .frame(minWidth: 480, minHeight: 320)
+                statusBar
+            }
+            inspector
+                .frame(width: 260)
         }
-        .frame(minWidth: 720, minHeight: 480)
+        .frame(minWidth: 900, minHeight: 560)
         .onAppear {
             store.setSupportDirectory(Self.supportDirectory)
             store.openTestChart()
+        }
+    }
+
+    /// The pinned rows, in pinned order, each generated from the registry.
+    private var inspector: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(store.registry.pinnedEffects) { effect in
+                    if let row = store.snapshot.rows.first(where: {
+                        $0.effect == effect.key && $0.pinned
+                    }) {
+                        InspectorPanel(effect: effect, row: row, store: store)
+                        Divider()
+                    }
+                }
+            }
+            .padding(.horizontal, 8)
         }
     }
 
