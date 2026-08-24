@@ -36,6 +36,12 @@ lipo -create \
   "$BUILD_DIR/x86_64-apple-darwin/$PROFILE_DIR/libpe_ffi.a" \
   -output "$ROOT/target/universal/$PROFILE_DIR/libpe_ffi.a"
 
+# Drop the debug info. Swift never steps into Rust — the engine's tests live on
+# the Rust side — and leaving it in makes XCTest's symbolication of a *failing*
+# test read the whole archive, which on a network share does not finish. A test
+# that hangs instead of reporting its failure is worse than the failure.
+strip -S "$ROOT/target/universal/$PROFILE_DIR/libpe_ffi.a" 2>/dev/null || true
+
 # The header is generated, never hand-edited, so it cannot drift from the Rust.
 if command -v cbindgen >/dev/null 2>&1; then
   cbindgen --config cbindgen.toml --crate pe-ffi \
