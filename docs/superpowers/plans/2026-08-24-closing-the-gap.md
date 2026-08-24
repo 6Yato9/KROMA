@@ -193,6 +193,19 @@ be asked to draw.
 - Create: `apps/apple/KromaKit/Controls/ChoiceRow.swift`
 - Create: `apps/apple/KromaKit/Controls/RgbRow.swift`
 - Modify: `apps/apple/KromaKit/InspectorPanel.swift`
+- Modify: `apps/apple/KromaKit/SessionStore.swift`
+
+**`SessionStore` is missing a `setRGB` wrapper.** `Session` has one in
+`Engine.swift`, but the store never got the parallel method — an oversight from
+the plan that built it, invisible until a control needed to call it. Add it
+beside `setChoice`, in the same shape as its neighbours:
+
+```swift
+    public func setRGB(row: UInt64, key: String, _ r: Float, _ g: Float, _ b: Float) {
+        run { try session.setRGB(row: row, key: key, r, g, b) }
+        refresh()
+    }
+```
 
 There is no unit test for these three: they are each a stock SwiftUI control in
 the four-column row, with no arithmetic of their own. The row metrics they use
@@ -354,7 +367,11 @@ public struct RgbRow: View {
                 .lineLimit(1)
                 .foregroundStyle(isActive ? .primary : .tertiary)
 
-            ColorPicker("", selection: Binding(
+            // `Binding<Color>` explicitly: `ColorPicker` has both a
+            // `Binding<Color>` and a `Binding<CGColor>` initialiser on macOS,
+            // and an unannotated `Binding(get:set:)` infers the wrong one and
+            // then fails to type-check the getter against it.
+            ColorPicker("", selection: Binding<Color>(
                 get: { colour },
                 set: { picked in
                     let c = NSColor(picked).usingColorSpace(.extendedSRGB) ?? .black

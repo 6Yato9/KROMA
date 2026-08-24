@@ -115,6 +115,11 @@ public final class SessionStore {
         refresh()
     }
 
+    public func setRGB(row: UInt64, key: String, _ r: Float, _ g: Float, _ b: Float) {
+        run { try session.setRGB(row: row, key: key, r, g, b) }
+        refresh()
+    }
+
     public func setRowEnabled(_ row: UInt64, _ on: Bool) {
         run { try session.setRowEnabled(row, on) }
         refresh()
