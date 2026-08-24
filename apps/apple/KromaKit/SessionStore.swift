@@ -117,6 +117,31 @@ public final class SessionStore {
         return id
     }
 
+    public func removeRow(_ row: UInt64) {
+        run { try session.removeRow(row) }
+        refresh()
+    }
+
+    public func moveRow(_ row: UInt64, to index: UInt32) {
+        run { try session.moveRow(row, to: index) }
+        refresh()
+    }
+
+    public func setRowOpacity(_ row: UInt64, _ value: Float) {
+        run { try session.setRowOpacity(row, value) }
+        if !dragging { refresh() }
+    }
+
+    /// Whether this row may be taken out of the stack.
+    ///
+    /// The pinned rows are the colour page's fixed panels; a document without
+    /// them is one a fresh document could not be, and an inspector with a hole
+    /// in it. The engine would allow it, which is why the answer lives here
+    /// rather than being assumed.
+    public func canRemove(_ row: Snapshot.Row) -> Bool {
+        !row.pinned
+    }
+
     /// Bracket a drag. Between these two calls the snapshot is left alone.
     public func beginInteraction(_ label: String) {
         dragging = true
