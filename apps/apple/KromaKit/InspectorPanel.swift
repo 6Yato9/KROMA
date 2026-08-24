@@ -24,11 +24,46 @@ public struct InspectorPanel: View {
                 .foregroundStyle(.secondary)
                 .padding(.bottom, 2)
 
-            ForEach(effect.params) { param in
+            if !wheels.isEmpty {
+                HStack(alignment: .top, spacing: 4) {
+                    ForEach(wheels) { param in
+                        wheel(param)
+                    }
+                }
+                .padding(.bottom, 4)
+            }
+
+            ForEach(effect.params.filter { !isWheel($0) }) { param in
                 control(for: param)
             }
         }
         .padding(.vertical, 6)
+    }
+
+    private func isWheel(_ param: Param) -> Bool {
+        if case .wheel = param.kind { return true }
+        return false
+    }
+
+    private var wheels: [Param] {
+        effect.params.filter(isWheel)
+    }
+
+    @ViewBuilder
+    private func wheel(_ param: Param) -> some View {
+        if case let .wheel(bounds, master) = param.kind {
+            WheelView(
+                param: param,
+                bounds: bounds,
+                hasMaster: master,
+                row: row.id,
+                value: row.params[param.key]?.wheelValue
+                    ?? WheelValue(rgb: [bounds.default, bounds.default, bounds.default],
+                                  master: bounds.default),
+                isActive: effect.isActive(param.key, values: row.params),
+                store: store
+            )
+        }
     }
 
     @ViewBuilder

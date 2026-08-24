@@ -105,6 +105,15 @@ public final class SessionStore {
         if !dragging { refresh() }
     }
 
+    /// The wheel's hot path. Like `setFloat`, it does not refresh the snapshot
+    /// mid-drag — the control holds the in-flight value and draws from that.
+    public func setWheel(
+        row: UInt64, key: String, master: Float, _ r: Float, _ g: Float, _ b: Float
+    ) {
+        run { try session.setWheel(row: row, key: key, master: master, r, g, b) }
+        if !dragging { refresh() }
+    }
+
     public func setBool(row: UInt64, key: String, value: Bool) {
         run { try session.setBool(row: row, key: key, value: value) }
         refresh()

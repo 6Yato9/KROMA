@@ -195,6 +195,14 @@ public final class Session {
         })
     }
 
+    public func setWheel(
+        row: UInt64, key: String, master: Float, _ r: Float, _ g: Float, _ b: Float
+    ) throws {
+        try check(key.withCString {
+            pe_session_set_wheel(handle, row, $0, master, r, g, b)
+        })
+    }
+
     // ---- history ------------------------------------------------------------
 
     /// Bracket a drag so it collapses into one undo step rather than three
