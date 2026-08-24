@@ -56,8 +56,10 @@ struct ContentView: View {
                     .lineLimit(1)
                     .help(problem)
             } else if store.snapshot.isOpen {
-                Text("\(store.snapshot.width)x\(store.snapshot.height)")
+                Text(store.snapshot.name ?? "test chart")
                     .foregroundStyle(.secondary)
+                Text("\(store.snapshot.width)x\(store.snapshot.height)")
+                    .foregroundStyle(.tertiary)
             }
             Spacer()
             Text("passes \(store.snapshot.passes)")
