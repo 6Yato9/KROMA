@@ -10,6 +10,14 @@ cargo install cbindgen
 cd apps/apple && xcodegen generate && open PhotoEditor.xcodeproj
 ```
 
+The tests, without Xcode:
+
+```bash
+cd apps/apple && xcodegen generate && xcodebuild test \
+  -project PhotoEditor.xcodeproj -scheme KromaKitTests \
+  -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
+```
+
 `build-engine.sh` runs as a pre-build phase: it compiles `pe-ffi` for both
 Apple architectures, `lipo`s them into a universal static library, and
 regenerates `pe_ffi.h`.
@@ -19,7 +27,16 @@ regenerates `pe_ffi.h`.
 | | |
 |---|---|
 | `Spike` | The smallest thing that proves the layer path: a `CAMetalLayer` made in Swift, filled by wgpu in Rust. Kept because it is the fastest way to tell whether a graphics problem is in the engine or in the shell. |
-| `PhotoEditor` | Where the macOS application goes. Still the M0 scaffold: it links against the engine and round-trips a document, and nothing more. |
+| `PhotoEditor` | Where the macOS application goes. It compiles `KromaKit/` in and links against the engine; the interface itself is still a placeholder. |
+| `KromaKitTests` | The Swift tests. Compiles `KromaKit/` in as well, under the module name `KromaKit`, so the tests are inside the module they exercise. |
+
+## Why `KromaKit` is a directory and not a Swift package
+
+A Swift package cannot have a bridging header, and the engine arrives as a
+generated header plus a static library. So `KromaKit/` is a plain directory of
+sources that XcodeGen compiles into every target that needs it — the
+application, the test bundle, and later the iOS app. `Engine.swift` is the only
+file in it allowed to touch the C ABI.
 
 ## Why the .xcodeproj is generated
 

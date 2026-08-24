@@ -17,6 +17,7 @@ targets:
     platform: macOS
     sources:
       - path: PhotoEditor
+      - path: KromaKit
     settings:
       base:
         SWIFT_OBJC_BRIDGING_HEADER: PhotoEditor/PhotoEditor-Bridging-Header.h
@@ -31,6 +32,40 @@ targets:
       - name: Build Rust engine
         script: "\"$SRCROOT/build-engine.sh\""
         basedOnDependencyAnalysis: false
+
+  # The Swift tests. KromaKit is a source directory rather than a Swift package
+  # precisely so it can compile into this bundle with a bridging header, which
+  # a package cannot have.
+  KromaKitTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: KromaKit
+      - path: KromaKitTests
+    settings:
+      base:
+        # The same bridging header the application uses.
+        SWIFT_OBJC_BRIDGING_HEADER: PhotoEditor/PhotoEditor-Bridging-Header.h
+        GENERATE_INFOPLIST_FILE: "YES"
+        LIBRARY_SEARCH_PATHS: $(SRCROOT)/../../target/universal/$(CONFIGURATION:lower)
+        OTHER_LDFLAGS: -lpe_ffi
+        # Reuses the header build-engine.sh generates for the application, so
+        # there is never a third copy to drift.
+        HEADER_SEARCH_PATHS: $(SRCROOT)/PhotoEditor
+        # The sources compile into the bundle rather than into a framework, so
+        # naming the bundle's module KromaKit is what makes
+        # `@testable import KromaKit` resolve.
+        PRODUCT_MODULE_NAME: KromaKit
+    preBuildScripts:
+      - name: Build Rust engine
+        script: "\"$SRCROOT/build-engine.sh\""
+        basedOnDependencyAnalysis: false
+    # An explicit scheme, so `xcodebuild test -scheme KromaKitTests` works from
+    # a clean checkout. Naming the bundle under `testTargets` is what fills the
+    # scheme's <Testables>; without it the tests build and none of them run.
+    scheme:
+      testTargets:
+        - KromaKitTests
 
   Spike:
     type: application
