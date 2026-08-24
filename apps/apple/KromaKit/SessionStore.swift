@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Observation
 import QuartzCore
@@ -48,6 +49,35 @@ public final class SessionStore {
     }
 
     public func detachLayer() { session.detachLayer() }
+
+    // ---- where the viewer is looking -------------------------------------
+
+    /// Where the viewer is looking. Held here rather than in the engine
+    /// because it belongs to the window, not to the photograph.
+    public private(set) var view = ViewState()
+
+    public func zoom(by factor: CGFloat, at viewPoint: CGPoint) {
+        view.zoom(by: factor, at: viewPoint)
+        pushView()
+    }
+
+    public func pan(by delta: CGSize) {
+        view.pan(by: delta)
+        pushView()
+    }
+
+    public func fitView() {
+        view.fit()
+        pushView()
+    }
+
+    private func pushView() {
+        let r = view.region
+        run {
+            try session.setView(
+                x: Float(r.origin.x), y: Float(r.origin.y), size: Float(r.width))
+        }
+    }
 
     /// Draw, if anything has changed. Called from the display link.
     public func renderIfNeeded() {

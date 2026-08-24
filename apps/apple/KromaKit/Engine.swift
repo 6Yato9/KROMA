@@ -107,6 +107,12 @@ public final class Session {
         try check(pe_session_render(handle))
     }
 
+    /// Show this rectangle of the frame. `size` is the fraction of the whole
+    /// picture that is visible, so 1 is fitted and 0.25 is four times in.
+    public func setView(x: Float, y: Float, size: Float) throws {
+        try check(pe_session_set_view(handle, x, y, size))
+    }
+
     public var needsRender: Bool {
         pe_session_needs_render(handle)
     }

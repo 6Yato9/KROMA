@@ -112,6 +112,38 @@ public final class MetalViewerView: NSView {
         store.renderIfNeeded()
     }
 
+    // ---- the gestures ----------------------------------------------------
+
+    public override func scrollWheel(with event: NSEvent) {
+        // Scroll zooms, anchored under the cursor, which is what every editor
+        // that is any good does and what the Windows shell does.
+        let point = convert(event.locationInWindow, from: nil)
+        let anchor = CGPoint(
+            x: bounds.width > 0 ? point.x / bounds.width : 0.5,
+            // Flipped: the view grows downward, the frame does not.
+            y: bounds.height > 0 ? 1 - point.y / bounds.height : 0.5
+        )
+        let factor = 1 + event.scrollingDeltaY * 0.01
+        store.zoom(by: factor, at: anchor)
+    }
+
+    public override func mouseDragged(with event: NSEvent) {
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        store.pan(by: CGSize(
+            width: event.deltaX / bounds.width,
+            height: -event.deltaY / bounds.height
+        ))
+    }
+
+    public override func mouseDown(with event: NSEvent) {
+        // Double-click fits, as it does on the Windows side.
+        if event.clickCount == 2 {
+            store.fitView()
+        }
+    }
+
+    public override var acceptsFirstResponder: Bool { true }
+
     deinit {
         link?.invalidate()
     }

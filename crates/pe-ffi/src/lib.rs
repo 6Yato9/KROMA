@@ -344,6 +344,19 @@ pub unsafe extern "C" fn pe_session_render(s: *mut PeSession) -> i32 {
     status(s, |s| s.present())
 }
 
+/// Show this rectangle of the frame. `size` is the fraction of the whole
+/// picture that is visible, so 1.0 is fitted and 0.25 is four times in.
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_set_view(s: *mut PeSession, x: f32, y: f32, size: f32) -> i32 {
+    status(s, move |s| {
+        s.set_view(x, y, size);
+        Ok(())
+    })
+}
+
 /// Whether anything has changed since the last present. The display link asks
 /// this before doing any work; an editor that redraws 120 times a second while
 /// nothing moves is a laptop with a warm keyboard.
