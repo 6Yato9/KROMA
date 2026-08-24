@@ -18,7 +18,10 @@ public struct EffectBrowser: View {
 
     public var body: some View {
         Menu {
-            ForEach(registry.groups, id: \.self) { group in
+            // Skipping the empty ones. Every Basic effect is pinned, so that
+            // heading would name a group you can add nothing from — which
+            // reads as a bug rather than as a fact about the colour page.
+            ForEach(registry.groups.filter { !addable(in: $0).isEmpty }, id: \.self) { group in
                 Section(group) {
                     ForEach(addable(in: group)) { effect in
                         Button(effect.name) {

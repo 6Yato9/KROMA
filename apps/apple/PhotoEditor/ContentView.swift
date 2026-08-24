@@ -33,6 +33,7 @@ struct ContentView: View {
                                 row: row,
                                 index: index,
                                 count: store.snapshot.rows.count,
+                                floor: store.snapshot.rows.filter(\.pinned).count,
                                 store: store
                             )
                         }

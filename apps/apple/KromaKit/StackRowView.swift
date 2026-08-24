@@ -11,17 +11,24 @@ public struct StackRowView: View {
     let row: Snapshot.Row
     let index: Int
     let count: Int
+    /// The first index an added row can occupy. The pinned rows hold the top
+    /// of the stack and nothing may move above them — `Stack::reorder` clamps
+    /// to it and returns quietly, so without this the arrow is enabled, does
+    /// nothing, and reports nothing.
+    let floor: Int
     let store: SessionStore
 
     @State private var dragging: Float?
 
     public init(
-        effect: Effect, row: Snapshot.Row, index: Int, count: Int, store: SessionStore
+        effect: Effect, row: Snapshot.Row, index: Int, count: Int, floor: Int,
+        store: SessionStore
     ) {
         self.effect = effect
         self.row = row
         self.index = index
         self.count = count
+        self.floor = floor
         self.store = store
     }
 
@@ -43,12 +50,12 @@ public struct StackRowView: View {
                 Spacer()
 
                 Button {
-                    store.moveRow(row.id, to: UInt32(max(0, index - 1)))
+                    store.moveRow(row.id, to: UInt32(max(floor, index - 1)))
                 } label: {
                     Image(systemName: "chevron.up")
                 }
                 .buttonStyle(.borderless)
-                .disabled(index == 0)
+                .disabled(index <= floor)
 
                 Button {
                     store.moveRow(row.id, to: UInt32(min(count - 1, index + 1)))
