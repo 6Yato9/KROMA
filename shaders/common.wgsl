@@ -208,10 +208,39 @@ fn hsv_to_rgb(hsv: vec3<f32>) -> vec3<f32> {
 
 // Cheap hash noise. Not cryptographic and not meant to be — grain only needs
 // to be uncorrelated and stable for a given pixel.
+//
+// Integer, and that is the whole point. The float version this replaces ended
+// in `fract()` of a product, and `fract()` of a product is chaotic in its last
+// bit: backends disagree about whether to fuse the multiply-add that feeds it,
+// so a one-ulp difference did not perturb the result, it replaced it. Grain
+// survived that because it *adds* the hash and a tiny difference stayed tiny.
+// Film damage did not, because it *thresholds* the hash, and a tiny difference
+// decided whether a speck of dirt existed at all. Two machines rendered the
+// same photograph with different dirt on it, and the document could not record
+// which.
+//
+// WGSL's integer arithmetic is exactly defined and wraps, so this is identical
+// on every backend by construction rather than by luck.
+//
+// Bit patterns rather than truncated integers, because callers pass a seed that
+// need not be whole — `hash21(cell + vec2<f32>(dirt_seed, 13.0))` — and
+// `u32(i32(x))` would throw the fraction away and collapse seeds onto each
+// other.
 fn hash21(p: vec2<f32>) -> f32 {
-    var v = fract(p * vec2<f32>(123.34, 456.21));
-    v = v + dot(v, v + 45.32);
-    return fract(v.x * v.y);
+    var h = bitcast<u32>(p.x) * 0x9E3779B9u;
+    h = h ^ (bitcast<u32>(p.y) * 0x85EBCA6Bu);
+    // Without this an all-zero input stays all-zero through every step below,
+    // and cell (0, 0) would score zero on a threshold that means "always".
+    h = h ^ 0xC2B2AE35u;
+    h = h ^ (h >> 16u);
+    h = h * 0x7FEB352Du;
+    h = h ^ (h >> 15u);
+    h = h * 0x846CA68Bu;
+    h = h ^ (h >> 16u);
+    // Twenty-four bits over 2^24 lands exactly in [0, 1), which is the range
+    // the old `fract()` promised. Using all thirty-two would round to 1.0 at
+    // the top, and a noise value of exactly one is a speck nobody asked for.
+    return f32(h >> 8u) * (1.0 / 16777216.0);
 }
 
 // Smooth rolloff approaching 1.0, so a curve pushed into clipping compresses
