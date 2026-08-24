@@ -666,14 +666,15 @@ impl Session {
 
     /// Called every frame. Writes the work in progress once the user has
     /// stopped moving. See [`autosave::Watcher`].
-    pub fn tick(&mut self) {
+    pub fn tick(&mut self) -> Result<(), SessionError> {
         let Some(photo) = self.photo.as_ref() else {
-            return;
+            return Ok(());
         };
         let revision = photo.history.revision();
         if self.watcher.tick(revision, std::time::Instant::now()) {
-            self.write_autosave();
+            self.write_autosave()?;
         }
+        Ok(())
     }
 
     /// Write the work in progress now, throttle or no throttle.
@@ -681,16 +682,23 @@ impl Session {
     /// Called when leaving a photograph, where the throttle is beside the
     /// point: the thing that would have triggered the write is about to stop
     /// being the thing on screen.
-    pub fn write_autosave(&mut self) {
+    pub fn write_autosave(&mut self) -> Result<(), SessionError> {
         let Some(photo) = self.photo.as_ref() else {
-            return;
+            return Ok(());
         };
         let Some(path) = photo.path.as_ref() else {
-            return;
+            // The built-in chart has no file to be the edit *of*, so there is
+            // nothing to keep. Not a failure.
+            return Ok(());
         };
-        autosave::store(&self.support, path, photo.history.document());
+        let result = autosave::store(&self.support, path, photo.history.document());
+        // The watcher is reset either way. It records what has been *attempted*
+        // since the last change, and leaving it un-reset after a failure would
+        // retry the same doomed write on every frame for as long as the
+        // photograph stays open.
         let revision = photo.history.revision();
         self.watcher.reset(revision);
+        result.map_err(|e| SessionError::Write(e.to_string()))
     }
 
     /// The explicit save: a `.peproj` beside the photograph.
@@ -961,7 +969,7 @@ mod tests {
         // hit the pinned row rather than the one this test adds and edits.
         let row = s.add_effect("sharpen").unwrap();
         s.set_float(row, "amount", 1.5).unwrap();
-        s.write_autosave();
+        s.write_autosave().unwrap();
 
         let mut again = Session::new();
         again.set_support_dir(tmp.path().join("support"));
@@ -990,7 +998,7 @@ mod tests {
         // that key can never exist and the assertion below could never pass.
         let row = s.add_effect("sharpen").unwrap();
         s.set_float(row, "amount", 1.5).unwrap();
-        s.write_autosave();
+        s.write_autosave().unwrap();
         s.revert().unwrap();
 
         let mut again = Session::new();

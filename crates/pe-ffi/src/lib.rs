@@ -370,10 +370,7 @@ pub unsafe extern "C" fn pe_session_last_passes(s: *mut PeSession) -> i64 {
 /// `s` must be valid or null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pe_session_tick(s: *mut PeSession) -> i32 {
-    status(s, |s| {
-        s.tick();
-        Ok(())
-    })
+    status(s, |s| s.tick())
 }
 
 // ---- the document ---------------------------------------------------------
@@ -635,10 +632,7 @@ pub unsafe extern "C" fn pe_session_revert(s: *mut PeSession) -> i32 {
 /// `s` must be valid or null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pe_session_flush_autosave(s: *mut PeSession) -> i32 {
-    status(s, |s| {
-        s.write_autosave();
-        Ok(())
-    })
+    status(s, |s| s.write_autosave())
 }
 
 /// # Safety

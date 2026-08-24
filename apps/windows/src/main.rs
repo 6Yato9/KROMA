@@ -344,8 +344,14 @@ impl App {
     fn flush_autosave(&mut self) {
         if let Some(path) = self.path.clone()
             && self.autosave.pending()
+            && let Err(e) = autosave::store(&self.support, &path, self.history.document())
         {
-            autosave::store(&self.support, &path, self.history.document());
+            // Not an interruption — nobody asked for this save, and a dialog
+            // in the way of closing a window is worse than the news it
+            // carries. But the status bar can say it, which is one line more
+            // than the nothing it used to say.
+            self.status
+                .problem(format!("work in progress not saved: {e}"));
         }
     }
 
@@ -1090,8 +1096,10 @@ impl eframe::App for App {
             && self
                 .autosave
                 .tick(self.history.revision(), std::time::Instant::now())
+            && let Err(e) = autosave::store(&self.support, &path, self.history.document())
         {
-            autosave::store(&self.support, &path, self.history.document());
+            self.status
+                .problem(format!("work in progress not saved: {e}"));
         }
         // Kept awake so the write happens even if nothing else is moving. A
         // repaint a second after the last edit is not a cost worth measuring,

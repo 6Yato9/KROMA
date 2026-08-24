@@ -77,25 +77,46 @@ pub fn load(support: &Support, photo: &Path) -> Option<Document> {
     .then_some(entry.document)
 }
 
-pub fn store(support: &Support, photo: &Path, document: &Document) {
+/// Write the work in progress out.
+///
+/// Returns what went wrong rather than swallowing it. This used to discard the
+/// result, on the reasoning that a failed autosave is not worth interrupting
+/// anybody over — which is true, and is an argument about how loudly to say
+/// so, not about whether to find out. It hid a bug that stopped autosave
+/// working entirely on every network volume: silent success and silent failure
+/// look identical from here, and only one of them is acceptable.
+///
+/// A host that does not care can still ignore the result. The difference is
+/// that now it is choosing to.
+pub fn store(support: &Support, photo: &Path, document: &Document) -> Result<(), Error> {
     let Some(path) = path_for(support, photo) else {
-        return;
+        // No support directory means the host has not said where to write, so
+        // writing nothing is the agreed outcome rather than a failure.
+        return Ok(());
     };
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent).map_err(|e| Error::Write(e.to_string()))?;
     }
     let canonical = std::fs::canonicalize(photo).unwrap_or_else(|_| photo.to_path_buf());
     let entry = Entry {
         source: canonical.to_string_lossy().to_string(),
         document: document.clone(),
     };
-    if let Ok(json) = serde_json::to_string(&entry) {
-        // The one that matters most. This is rewritten every time the user
-        // stops moving, it is the only copy of work nobody asked to save, and
-        // `load` treats an unparseable file as nothing saved at all — so a torn
-        // write here loses the lot, silently.
-        let _ = pe_io::write_bytes_atomically(path, json.as_bytes());
-    }
+    let json = serde_json::to_string(&entry).map_err(|e| Error::Encode(e.to_string()))?;
+    // The one that matters most. This is rewritten every time the user stops
+    // moving, it is the only copy of work nobody asked to save, and `load`
+    // treats an unparseable file as nothing saved at all — so a torn write here
+    // loses the lot.
+    pe_io::write_bytes_atomically(path, json.as_bytes()).map_err(|e| Error::Write(e.to_string()))
+}
+
+/// Why the work in progress could not be written.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("could not write the autosave: {0}")]
+    Write(String),
+    #[error("could not encode the autosave: {0}")]
+    Encode(String),
 }
 
 /// Throw the saved work away.
@@ -195,7 +216,8 @@ mod tests {
         let photo = tmp.path().join("a.jpg");
         std::fs::write(&photo, b"not really a jpeg").unwrap();
 
-        store(&support, &photo, &doc_with_note("in progress"));
+        store(&support, &photo, &doc_with_note("in progress"))
+            .expect("the temporary directory is writable");
         let back = load(&support, &photo).expect("stored, so it loads");
         assert_eq!(back.metadata.note.as_deref(), Some("in progress"));
     }
@@ -208,7 +230,8 @@ mod tests {
         let photo = tmp.path().join("a.jpg");
         std::fs::write(&photo, b"x").unwrap();
 
-        store(&Support::default(), &photo, &doc_with_note("lost"));
+        store(&Support::default(), &photo, &doc_with_note("lost"))
+            .expect("a store with nowhere to go is not a failure");
         assert!(load(&Support::default(), &photo).is_none());
         // And nothing appeared beside the photograph either.
         let beside: Vec<_> = std::fs::read_dir(tmp.path()).unwrap().collect();
@@ -226,7 +249,8 @@ mod tests {
         std::fs::write(&a, b"x").unwrap();
         std::fs::write(&b, b"y").unwrap();
 
-        store(&support, &a, &doc_with_note("belongs to a"));
+        store(&support, &a, &doc_with_note("belongs to a"))
+            .expect("the temporary directory is writable");
         assert!(load(&support, &b).is_none());
     }
 
@@ -237,7 +261,8 @@ mod tests {
         let photo = tmp.path().join("a.jpg");
         std::fs::write(&photo, b"x").unwrap();
 
-        store(&support, &photo, &doc_with_note("temporary"));
+        store(&support, &photo, &doc_with_note("temporary"))
+            .expect("the temporary directory is writable");
         forget(&support, &photo);
         assert!(load(&support, &photo).is_none());
     }
