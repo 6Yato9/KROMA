@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use pe_core::{Document, History, RowIdGenerator};
+use pe_session::{Support, autosave};
 
 /// Long edge of a filmstrip thumbnail, in pixels.
 ///
@@ -75,10 +76,14 @@ pub struct Library {
     current: usize,
     jobs: Sender<(usize, PathBuf)>,
     done: Receiver<Decoded>,
+    /// Where the autosave store for these photographs' edits lives. Given by
+    /// the shell at construction rather than guessed, same as everywhere else
+    /// `Support` appears.
+    support: Support,
 }
 
 impl Library {
-    pub fn new(paths: Vec<PathBuf>) -> Self {
+    pub fn new(paths: Vec<PathBuf>, support: Support) -> Self {
         let (jobs, rx) = channel::<(usize, PathBuf)>();
         let (tx, done) = channel::<Decoded>();
 
@@ -117,6 +122,7 @@ impl Library {
             current: 0,
             jobs,
             done,
+            support,
         }
     }
 
@@ -288,6 +294,7 @@ impl Library {
     /// nothing to park: the edit in hand belonged to a photograph that has
     /// just been taken out of the set.
     pub fn take_current(&mut self, declared: Option<&'static str>) -> (History, RowIdGenerator) {
+        let support = self.support.clone();
         let Some(entry) = self.entries.get_mut(self.current) else {
             return (
                 History::new(Document::from_path(String::new())),
@@ -300,8 +307,8 @@ impl Library {
                 // Never opened. An edit saved beside it is worth honouring —
                 // that is the whole point of writing one — and a fresh
                 // document otherwise.
-                let doc =
-                    load_edit(&entry.path).unwrap_or_else(|| fresh_document(&entry.path, declared));
+                let doc = load_edit(&support, &entry.path)
+                    .unwrap_or_else(|| fresh_document(&entry.path, declared));
                 let ids = RowIdGenerator::resuming(&doc);
                 (History::new(doc), ids)
             }
@@ -327,6 +334,7 @@ impl Library {
     /// meant; the grade travels, the framing does not.
     pub fn paste_stack_to_all(&mut self, stack: &pe_core::Stack) -> usize {
         let current = self.current;
+        let support = self.support.clone();
         let mut n = 0;
         for (i, entry) in self.entries.iter_mut().enumerate() {
             if i == current {
@@ -339,8 +347,8 @@ impl Library {
                 // Which is precisely what the paragraph above promises not to
                 // do — and the promise held or not depending on whether you
                 // happened to have visited the photograph.
-                let doc =
-                    load_edit(&entry.path).unwrap_or_else(|| fresh_document(&entry.path, None));
+                let doc = load_edit(&support, &entry.path)
+                    .unwrap_or_else(|| fresh_document(&entry.path, None));
                 let ids = RowIdGenerator::resuming(&doc);
                 (History::new(doc), ids)
             });
@@ -384,8 +392,8 @@ pub fn fresh_document(path: &Path, declared: Option<&'static str>) -> pe_core::D
     doc
 }
 
-pub fn load_edit(path: &Path) -> Option<pe_core::Document> {
-    if let Some(doc) = crate::autosave::load(path) {
+pub fn load_edit(support: &Support, path: &Path) -> Option<pe_core::Document> {
+    if let Some(doc) = autosave::load(support, path) {
         return Some(doc);
     }
     load_sidecar(path)
@@ -411,11 +419,14 @@ mod tests {
     /// lookup that makes that safe, and the case it has to survive.
     #[test]
     fn a_photograph_keeps_its_identity_when_the_set_shifts() {
-        let mut lib = Library::new(vec![
-            PathBuf::from("a.jpg"),
-            PathBuf::from("b.jpg"),
-            PathBuf::from("c.jpg"),
-        ]);
+        let mut lib = Library::new(
+            vec![
+                PathBuf::from("a.jpg"),
+                PathBuf::from("b.jpg"),
+                PathBuf::from("c.jpg"),
+            ],
+            Support::default(),
+        );
         let c = PathBuf::from("c.jpg");
         assert_eq!(lib.index_of(&c), Some(2));
 
@@ -436,10 +447,13 @@ mod tests {
 
     #[test]
     fn switching_does_not_carry_a_grade_to_the_next_photograph() {
-        let mut library = Library::new(vec![
-            PathBuf::from("Z:/none/a.jpg"),
-            PathBuf::from("Z:/none/b.jpg"),
-        ]);
+        let mut library = Library::new(
+            vec![
+                PathBuf::from("Z:/none/a.jpg"),
+                PathBuf::from("Z:/none/b.jpg"),
+            ],
+            Support::default(),
+        );
         let (mut history, ids) = library.take_current(None);
         let id = history
             .document()
@@ -467,10 +481,13 @@ mod tests {
     /// promise — parking is not discarding.
     #[test]
     fn switching_back_returns_the_edit_that_was_parked() {
-        let mut library = Library::new(vec![
-            PathBuf::from("Z:/none/a.jpg"),
-            PathBuf::from("Z:/none/b.jpg"),
-        ]);
+        let mut library = Library::new(
+            vec![
+                PathBuf::from("Z:/none/a.jpg"),
+                PathBuf::from("Z:/none/b.jpg"),
+            ],
+            Support::default(),
+        );
         let (mut history, ids) = library.take_current(None);
         let id = history
             .document()
@@ -497,7 +514,10 @@ mod tests {
     use super::*;
 
     fn library(names: &[&str]) -> Library {
-        Library::new(names.iter().map(PathBuf::from).collect())
+        Library::new(
+            names.iter().map(PathBuf::from).collect(),
+            Support::default(),
+        )
     }
 
     #[test]
@@ -589,9 +609,15 @@ mod tests {
         saved.geometry.size = [0.4, 0.4];
         std::fs::write(&sidecar, saved.to_json().unwrap()).unwrap();
         // Nothing in the autosave store for it, so the sidecar is what is read.
-        crate::autosave::forget(&photo);
+        // Guaranteed by the `Support::default()` the library below is built
+        // with, which has nowhere to read from — this used to be arranged by
+        // deleting the entry out of the developer's own autosave directory,
+        // which is not a thing a test should be reaching into.
 
-        let mut lib = Library::new(vec![PathBuf::from("in-hand.jpg"), photo.clone()]);
+        let mut lib = Library::new(
+            vec![PathBuf::from("in-hand.jpg"), photo.clone()],
+            Support::default(),
+        );
         let mut stack = pe_core::Stack::default();
         stack.push(pe_core::StackRow::new(pe_core::RowId(7), "grain"));
         assert_eq!(lib.paste_stack_to_all(&stack), 1);

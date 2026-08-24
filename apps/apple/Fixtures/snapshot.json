@@ -1,0 +1,1067 @@
+{
+  "version": 3,
+  "is_open": true,
+  "width": 64,
+  "height": 64,
+  "rows": [
+    {
+      "id": 0,
+      "effect": "white_balance",
+      "enabled": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "pinned": true,
+      "params": {
+        "temperature": {
+          "t": "float",
+          "v": 6500.0
+        },
+        "tint": {
+          "t": "float",
+          "v": 0.0
+        }
+      }
+    },
+    {
+      "id": 1,
+      "effect": "exposure",
+      "enabled": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "pinned": true,
+      "params": {
+        "ev": {
+          "t": "float",
+          "v": 0.0
+        }
+      }
+    },
+    {
+      "id": 2,
+      "effect": "contrast",
+      "enabled": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "pinned": true,
+      "params": {
+        "contrast": {
+          "t": "float",
+          "v": 0.0
+        },
+        "pivot": {
+          "t": "float",
+          "v": 0.41350001096725464
+        }
+      }
+    },
+    {
+      "id": 3,
+      "effect": "tone",
+      "enabled": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "pinned": true,
+      "params": {
+        "blacks": {
+          "t": "float",
+          "v": 0.0
+        },
+        "highlights": {
+          "t": "float",
+          "v": 0.0
+        },
+        "shadows": {
+          "t": "float",
+          "v": 0.0
+        },
+        "whites": {
+          "t": "float",
+          "v": 0.0
+        }
+      }
+    },
+    {
+      "id": 4,
+      "effect": "presence",
+      "enabled": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "pinned": true,
+      "params": {
+        "clarity": {
+          "t": "float",
+          "v": 0.0
+        },
+        "texture": {
+          "t": "float",
+          "v": 0.0
+        }
+      }
+    },
+    {
+      "id": 5,
+      "effect": "colour",
+      "enabled": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "pinned": true,
+      "params": {
+        "hue": {
+          "t": "float",
+          "v": 0.0
+        },
+        "lum_mix": {
+          "t": "float",
+          "v": 1.0
+        },
+        "saturation": {
+          "t": "float",
+          "v": 0.0
+        },
+        "vibrance": {
+          "t": "float",
+          "v": 0.0
+        }
+      }
+    },
+    {
+      "id": 6,
+      "effect": "colour_mixer",
+      "enabled": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "pinned": true,
+      "params": {
+        "aqua_hue": {
+          "t": "float",
+          "v": 0.0
+        },
+        "aqua_luminance": {
+          "t": "float",
+          "v": 0.0
+        },
+        "aqua_saturation": {
+          "t": "float",
+          "v": 0.0
+        },
+        "blue_hue": {
+          "t": "float",
+          "v": 0.0
+        },
+        "blue_luminance": {
+          "t": "float",
+          "v": 0.0
+        },
+        "blue_saturation": {
+          "t": "float",
+          "v": 0.0
+        },
+        "green_hue": {
+          "t": "float",
+          "v": 0.0
+        },
+        "green_luminance": {
+          "t": "float",
+          "v": 0.0
+        },
+        "green_saturation": {
+          "t": "float",
+          "v": 0.0
+        },
+        "magenta_hue": {
+          "t": "float",
+          "v": 0.0
+        },
+        "magenta_luminance": {
+          "t": "float",
+          "v": 0.0
+        },
+        "magenta_saturation": {
+          "t": "float",
+          "v": 0.0
+        },
+        "orange_hue": {
+          "t": "float",
+          "v": 0.0
+        },
+        "orange_luminance": {
+          "t": "float",
+          "v": 0.0
+        },
+        "orange_saturation": {
+          "t": "float",
+          "v": 0.0
+        },
+        "purple_hue": {
+          "t": "float",
+          "v": 0.0
+        },
+        "purple_luminance": {
+          "t": "float",
+          "v": 0.0
+        },
+        "purple_saturation": {
+          "t": "float",
+          "v": 0.0
+        },
+        "red_hue": {
+          "t": "float",
+          "v": 0.0
+        },
+        "red_luminance": {
+          "t": "float",
+          "v": 0.0
+        },
+        "red_saturation": {
+          "t": "float",
+          "v": 0.0
+        },
+        "yellow_hue": {
+          "t": "float",
+          "v": 0.0
+        },
+        "yellow_luminance": {
+          "t": "float",
+          "v": 0.0
+        },
+        "yellow_saturation": {
+          "t": "float",
+          "v": 0.0
+        }
+      }
+    },
+    {
+      "id": 7,
+      "effect": "curves",
+      "enabled": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "pinned": true,
+      "params": {
+        "blue": {
+          "t": "curve",
+          "v": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              1.0,
+              1.0
+            ]
+          ]
+        },
+        "blue_intensity": {
+          "t": "float",
+          "v": 100.0
+        },
+        "green": {
+          "t": "curve",
+          "v": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              1.0,
+              1.0
+            ]
+          ]
+        },
+        "green_intensity": {
+          "t": "float",
+          "v": 100.0
+        },
+        "hue_vs_hue": {
+          "t": "curve",
+          "v": [
+            [
+              0.0,
+              0.5
+            ],
+            [
+              1.0,
+              0.5
+            ]
+          ]
+        },
+        "hue_vs_lum": {
+          "t": "curve",
+          "v": [
+            [
+              0.0,
+              0.5
+            ],
+            [
+              1.0,
+              0.5
+            ]
+          ]
+        },
+        "hue_vs_sat": {
+          "t": "curve",
+          "v": [
+            [
+              0.0,
+              0.5
+            ],
+            [
+              1.0,
+              0.5
+            ]
+          ]
+        },
+        "lum_vs_sat": {
+          "t": "curve",
+          "v": [
+            [
+              0.0,
+              0.5
+            ],
+            [
+              1.0,
+              0.5
+            ]
+          ]
+        },
+        "luma": {
+          "t": "curve",
+          "v": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              1.0,
+              1.0
+            ]
+          ]
+        },
+        "luma_intensity": {
+          "t": "float",
+          "v": 100.0
+        },
+        "param_darks": {
+          "t": "float",
+          "v": 0.0
+        },
+        "param_highlights": {
+          "t": "float",
+          "v": 0.0
+        },
+        "param_lights": {
+          "t": "float",
+          "v": 0.0
+        },
+        "param_shadows": {
+          "t": "float",
+          "v": 0.0
+        },
+        "red": {
+          "t": "curve",
+          "v": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              1.0,
+              1.0
+            ]
+          ]
+        },
+        "red_intensity": {
+          "t": "float",
+          "v": 100.0
+        },
+        "sat_vs_lum": {
+          "t": "curve",
+          "v": [
+            [
+              0.0,
+              0.5
+            ],
+            [
+              1.0,
+              0.5
+            ]
+          ]
+        },
+        "sat_vs_sat": {
+          "t": "curve",
+          "v": [
+            [
+              0.0,
+              0.5
+            ],
+            [
+              1.0,
+              0.5
+            ]
+          ]
+        },
+        "soft_clip_high": {
+          "t": "float",
+          "v": 0.0
+        },
+        "soft_clip_high_soft": {
+          "t": "float",
+          "v": 0.0
+        },
+        "soft_clip_low": {
+          "t": "float",
+          "v": 0.0
+        },
+        "soft_clip_low_soft": {
+          "t": "float",
+          "v": 0.0
+        },
+        "split_high": {
+          "t": "float",
+          "v": 0.75
+        },
+        "split_low": {
+          "t": "float",
+          "v": 0.25
+        },
+        "split_mid": {
+          "t": "float",
+          "v": 0.5
+        }
+      }
+    },
+    {
+      "id": 8,
+      "effect": "colour_warper",
+      "enabled": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "pinned": true,
+      "params": {
+        "axis_angle": {
+          "t": "float",
+          "v": 0.0
+        },
+        "chroma_divisions": {
+          "t": "choice",
+          "v": "6"
+        },
+        "chroma_luma_1": {
+          "t": "warp",
+          "v": {
+            "cols": 6,
+            "offsets": [
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ]
+            ],
+            "rows": 6
+          }
+        },
+        "chroma_luma_2": {
+          "t": "warp",
+          "v": {
+            "cols": 6,
+            "offsets": [
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ]
+            ],
+            "rows": 6
+          }
+        },
+        "hue_divisions": {
+          "t": "choice",
+          "v": "6"
+        },
+        "hue_sat": {
+          "t": "warp",
+          "v": {
+            "cols": 6,
+            "offsets": [
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ]
+            ],
+            "rows": 6
+          }
+        },
+        "luma_divisions": {
+          "t": "choice",
+          "v": "6"
+        },
+        "pins": {
+          "t": "pins",
+          "v": []
+        },
+        "sat_divisions": {
+          "t": "choice",
+          "v": "6"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "effect": "primaries",
+      "enabled": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "pinned": true,
+      "params": {
+        "gain": {
+          "t": "wheel",
+          "v": {
+            "master": 1.0,
+            "rgb": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        "gamma": {
+          "t": "wheel",
+          "v": {
+            "master": 0.0,
+            "rgb": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "lift": {
+          "t": "wheel",
+          "v": {
+            "master": 0.0,
+            "rgb": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "offset": {
+          "t": "wheel",
+          "v": {
+            "master": 25.0,
+            "rgb": [
+              25.0,
+              25.0,
+              25.0
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 10,
+      "effect": "log_wheels",
+      "enabled": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "pinned": true,
+      "params": {
+        "high_range": {
+          "t": "float",
+          "v": 0.550000011920929
+        },
+        "highlight": {
+          "t": "wheel",
+          "v": {
+            "master": 0.0,
+            "rgb": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "low_range": {
+          "t": "float",
+          "v": 0.3330000042915344
+        },
+        "midtone": {
+          "t": "wheel",
+          "v": {
+            "master": 0.0,
+            "rgb": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "offset": {
+          "t": "wheel",
+          "v": {
+            "master": 25.0,
+            "rgb": [
+              25.0,
+              25.0,
+              25.0
+            ]
+          }
+        },
+        "shadow": {
+          "t": "wheel",
+          "v": {
+            "master": 0.0,
+            "rgb": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 11,
+      "effect": "exposure",
+      "enabled": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "pinned": false,
+      "params": {
+        "ev": {
+          "t": "float",
+          "v": 0.75
+        }
+      }
+    }
+  ],
+  "color": {
+    "input": "sRGB",
+    "output": "sRGB"
+  },
+  "passes": 0,
+  "can_undo": true,
+  "can_redo": false,
+  "undo_label": "Exposure",
+  "export_format": "jpeg",
+  "export_quality": 95
+}

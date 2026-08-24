@@ -1,0 +1,139 @@
+import Foundation
+
+/// Everything a shell needs to draw itself, in one document.
+///
+/// Derived from the engine, never authored. Mutations go one way in through
+/// typed calls; this comes one way back out. Two directions and one source of
+/// truth, which is what keeps an `@Observable` view model idiomatic without it
+/// becoming a second implementation of the document.
+public struct Snapshot: Decodable, Sendable {
+    /// Bumped by every mutation. Compare before decoding anything.
+    public let version: UInt64
+    public let isOpen: Bool
+    public let path: String?
+    /// File name alone, for the title bar.
+    public let name: String?
+    public let width: UInt32
+    public let height: UInt32
+    public let rows: [Row]
+    public let colour: Colour
+    /// Passes the last frame executed. The number that proves the stage cache
+    /// works: with a deep stack, dragging one slider should read 1.
+    public let passes: Int
+    public let canUndo: Bool
+    public let canRedo: Bool
+    public let undoLabel: String?
+    public let redoLabel: String?
+    public let exportFormat: String
+    public let exportQuality: UInt8
+
+    enum CodingKeys: String, CodingKey {
+        case version, path, name, width, height, rows, passes
+        case isOpen = "is_open"
+        case colour = "color"
+        case canUndo = "can_undo"
+        case canRedo = "can_redo"
+        case undoLabel = "undo_label"
+        case redoLabel = "redo_label"
+        case exportFormat = "export_format"
+        case exportQuality = "export_quality"
+    }
+
+    public static let empty = Snapshot(
+        version: 0, isOpen: false, path: nil, name: nil, width: 0, height: 0,
+        rows: [], colour: Colour(input: "", output: ""), passes: 0,
+        canUndo: false, canRedo: false, undoLabel: nil, redoLabel: nil,
+        exportFormat: "jpeg", exportQuality: 95
+    )
+
+    public init(
+        version: UInt64, isOpen: Bool, path: String?, name: String?,
+        width: UInt32, height: UInt32, rows: [Row], colour: Colour, passes: Int,
+        canUndo: Bool, canRedo: Bool, undoLabel: String?, redoLabel: String?,
+        exportFormat: String, exportQuality: UInt8
+    ) {
+        self.version = version
+        self.isOpen = isOpen
+        self.path = path
+        self.name = name
+        self.width = width
+        self.height = height
+        self.rows = rows
+        self.colour = colour
+        self.passes = passes
+        self.canUndo = canUndo
+        self.canRedo = canRedo
+        self.undoLabel = undoLabel
+        self.redoLabel = redoLabel
+        self.exportFormat = exportFormat
+        self.exportQuality = exportQuality
+    }
+
+    public struct Colour: Decodable, Sendable {
+        public let input: String
+        public let output: String
+
+        public init(input: String, output: String) {
+            self.input = input
+            self.output = output
+        }
+    }
+
+    public struct Row: Decodable, Sendable, Identifiable {
+        public let id: UInt64
+        public let effect: String
+        public let enabled: Bool
+        public let opacity: Float
+        public let blend: String
+        /// Fixed panels, which cannot be removed or reordered.
+        public let pinned: Bool
+        public let label: String?
+        public let params: [String: ParamValue]
+    }
+}
+
+/// One parameter's value, in the document's own representation.
+///
+/// Adjacently tagged as `{"t": "float", "v": 0.35}`, which is what
+/// `pe-core`'s `ParamValue` writes. Kinds this slice does not draw — curves,
+/// warps, pin lattices — decode as `.opaque` rather than failing, so a
+/// photograph carrying one still opens.
+public enum ParamValue: Decodable, Sendable, Equatable {
+    case float(Float)
+    case bool(Bool)
+    case choice(String)
+    case rgb([Float])
+    /// Structure this build does not draw. Carries its tag so the inspector
+    /// can say what it is declining to show.
+    case opaque(String)
+
+    enum CodingKeys: String, CodingKey {
+        case t, v
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let tag = try c.decode(String.self, forKey: .t)
+        switch tag {
+        case "float":
+            self = .float(try c.decode(Float.self, forKey: .v))
+        case "int":
+            self = .float(Float(try c.decode(Int.self, forKey: .v)))
+        case "bool":
+            self = .bool(try c.decode(Bool.self, forKey: .v))
+        case "choice":
+            self = .choice(try c.decode(String.self, forKey: .v))
+        case "rgb":
+            self = .rgb(try c.decode([Float].self, forKey: .v))
+        default:
+            self = .opaque(tag)
+        }
+    }
+
+    /// The value as a number, for anything that draws one. Nil when it is not
+    /// a number at all.
+    public var floatValue: Float? {
+        if case let .float(v) = self { return v }
+        return nil
+    }
+}

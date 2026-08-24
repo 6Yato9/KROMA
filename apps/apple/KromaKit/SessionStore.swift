@@ -1,0 +1,193 @@
+import Foundation
+import Observation
+import QuartzCore
+
+/// What the interface reads, and what it calls to change anything.
+///
+/// The flow is one-way in both directions. Swift mutates through typed calls;
+/// the engine's state comes back as an immutable `Snapshot`. Nothing here
+/// authors document state, which is what stops this becoming a second
+/// implementation of the document that has to be kept in step with the first.
+///
+/// Main-actor bound because the engine is single-threaded and the display link
+/// calls into it from the main thread. That is the same arrangement the
+/// Windows shell has, where the frame loop owns everything.
+@MainActor
+@Observable
+public final class SessionStore {
+    public private(set) var snapshot: Snapshot = .empty
+    public let registry: Registry
+    /// The last thing that went wrong, for the status bar. Cleared by the next
+    /// call that succeeds.
+    public private(set) var problem: String?
+
+    @ObservationIgnored private let session: Session
+    /// Set while a drag is in flight. The snapshot is not refreshed until it
+    /// ends: the control holds the in-flight value locally, so the cost per
+    /// frame is one call and one render of one cached stage.
+    @ObservationIgnored private var dragging = false
+
+    public init?() {
+        guard let session = Session() else { return nil }
+        guard let registry = try? Engine.registry() else { return nil }
+        self.session = session
+        self.registry = registry
+    }
+
+    // ---- what the viewer needs ------------------------------------------
+
+    public var needsRender: Bool { session.needsRender }
+    public var lastPasses: Int { session.lastPasses }
+
+    public func attach(layer: CALayer, width: UInt32, height: UInt32) {
+        run { try session.attach(layer: layer, width: width, height: height) }
+    }
+
+    public func resize(width: UInt32, height: UInt32) {
+        run { try session.resize(width: width, height: height) }
+    }
+
+    public func detachLayer() { session.detachLayer() }
+
+    /// Draw, if anything has changed. Called from the display link.
+    public func renderIfNeeded() {
+        // The tick drives the autosave debounce, so it can fail with something
+        // the person needs to know — that their work in progress is not being
+        // written. It goes to the status bar like any other refusal, and does
+        // not stop the frame being drawn.
+        run { try session.tick() }
+        guard session.needsRender else { return }
+        run { try session.render() }
+    }
+
+    // ---- opening ---------------------------------------------------------
+
+    public func setSupportDirectory(_ url: URL) {
+        run { try session.setSupportDirectory(url) }
+    }
+
+    public func openTestChart(width: UInt32 = 1024, height: UInt32 = 768) {
+        run { try session.openTestChart(width: width, height: height) }
+        refresh()
+    }
+
+    public func open(_ url: URL) {
+        flush()
+        run { try session.open(url) }
+        refresh()
+    }
+
+    // ---- editing ---------------------------------------------------------
+
+    @discardableResult
+    public func addEffect(_ key: String) -> UInt64? {
+        var id: UInt64?
+        run { id = try session.addEffect(key) }
+        refresh()
+        return id
+    }
+
+    /// Bracket a drag. Between these two calls the snapshot is left alone.
+    public func beginInteraction(_ label: String) {
+        dragging = true
+        session.beginInteraction(label)
+    }
+
+    public func endInteraction() {
+        session.endInteraction()
+        dragging = false
+        refresh()
+    }
+
+    /// The hot path: one call, no snapshot, no allocation beyond the key.
+    public func setFloat(row: UInt64, key: String, value: Float) {
+        run { try session.setFloat(row: row, key: key, value: value) }
+        if !dragging { refresh() }
+    }
+
+    public func setBool(row: UInt64, key: String, value: Bool) {
+        run { try session.setBool(row: row, key: key, value: value) }
+        refresh()
+    }
+
+    public func setChoice(row: UInt64, key: String, value: String) {
+        run { try session.setChoice(row: row, key: key, value: value) }
+        refresh()
+    }
+
+    public func setRowEnabled(_ row: UInt64, _ on: Bool) {
+        run { try session.setRowEnabled(row, on) }
+        refresh()
+    }
+
+    // ---- history ---------------------------------------------------------
+
+    public var canUndo: Bool { snapshot.canUndo }
+    public var canRedo: Bool { snapshot.canRedo }
+
+    public func undo() {
+        run { _ = try session.undo() }
+        refresh()
+    }
+
+    public func redo() {
+        run { _ = try session.redo() }
+        refresh()
+    }
+
+    // ---- persistence and export ------------------------------------------
+
+    public func revert() {
+        run { try session.revert() }
+        refresh()
+    }
+
+    @discardableResult
+    public func export() -> URL? {
+        var out: URL?
+        run { out = try session.export() }
+        refresh()
+        return out
+    }
+
+    public func setExport(format: String, quality: UInt8) {
+        run { try session.setExport(format: format, quality: quality) }
+        refresh()
+    }
+
+    /// Write the work in progress now. Called when leaving a photograph and
+    /// when the window closes.
+    public func flush() {
+        run { try session.flushAutosave() }
+    }
+
+    // ---- the mechanism ----------------------------------------------------
+
+    /// Pull the engine's state across, but only when it has actually moved.
+    ///
+    /// The version is one integer; the snapshot is a document. Comparing the
+    /// former before decoding the latter is what makes mirroring cheap enough
+    /// to do after every structural edit.
+    private func refresh() {
+        guard session.snapshotVersion != snapshot.version else { return }
+        do {
+            snapshot = try session.snapshot()
+        } catch {
+            problem = String(describing: error)
+        }
+    }
+
+    /// Run an engine call, keeping whatever it said if it refused.
+    ///
+    /// A refusal is not an exception here — "that export would land on one of
+    /// your photographs" is the application working. It belongs in the status
+    /// bar, not in a crash.
+    private func run(_ body: () throws -> Void) {
+        do {
+            try body()
+            problem = nil
+        } catch {
+            problem = String(describing: error)
+        }
+    }
+}

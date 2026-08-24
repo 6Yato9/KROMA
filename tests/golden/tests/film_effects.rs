@@ -11,6 +11,26 @@ use pe_render::{EffectRenderer, GpuContext};
 
 const TOLERANCE: u8 = 2;
 
+/// Dehaze against its committed reference, which is a different measurement
+/// from the others in this file.
+///
+/// The rest compare a render against the source or against the CPU oracle on
+/// the same machine, where the only variable is this pipeline's own precision.
+/// This one compares against an image generated on another machine, so it also
+/// carries whatever the two backends' `f32` arithmetic disagree about — and a
+/// hazy frame is the worst case for carrying it, because haze fills the picture
+/// with near-white colours whose small channel is exactly where the inverse
+/// gamut matrix cancels. A one-ulp difference before the half-float write
+/// arrives as ten levels after it; simulating the quantisation in `f64` on a
+/// pixel of `[1, 255, 200]` reproduces −10.08 levels from arithmetic that is
+/// otherwise exact.
+///
+/// So this bound is not the pipeline's precision, it is the price of comparing
+/// an ill-conditioned image across two implementations. It is still worth
+/// having: a dehaze that stopped working moves the frame by tens of levels, not
+/// by twelve. See docs/color-pipeline.md.
+const DEHAZE_TOLERANCE: u8 = 12;
+
 fn render(gpu: &GpuContext, src: &DecodedImage, doc: &Document) -> DecodedImage {
     let renderer = EffectRenderer::new(&gpu.device);
     let pixels = pe_render::render_full(gpu, &renderer, src.width, src.height, &src.pixels, doc)
@@ -754,5 +774,5 @@ fn dehaze_reference() {
             ],
         ),
     );
-    pe_golden::assert_matches("dehaze_recovered", &out, TOLERANCE);
+    pe_golden::assert_matches("dehaze_recovered", &out, DEHAZE_TOLERANCE);
 }

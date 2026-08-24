@@ -227,6 +227,57 @@ pub fn thumbnail(img: &DecodedImage, long_edge: u32) -> DecodedImage {
 /// work nobody asked to save — a torn write there is not a corrupt file, it is
 /// an afternoon. It matters again for an export, where the truncation lands on
 /// top of a good JPEG from the last run.
+/// Push the file at the disc as hard as the filesystem will allow.
+///
+/// `File::sync_all` is `fcntl(F_FULLFSYNC)` on Apple platforms, which asks the
+/// drive to empty its own write cache — a stronger promise than POSIX makes,
+/// and the reason a Mac survives a power cut better than the standard requires.
+///
+/// SMB does not implement it. Neither does `sync_data`, which maps to the same
+/// call, so the obvious fallback is not one. What a network share does offer is
+/// `fsync(2)`, which is exactly what `sync_all` means on every other platform.
+///
+/// Taking that when the strong form is refused is a weaker durability promise
+/// than a local disc gets. The alternative is refusing to write at all on a
+/// network volume, and a great many photograph libraries live on one — this
+/// failed silently for every Mac user with a NAS, which is worse than a
+/// guarantee that degrades to what the filesystem can actually keep.
+fn flush(file: &std::fs::File) -> std::io::Result<()> {
+    match file.sync_all() {
+        // ENOTSUP. Not `libc::ENOTSUP`, because that is the only symbol this
+        // crate would want from libc and the number has been 45 on Darwin for
+        // as long as Darwin has existed.
+        Err(e) if cfg!(target_vendor = "apple") && e.raw_os_error() == Some(45) => {
+            plain_fsync(file)
+        }
+        other => other,
+    }
+}
+
+#[cfg(target_vendor = "apple")]
+fn plain_fsync(file: &std::fs::File) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+
+    // Declared here rather than adding a dependency on `libc` for one symbol
+    // that is in libSystem on every Apple platform and cannot move.
+    unsafe extern "C" {
+        fn fsync(fd: i32) -> i32;
+    }
+
+    if unsafe { fsync(file.as_raw_fd()) } == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(target_vendor = "apple"))]
+fn plain_fsync(file: &std::fs::File) -> std::io::Result<()> {
+    // Everywhere else `sync_all` already is `fsync`, so there is nothing
+    // weaker to fall back to and this is unreachable.
+    file.sync_all()
+}
+
 pub fn write_atomically(
     path: impl AsRef<Path>,
     write: impl FnOnce(&mut std::fs::File) -> Result<(), IoError>,
@@ -250,7 +301,7 @@ pub fn write_atomically(
         // Before the rename, not after. Without this the rename can reach the
         // disc first and a power cut leaves the new name pointing at nothing,
         // which is the one outcome worse than the old file surviving.
-        file.sync_all()?;
+        flush(&file)?;
         Ok(())
     })();
 
@@ -615,6 +666,28 @@ mod tests {
         let path = dir.join(name);
         let _ = std::fs::remove_file(&path);
         path
+    }
+
+    /// A write must work on whatever filesystem the repository is checked out
+    /// on, not only on the one the temporary directory happens to be.
+    ///
+    /// Deliberately not a tempdir. `NSTemporaryDirectory` is on the boot disc
+    /// even when the working copy is on a network share, so a suite that only
+    /// ever writes there cannot see the failure this test exists for: on SMB,
+    /// `sync_all` is refused with ENOTSUP and every write in the application
+    /// failed — silently, because the one caller that mattered discarded the
+    /// error. Autosave did nothing at all for any Mac user with a NAS.
+    ///
+    /// On a local disc this passes without the fallback ever running, which is
+    /// the right outcome there. It costs one file and proves the thing that a
+    /// year of green tests on a laptop would not.
+    #[test]
+    fn a_write_works_on_the_filesystem_the_crate_lives_on() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!(".write-probe.{}.tmp", std::process::id()));
+        write_bytes_atomically(&path, b"durable").expect("could not write beside the crate");
+        assert_eq!(std::fs::read(&path).unwrap(), b"durable");
+        std::fs::remove_file(&path).unwrap();
     }
 
     /// The trap this helper exists to walk into on purpose.
