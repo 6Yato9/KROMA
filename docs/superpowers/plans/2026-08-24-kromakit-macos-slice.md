@@ -957,11 +957,17 @@ Append to `apps/apple/KromaKitTests/EngineTests.swift`, inside the class:
         }
         session.endInteraction()
 
-        // One undo puts the whole drag back, not one frame of it.
+        // One undo puts the whole drag back, not one frame of it — back to
+        // 1.8, which is where `add_effect` seeded it. Not 0: sharpen's amount
+        // *defaults* to 1.8 and is *neutral* at 0, and the two are different
+        // questions. A freshly added Sharpen should sharpen; the neutral is
+        // only where the slider's fill grows from.
         XCTAssertTrue(try session.undo())
         let snapshot = try session.snapshot()
-        let amount = snapshot.rows.first { $0.id == row }?.params["amount"]?.floatValue
-        XCTAssertEqual(amount, 0, "one undo left the drag partly applied")
+        let amount = try XCTUnwrap(
+            snapshot.rows.first { $0.id == row }?.params["amount"]?.floatValue
+        )
+        XCTAssertEqual(amount, 1.8, accuracy: 0.0001, "one undo left the drag partly applied")
 
         // And a second undo removes the row, so the drag really was one step.
         XCTAssertTrue(try session.undo())
