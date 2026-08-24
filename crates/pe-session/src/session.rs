@@ -357,6 +357,21 @@ impl Session {
         self.set_param(id, key, ParamValue::Rgb(value))
     }
 
+    /// A four-way wheel: the three channels and the ring around the outside.
+    ///
+    /// The master travels separately rather than being folded into the
+    /// channels, because resetting only the ring has to stay possible — the
+    /// same reason `pe_core::Wheel` keeps them apart.
+    pub fn set_wheel(
+        &mut self,
+        id: RowId,
+        key: &str,
+        master: f32,
+        rgb: [f32; 3],
+    ) -> Result<(), SessionError> {
+        self.set_param(id, key, ParamValue::Wheel(pe_core::Wheel { rgb, master }))
+    }
+
     /// The effect key of the row, or an error naming the id that was missing.
     fn require_row(&self, id: RowId) -> Result<String, SessionError> {
         self.document()
@@ -932,6 +947,45 @@ mod tests {
         s.set_float(deepest.unwrap(), "ev", 0.5).unwrap();
         s.render_offscreen(256, 256).unwrap();
         assert_eq!(s.last_passes(), 1);
+    }
+
+    #[test]
+    fn a_wheel_keeps_its_master_apart_from_its_channels() {
+        // Four numbers, not three. Folding the ring into the channels would
+        // make "reset just the ring" impossible to express, which is why the
+        // document models them separately and why the setter takes both.
+        let mut s = chart_session();
+        let row = s
+            .document()
+            .unwrap()
+            .stack
+            .iter()
+            .find(|r| r.effect == "primaries")
+            .map(|r| r.id)
+            .expect("primaries is a pinned row");
+
+        s.set_wheel(row, "lift", 0.25, [0.1, 0.2, 0.3]).unwrap();
+
+        let doc = s.document().unwrap();
+        let Some(pe_core::ParamValue::Wheel(w)) = doc
+            .stack
+            .get(row)
+            .and_then(|r| r.params.get("lift"))
+            .cloned()
+        else {
+            panic!("lift is not a wheel");
+        };
+        assert_eq!(w.master, 0.25);
+        assert_eq!(w.rgb, [0.1, 0.2, 0.3]);
+    }
+
+    #[test]
+    fn a_wheel_on_a_parameter_that_is_not_one_is_refused() {
+        let mut s = chart_session();
+        let row = s.add_effect("sharpen").unwrap();
+        // `amount` is a float; sending it a wheel is a bug in the shell, and
+        // silently storing one would give the shader a value no slot reads.
+        assert!(s.set_wheel(row, "not_a_parameter", 0.0, [0.0; 3]).is_err());
     }
 
     #[test]

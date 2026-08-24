@@ -512,6 +512,30 @@ pub unsafe extern "C" fn pe_session_set_rgb(
     status(s, move |s| s.set_rgb(pe_core::RowId(row), &key, [r, g, b]))
 }
 
+/// A four-way colour wheel: three channels and the ring around the outside.
+///
+/// Seven arguments rather than a struct, because rule 1 says only primitives
+/// cross this boundary and a wheel is four floats however it is packaged.
+///
+/// # Safety
+/// `s` and `key` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_set_wheel(
+    s: *mut PeSession,
+    row: u64,
+    key: *const c_char,
+    master: f32,
+    r: f32,
+    g: f32,
+    b: f32,
+) -> i32 {
+    let Some(key) = as_str(key) else { return -1 };
+    let key = key.to_string();
+    status(s, move |s| {
+        s.set_wheel(pe_core::RowId(row), &key, master, [r, g, b])
+    })
+}
+
 // ---- history --------------------------------------------------------------
 
 /// Bracket a drag so it becomes one undo step rather than three hundred.
@@ -862,6 +886,45 @@ mod tests {
         // And a second undo takes the row away, so the drag really was one step.
         assert_eq!(unsafe { pe_session_undo(s) }, 1);
         assert!(!unsafe { pe_session_can_undo(s) });
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn a_wheel_crosses_the_boundary_as_four_numbers() {
+        let s = pe_session_new();
+        unsafe { pe_session_open_test_chart(s, 64, 64) };
+        // primaries is pinned, so a fresh document already has its wheels.
+        let json = unsafe { pe_session_snapshot_json(s) };
+        let text = unsafe { CStr::from_ptr(json) }.to_str().unwrap().to_owned();
+        unsafe { pe_string_free(json) };
+        let snap: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let row = snap["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["effect"] == "primaries")
+            .and_then(|r| r["id"].as_u64())
+            .expect("primaries is a pinned row");
+
+        let key = cstr("lift");
+        assert_eq!(
+            unsafe { pe_session_set_wheel(s, row, key.as_ptr(), 0.25, 0.1, 0.2, 0.3) },
+            0
+        );
+
+        let json = unsafe { pe_session_snapshot_json(s) };
+        let text = unsafe { CStr::from_ptr(json) }.to_str().unwrap().to_owned();
+        unsafe { pe_string_free(json) };
+        let snap: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let lift = snap["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == row)
+            .map(|r| &r["params"]["lift"])
+            .unwrap();
+        assert_eq!(lift["t"], "wheel");
+        assert_eq!(lift["v"]["master"], 0.25);
         unsafe { pe_session_free(s) };
     }
 
