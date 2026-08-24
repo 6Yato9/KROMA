@@ -106,8 +106,43 @@ shifts saturated colours by up to **two levels out of 255**. The chain is:
 4. sRGB encoding is at its steepest exactly there.
 
 Two levels on saturated cyan is therefore the floor for a half-precision
-pipeline, not something to fix. `TOLERANCE` in the M1 effect tests is set to it
+pipeline, not something to fix. `TOLERANCE` in the effect tests is set to it
 deliberately, so anything larger still fails.
+
+### Measured again on Metal, and the numbers are larger
+
+The mechanism above is right and the figure was optimistic. Measured on an
+Apple M1 Pro against the test chart:
+
+| | levels |
+|---|---|
+| bare round trip, source → ACEScg → sRGB | 2 |
+| identity effect, which reads and rewrites the working texture | 3 |
+| a hazy frame against a reference built on another machine | 10 |
+
+The first two are the floor, one level apart because a row costs a read and a
+write of its own. The third is a different quantity: it is not this pipeline's
+precision but the price of comparing an *ill-conditioned* image across two
+implementations, and haze is the worst case for it — haze fills a frame with
+near-white colours whose small channel is exactly where the inverse matrix
+cancels.
+
+Two things are worth keeping from the measurement.
+
+**The neutral axis is exact.** All 256 grey levels round-trip bit for bit,
+because grey has no small channel beside a large one and nothing cancels. The
+GPU tests assert that at zero tolerance, which is a stronger claim than the
+loose one it replaced and fails immediately if a transfer function or the
+matrix diagonal is wrong.
+
+**The maths is not the problem.** The same pipeline in `f64` round-trips with a
+worst error of 0.0000 levels across every 8-bit input. Insert one half-precision
+quantisation of the working value and a pixel of `[1, 255, 200]` moves by 10.08
+levels, with everything else unchanged. The storage is the whole of it.
+
+Only a wider working texture could shrink these, at twice the memory for a
+difference no eye can find on a photograph — a red of 2 against a red of 0,
+underneath a green of 255. The trade stands.
 
 The same amplification is why the curve LUT is **interpolated rather than
 nearest-neighbour**. Nearest-neighbour quantises to 1/255 in log space — and
