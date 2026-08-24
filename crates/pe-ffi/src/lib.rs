@@ -625,6 +625,22 @@ pub unsafe extern "C" fn pe_session_revert(s: *mut PeSession) -> i32 {
     status(s, |s| s.revert())
 }
 
+/// Write the work in progress now, throttle or no throttle.
+///
+/// The tick respects the debounce, which is right sixty times a second and
+/// wrong exactly once: when the photograph is being left, and the thing that
+/// would have triggered the write is about to stop being on screen.
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_flush_autosave(s: *mut PeSession) -> i32 {
+    status(s, |s| {
+        s.write_autosave();
+        Ok(())
+    })
+}
+
 /// # Safety
 /// `s` and `format` must be valid or null. `format` is one of `jpeg`, `png`,
 /// `png16`.

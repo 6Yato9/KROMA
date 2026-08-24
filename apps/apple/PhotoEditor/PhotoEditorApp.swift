@@ -10,6 +10,7 @@ struct PhotoEditorApp: App {
         WindowGroup {
             if let store {
                 ContentView(store: store)
+                    .onDisappear { store.flush() }
             } else {
                 // The engine failed to start, which on a Mac means no Metal
                 // device. Saying so beats an empty window.

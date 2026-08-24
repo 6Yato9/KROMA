@@ -55,4 +55,42 @@ final class SessionStoreTests: XCTestCase {
         let store = try XCTUnwrap(SessionStore())
         XCTAssertEqual(store.registry.effects.count, 30)
     }
+
+    func testWorkInProgressComesBackWhenThePhotographIsReopened() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        // A real file, because the autosave store keys on the photograph's
+        // path and refuses to hand one photograph's edit to another.
+        let photo = tmp.appendingPathComponent("a.png")
+        try Data(base64Encoded: Self.onePixelPNG)!.write(to: photo)
+
+        let support = tmp.appendingPathComponent("support", isDirectory: true)
+
+        let first = try XCTUnwrap(SessionStore())
+        first.setSupportDirectory(support)
+        first.open(photo)
+        XCTAssertTrue(first.snapshot.isOpen, "the fixture did not open: \(first.problem ?? "")")
+        let row = try XCTUnwrap(first.addEffect("sharpen"))
+        first.setFloat(row: row, key: "amount", value: 1.5)
+        first.flush()
+
+        let second = try XCTUnwrap(SessionStore())
+        second.setSupportDirectory(support)
+        second.open(photo)
+        let restored = try XCTUnwrap(
+            second.snapshot.rows
+                .first { $0.effect == "sharpen" }?
+                .params["amount"]?.floatValue,
+            "stopping cost something"
+        )
+        XCTAssertEqual(restored, 1.5, accuracy: 0.0001)
+    }
+
+    /// A 1x1 white PNG, so the test needs no fixture file on disk.
+    static let onePixelPNG = """
+    iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==
+    """
 }

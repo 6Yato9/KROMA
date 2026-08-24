@@ -68,6 +68,7 @@ public final class SessionStore {
     }
 
     public func open(_ url: URL) {
+        flush()
         run { try session.open(url) }
         refresh()
     }
@@ -148,6 +149,12 @@ public final class SessionStore {
     public func setExport(format: String, quality: UInt8) {
         run { try session.setExport(format: format, quality: quality) }
         refresh()
+    }
+
+    /// Write the work in progress now. Called when leaving a photograph and
+    /// when the window closes.
+    public func flush() {
+        run { try session.flushAutosave() }
     }
 
     // ---- the mechanism ----------------------------------------------------

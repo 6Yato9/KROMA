@@ -249,6 +249,15 @@ public final class Session {
         try check(pe_session_revert(handle))
     }
 
+    /// Write the work in progress now, throttle or no throttle.
+    ///
+    /// Called when leaving a photograph or closing the window, where waiting
+    /// for the debounce would mean waiting for something that is about to stop
+    /// happening. The tick will not do: it respects the debounce.
+    public func flushAutosave() throws {
+        try check(pe_session_flush_autosave(handle))
+    }
+
     public func setExport(format: String, quality: UInt8) throws {
         try check(format.withCString {
             pe_session_set_export(handle, $0, quality)
