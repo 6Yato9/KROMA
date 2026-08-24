@@ -51,7 +51,11 @@ public final class SessionStore {
 
     /// Draw, if anything has changed. Called from the display link.
     public func renderIfNeeded() {
-        session.tick()
+        // The tick drives the autosave debounce, so it can fail with something
+        // the person needs to know — that their work in progress is not being
+        // written. It goes to the status bar like any other refusal, and does
+        // not stop the frame being drawn.
+        run { try session.tick() }
         guard session.needsRender else { return }
         run { try session.render() }
     }

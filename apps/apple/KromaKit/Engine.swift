@@ -118,8 +118,12 @@ public final class Session {
     }
 
     /// Drives the autosave debounce. Called from the display link.
-    public func tick() {
-        _ = pe_session_tick(handle)
+    /// Throws, because the tick is what drives the autosave debounce and a
+    /// failed autosave is the one thing here worth hearing about. Discarding it
+    /// is how the same failure stayed invisible on the Windows side for as long
+    /// as it did.
+    public func tick() throws {
+        try check(pe_session_tick(handle))
     }
 
     // ---- the document -----------------------------------------------------
