@@ -107,6 +107,12 @@ public final class Session {
         try check(pe_session_render(handle))
     }
 
+    /// Show this rectangle of the frame. `size` is the fraction of the whole
+    /// picture that is visible, so 1 is fitted and 0.25 is four times in.
+    public func setView(x: Float, y: Float, size: Float) throws {
+        try check(pe_session_set_view(handle, x, y, size))
+    }
+
     public var needsRender: Bool {
         pe_session_needs_render(handle)
     }
@@ -192,6 +198,14 @@ public final class Session {
     public func setRGB(row: UInt64, key: String, _ r: Float, _ g: Float, _ b: Float) throws {
         try check(key.withCString {
             pe_session_set_rgb(handle, row, $0, r, g, b)
+        })
+    }
+
+    public func setWheel(
+        row: UInt64, key: String, master: Float, _ r: Float, _ g: Float, _ b: Float
+    ) throws {
+        try check(key.withCString {
+            pe_session_set_wheel(handle, row, $0, master, r, g, b)
         })
     }
 

@@ -66,4 +66,31 @@ final class SnapshotTests: XCTestCase {
         let decoded = try JSONDecoder().decode([String: ParamValue].self, from: curve)
         XCTAssertEqual(decoded["k"], .opaque("curve"))
     }
+
+    func testAWheelDecodesItsFourComponents() throws {
+        // Resolve's wheels are four-valued: three channels and the luminance
+        // ring around the outside. The master is modelled separately rather
+        // than folded into the channels, so that resetting just the ring stays
+        // possible — the same reason pe-core keeps them apart.
+        let json = Data(#"{"k":{"t":"wheel","v":{"master":1.0,"rgb":[0.25,0.5,0.75]}}}"#.utf8)
+        let values = try JSONDecoder().decode([String: ParamValue].self, from: json)
+        guard case let .wheel(w) = try XCTUnwrap(values["k"]) else {
+            return XCTFail("not a wheel")
+        }
+        XCTAssertEqual(w.master, 1.0, accuracy: 0.0001)
+        XCTAssertEqual(w.rgb[0], 0.25, accuracy: 0.0001)
+        XCTAssertEqual(w.rgb[1], 0.5, accuracy: 0.0001)
+        XCTAssertEqual(w.rgb[2], 0.75, accuracy: 0.0001)
+    }
+
+    func testTheCommittedSnapshotCarriesReadableWheels() throws {
+        // primaries and log_wheels are pinned, so every fresh document has
+        // wheels in it. If they decode as opaque the panels cannot draw.
+        let snap = try JSONDecoder().decode(Snapshot.self, from: fixture("snapshot"))
+        let primaries = try XCTUnwrap(snap.rows.first { $0.effect == "primaries" })
+        guard case let .wheel(gain) = try XCTUnwrap(primaries.params["gain"]) else {
+            return XCTFail("gain is not a wheel")
+        }
+        XCTAssertEqual(gain.master, 1.0, accuracy: 0.0001)
+    }
 }

@@ -103,6 +103,7 @@ public enum ParamValue: Decodable, Sendable, Equatable {
     case bool(Bool)
     case choice(String)
     case rgb([Float])
+    case wheel(WheelValue)
     /// Structure this build does not draw. Carries its tag so the inspector
     /// can say what it is declining to show.
     case opaque(String)
@@ -125,6 +126,8 @@ public enum ParamValue: Decodable, Sendable, Equatable {
             self = .choice(try c.decode(String.self, forKey: .v))
         case "rgb":
             self = .rgb(try c.decode([Float].self, forKey: .v))
+        case "wheel":
+            self = .wheel(try c.decode(WheelValue.self, forKey: .v))
         default:
             self = .opaque(tag)
         }
@@ -135,5 +138,26 @@ public enum ParamValue: Decodable, Sendable, Equatable {
     public var floatValue: Float? {
         if case let .float(v) = self { return v }
         return nil
+    }
+
+    /// The value as a wheel, for the control that draws one.
+    public var wheelValue: WheelValue? {
+        if case let .wheel(w) = self { return w }
+        return nil
+    }
+}
+
+/// A four-way colour wheel's value.
+///
+/// Three channels and a master. `pe-core` keeps the master separate rather than
+/// folding it into the channels so that resetting only the outer ring stays
+/// possible, and the wire shape follows.
+public struct WheelValue: Decodable, Sendable, Equatable {
+    public let rgb: [Float]
+    public let master: Float
+
+    public init(rgb: [Float], master: Float) {
+        self.rgb = rgb
+        self.master = master
     }
 }

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Observation
 import QuartzCore
@@ -49,6 +50,35 @@ public final class SessionStore {
 
     public func detachLayer() { session.detachLayer() }
 
+    // ---- where the viewer is looking -------------------------------------
+
+    /// Where the viewer is looking. Held here rather than in the engine
+    /// because it belongs to the window, not to the photograph.
+    public private(set) var view = ViewState()
+
+    public func zoom(by factor: CGFloat, at viewPoint: CGPoint) {
+        view.zoom(by: factor, at: viewPoint)
+        pushView()
+    }
+
+    public func pan(by delta: CGSize) {
+        view.pan(by: delta)
+        pushView()
+    }
+
+    public func fitView() {
+        view.fit()
+        pushView()
+    }
+
+    private func pushView() {
+        let r = view.region
+        run {
+            try session.setView(
+                x: Float(r.origin.x), y: Float(r.origin.y), size: Float(r.width))
+        }
+    }
+
     /// Draw, if anything has changed. Called from the display link.
     public func renderIfNeeded() {
         // The tick drives the autosave debounce, so it can fail with something
@@ -87,6 +117,31 @@ public final class SessionStore {
         return id
     }
 
+    public func removeRow(_ row: UInt64) {
+        run { try session.removeRow(row) }
+        refresh()
+    }
+
+    public func moveRow(_ row: UInt64, to index: UInt32) {
+        run { try session.moveRow(row, to: index) }
+        refresh()
+    }
+
+    public func setRowOpacity(_ row: UInt64, _ value: Float) {
+        run { try session.setRowOpacity(row, value) }
+        if !dragging { refresh() }
+    }
+
+    /// Whether this row may be taken out of the stack.
+    ///
+    /// The pinned rows are the colour page's fixed panels; a document without
+    /// them is one a fresh document could not be, and an inspector with a hole
+    /// in it. The engine would allow it, which is why the answer lives here
+    /// rather than being assumed.
+    public func canRemove(_ row: Snapshot.Row) -> Bool {
+        !row.pinned
+    }
+
     /// Bracket a drag. Between these two calls the snapshot is left alone.
     public func beginInteraction(_ label: String) {
         dragging = true
@@ -105,6 +160,15 @@ public final class SessionStore {
         if !dragging { refresh() }
     }
 
+    /// The wheel's hot path. Like `setFloat`, it does not refresh the snapshot
+    /// mid-drag — the control holds the in-flight value and draws from that.
+    public func setWheel(
+        row: UInt64, key: String, master: Float, _ r: Float, _ g: Float, _ b: Float
+    ) {
+        run { try session.setWheel(row: row, key: key, master: master, r, g, b) }
+        if !dragging { refresh() }
+    }
+
     public func setBool(row: UInt64, key: String, value: Bool) {
         run { try session.setBool(row: row, key: key, value: value) }
         refresh()
@@ -112,6 +176,11 @@ public final class SessionStore {
 
     public func setChoice(row: UInt64, key: String, value: String) {
         run { try session.setChoice(row: row, key: key, value: value) }
+        refresh()
+    }
+
+    public func setRGB(row: UInt64, key: String, _ r: Float, _ g: Float, _ b: Float) {
+        run { try session.setRGB(row: row, key: key, r, g, b) }
         refresh()
     }
 

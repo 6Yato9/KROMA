@@ -76,6 +76,10 @@ struct Gpu {
     working: Option<ImageTexture>,
     working_size: (u32, u32),
     working_geometry: Option<Geometry>,
+    /// The rectangle of the frame the working texture was built for. A texture
+    /// built for one rectangle is the wrong picture for another, so this sits
+    /// in the rebuild guard beside the size and the geometry.
+    working_region: Option<Region>,
     last_passes: usize,
 }
 
@@ -92,6 +96,10 @@ pub struct Session {
     /// screen is in here too. A batch writes into one folder and the name it
     /// builds for photo A can collide with photo B sitting right beside it.
     open_set: Vec<PathBuf>,
+    /// Which rectangle of the frame the viewer is showing. A property of the
+    /// window rather than of the document: two windows on one photograph would
+    /// disagree about it and both be right.
+    view: Region,
     watcher: autosave::Watcher,
     /// Bumped by every mutation, so a shell can ask "is this still what I last
     /// saw?" with one integer instead of a JSON parse.
@@ -117,6 +125,7 @@ impl Session {
             support: Support::default(),
             export_settings: export::Export::default(),
             open_set: Vec::new(),
+            view: Region::FULL,
             watcher: autosave::Watcher::new(),
             snapshot_version: 0,
             interaction: None,
@@ -228,6 +237,7 @@ impl Session {
         self.gpu.working = None;
         self.gpu.working_size = (0, 0);
         self.gpu.working_geometry = None;
+        self.gpu.working_region = None;
         if let Some(r) = self.gpu.renderer.as_mut() {
             r.invalidate();
         }
@@ -357,6 +367,21 @@ impl Session {
         self.set_param(id, key, ParamValue::Rgb(value))
     }
 
+    /// A four-way wheel: the three channels and the ring around the outside.
+    ///
+    /// The master travels separately rather than being folded into the
+    /// channels, because resetting only the ring has to stay possible — the
+    /// same reason `pe_core::Wheel` keeps them apart.
+    pub fn set_wheel(
+        &mut self,
+        id: RowId,
+        key: &str,
+        master: f32,
+        rgb: [f32; 3],
+    ) -> Result<(), SessionError> {
+        self.set_param(id, key, ParamValue::Wheel(pe_core::Wheel { rgb, master }))
+    }
+
     /// The effect key of the row, or an error naming the id that was missing.
     fn require_row(&self, id: RowId) -> Result<String, SessionError> {
         self.document()
@@ -404,13 +429,43 @@ impl Session {
         Ok(self.gpu.context.as_ref().expect("built above"))
     }
 
+    /// Show this rectangle of the frame, in frame coordinates.
+    ///
+    /// The working texture is built for a particular rectangle, so moving it
+    /// invalidates that texture and every cached stage that reads it — which
+    /// the stage cache already knows, because `Region` is part of its key.
+    pub fn set_view(&mut self, x: f32, y: f32, size: f32) {
+        let size = size.clamp(1.0 / 32.0, 1.0);
+        let region = Region {
+            offset: [x.clamp(0.0, 1.0 - size), y.clamp(0.0, 1.0 - size)],
+            size: [size, size],
+        };
+        if region != self.view {
+            self.view = region;
+            self.gpu.working_size = (0, 0);
+            self.gpu.working_region = None;
+            self.needs_render = true;
+        }
+    }
+
+    /// The visible rectangle, as the shell gave it: x, y and size in frame
+    /// coordinates.
+    pub fn view_region(&self) -> (f32, f32, f32) {
+        (self.view.offset[0], self.view.offset[1], self.view.size[0])
+    }
+
     /// Run the stack, returning a view of the graded frame in the working space.
     ///
     /// A view rather than the texture: `EffectRenderer::render` hands back a
     /// reference borrowed from the renderer, which cannot escape a method that
     /// also writes to `self`. A `TextureView` is a cheap clone of a handle and
     /// is all any consumer of a rendered frame wants.
-    fn graded(&mut self, width: u32, height: u32) -> Result<wgpu::TextureView, SessionError> {
+    fn graded(
+        &mut self,
+        width: u32,
+        height: u32,
+        region: Region,
+    ) -> Result<wgpu::TextureView, SessionError> {
         self.context()?;
         let gpu = self.gpu.context.as_ref().expect("context built above");
         let photo = self.photo.as_ref().ok_or(SessionError::NothingOpen)?;
@@ -440,9 +495,12 @@ impl Session {
         // size and geometry — throws away every cached row with it. That is
         // the whole of `last_passes` reading 1 rather than the stack depth.
         let geometry = doc.geometry;
-        if self.gpu.working_size != (width, height) || self.gpu.working_geometry != Some(geometry) {
+        if self.gpu.working_size != (width, height)
+            || self.gpu.working_geometry != Some(geometry)
+            || self.gpu.working_region != Some(region)
+        {
             let sampling =
-                Sampling::of(&geometry, photo.image.width, photo.image.height).within(Region::FULL);
+                Sampling::of(&geometry, photo.image.width, photo.image.height).within(region);
             let source = self.gpu.source.as_ref().expect("uploaded above");
             self.gpu.working = Some(
                 self.gpu
@@ -460,11 +518,12 @@ impl Session {
             );
             self.gpu.working_size = (width, height);
             self.gpu.working_geometry = Some(geometry);
+            self.gpu.working_region = Some(region);
         }
 
         let working = self.gpu.working.as_ref().expect("built above");
         let renderer = self.gpu.renderer.as_mut().expect("built above");
-        renderer.set_region(Region::FULL);
+        renderer.set_region(region);
         let graded = renderer.render(gpu, working, doc, 1);
         let view = graded.view.clone();
         self.gpu.last_passes = renderer.last_pass_count();
@@ -477,7 +536,10 @@ impl Session {
     /// route writes to the attached layer and never stalls the GPU reading
     /// anything back.
     pub fn render_offscreen(&mut self, width: u32, height: u32) -> Result<Vec<u8>, SessionError> {
-        let graded_view = self.graded(width, height)?;
+        // Never `self.view`: an export is the photograph, not what happens to
+        // be on screen. Passing the viewer's rectangle here would write out a
+        // crop of the file that nobody asked for.
+        let graded_view = self.graded(width, height, Region::FULL)?;
         let gpu = self.gpu.context.as_ref().expect("built by graded");
         let output = self
             .photo
@@ -573,6 +635,7 @@ impl Session {
             // The working texture was built for the old size, and so was every
             // cached stage that reads it.
             self.gpu.working_size = (0, 0);
+            self.gpu.working_region = None;
             self.needs_render = true;
         }
     }
@@ -607,7 +670,7 @@ impl Session {
             return Ok(());
         }
 
-        let graded_view = self.graded(width, height)?;
+        let graded_view = self.graded(width, height, self.view)?;
         let output = self
             .photo
             .as_ref()
@@ -733,6 +796,7 @@ impl Session {
         photo.ids = RowIdGenerator::resuming(&doc);
         photo.history.edit("Load edit", None, move |d| *d = doc);
         self.gpu.working_geometry = None;
+        self.gpu.working_region = None;
         if let Some(r) = self.gpu.renderer.as_mut() {
             r.invalidate();
         }
@@ -764,6 +828,7 @@ impl Session {
             r.invalidate();
         }
         self.gpu.working_geometry = None;
+        self.gpu.working_region = None;
         self.touched();
         Ok(())
     }
@@ -935,6 +1000,45 @@ mod tests {
     }
 
     #[test]
+    fn a_wheel_keeps_its_master_apart_from_its_channels() {
+        // Four numbers, not three. Folding the ring into the channels would
+        // make "reset just the ring" impossible to express, which is why the
+        // document models them separately and why the setter takes both.
+        let mut s = chart_session();
+        let row = s
+            .document()
+            .unwrap()
+            .stack
+            .iter()
+            .find(|r| r.effect == "primaries")
+            .map(|r| r.id)
+            .expect("primaries is a pinned row");
+
+        s.set_wheel(row, "lift", 0.25, [0.1, 0.2, 0.3]).unwrap();
+
+        let doc = s.document().unwrap();
+        let Some(pe_core::ParamValue::Wheel(w)) = doc
+            .stack
+            .get(row)
+            .and_then(|r| r.params.get("lift"))
+            .cloned()
+        else {
+            panic!("lift is not a wheel");
+        };
+        assert_eq!(w.master, 0.25);
+        assert_eq!(w.rgb, [0.1, 0.2, 0.3]);
+    }
+
+    #[test]
+    fn a_wheel_on_a_parameter_that_is_not_one_is_refused() {
+        let mut s = chart_session();
+        let row = s.add_effect("sharpen").unwrap();
+        // `amount` is a float; sending it a wheel is a bug in the shell, and
+        // silently storing one would give the shader a value no slot reads.
+        assert!(s.set_wheel(row, "not_a_parameter", 0.0, [0.0; 3]).is_err());
+    }
+
+    #[test]
     fn a_parameter_that_is_not_there_is_refused_rather_than_invented() {
         let mut s = chart_session();
         let row = s.add_effect("exposure").unwrap();
@@ -1048,5 +1152,52 @@ mod tests {
             s.export_current(),
             Err(SessionError::WouldOverwriteSource(_))
         ));
+    }
+    #[test]
+    fn moving_the_view_invalidates_the_texture_built_for_the_old_one() {
+        // The working texture is built for a particular rectangle of the frame.
+        // Leaving it in place after the view moves would show the previous
+        // rectangle, scaled — the picture would appear to zoom and then not
+        // resolve.
+        let mut s = chart_session();
+        s.render_offscreen(64, 64).unwrap();
+        assert!(!s.needs_render());
+
+        s.set_view(0.25, 0.25, 0.25);
+        assert!(s.needs_render(), "moving the view did not ask for a frame");
+        assert_eq!(
+            s.view_region(),
+            (0.25, 0.25, 0.25),
+            "the view did not go where it was sent"
+        );
+    }
+
+    #[test]
+    fn a_view_cannot_be_pushed_off_the_frame() {
+        // Clamped, so there is never a band of nothing along an edge.
+        let mut s = chart_session();
+        s.set_view(5.0, -5.0, 0.5);
+        let (x, y, size) = s.view_region();
+        assert_eq!(size, 0.5);
+        assert!((0.0..=0.5).contains(&x), "x escaped the frame: {x}");
+        assert!((0.0..=0.5).contains(&y), "y escaped the frame: {y}");
+    }
+
+    #[test]
+    fn a_view_cannot_zoom_past_a_single_pixel_of_use() {
+        let mut s = chart_session();
+        s.set_view(0.0, 0.0, 0.0001);
+        assert_eq!(s.view_region().2, 1.0 / 32.0);
+    }
+
+    #[test]
+    fn an_export_renders_the_whole_frame_however_the_viewer_is_zoomed() {
+        // The one that would be a real bug: exporting what is on screen rather
+        // than what is in the file.
+        let mut s = chart_session();
+        let fitted = s.render_offscreen(64, 64).unwrap();
+        s.set_view(0.25, 0.25, 0.25);
+        let zoomed = s.render_offscreen(64, 64).unwrap();
+        assert_eq!(fitted, zoomed, "the export followed the viewer");
     }
 }

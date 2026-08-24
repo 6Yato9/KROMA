@@ -89,6 +89,69 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(restored, 1.5, accuracy: 0.0001)
     }
 
+    func testARowCanBeAddedRemovedAndReordered() throws {
+        let store = try XCTUnwrap(SessionStore())
+        store.openTestChart()
+        let pinned = store.snapshot.rows.count
+
+        let grain = try XCTUnwrap(store.addEffect("grain"))
+        XCTAssertEqual(store.snapshot.rows.count, pinned + 1)
+        XCTAssertEqual(store.snapshot.rows.last?.effect, "grain")
+
+        let halation = try XCTUnwrap(store.addEffect("halation"))
+        XCTAssertEqual(store.snapshot.rows.count, pinned + 2)
+
+        // Reordering moves it within the stack, and the stack is the document —
+        // grain under halation is a different photograph from halation under
+        // grain.
+        store.moveRow(halation, to: UInt32(pinned))
+        let order = store.snapshot.rows.map(\.effect)
+        XCTAssertLessThan(
+            order.firstIndex(of: "halation")!,
+            order.firstIndex(of: "grain")!
+        )
+
+        store.removeRow(grain)
+        XCTAssertEqual(store.snapshot.rows.count, pinned + 1)
+        XCTAssertFalse(store.snapshot.rows.contains { $0.effect == "grain" })
+    }
+
+    func testARowCanBeSwitchedOffWithoutBeingRemoved() throws {
+        // Bypassing a row is how you find out what it was doing. Removing it
+        // and adding it back is not the same thing — it loses the parameters.
+        let store = try XCTUnwrap(SessionStore())
+        store.openTestChart()
+        let row = try XCTUnwrap(store.addEffect("grain"))
+        // Grain's own float, not the row's opacity, and moved off its default
+        // of 0.66 so the assertion below cannot pass by accident.
+        store.setFloat(row: row, key: "size", value: 0.5)
+
+        store.setRowEnabled(row, false)
+        XCTAssertEqual(store.snapshot.rows.first { $0.id == row }?.enabled, false)
+
+        store.setRowEnabled(row, true)
+        let back = try XCTUnwrap(store.snapshot.rows.first { $0.id == row })
+        XCTAssertTrue(back.enabled)
+        // Unwrapped rather than compared as an optional: `XCTAssertEqual` with
+        // an accuracy takes a `FloatingPoint`, and `Float?` is not one.
+        let size = try XCTUnwrap(back.params["size"]?.floatValue)
+        XCTAssertEqual(size, 0.5, accuracy: 0.0001)
+    }
+
+    func testAPinnedRowIsNotOfferedForRemoval() throws {
+        // The pinned rows are the fixed panels of the colour page. Removing one
+        // would leave a document a fresh one could not be, and the inspector
+        // with a hole in it.
+        let store = try XCTUnwrap(SessionStore())
+        store.openTestChart()
+        let pinned = try XCTUnwrap(store.snapshot.rows.first { $0.pinned })
+        XCTAssertFalse(store.canRemove(pinned))
+
+        let added = try XCTUnwrap(store.addEffect("grain"))
+        let row = try XCTUnwrap(store.snapshot.rows.first { $0.id == added })
+        XCTAssertTrue(store.canRemove(row))
+    }
+
     /// A 1x1 white PNG, so the test needs no fixture file on disk.
     static let onePixelPNG = """
     iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==

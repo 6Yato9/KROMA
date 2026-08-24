@@ -20,18 +20,30 @@ struct ContentView: View {
         }
     }
 
-    /// The pinned rows, in pinned order, each generated from the registry.
+    /// The pinned panels, then everything that has been added, then the button
+    /// that adds more.
     private var inspector: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(store.registry.pinnedEffects) { effect in
-                    if let row = store.snapshot.rows.first(where: {
-                        $0.effect == effect.key && $0.pinned
-                    }) {
+                ForEach(Array(store.snapshot.rows.enumerated()), id: \.element.id) { index, row in
+                    if let effect = store.registry.effect(row.effect) {
+                        if !row.pinned {
+                            StackRowView(
+                                effect: effect,
+                                row: row,
+                                index: index,
+                                count: store.snapshot.rows.count,
+                                floor: store.snapshot.rows.filter(\.pinned).count,
+                                store: store
+                            )
+                        }
                         InspectorPanel(effect: effect, row: row, store: store)
                         Divider()
                     }
                 }
+
+                EffectBrowser(registry: store.registry, store: store)
+                    .padding(.vertical, 8)
             }
             .padding(.horizontal, 8)
         }

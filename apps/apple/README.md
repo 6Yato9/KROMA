@@ -27,7 +27,7 @@ regenerates `pe_ffi.h`.
 | | |
 |---|---|
 | `Spike` | The smallest thing that proves the layer path: a `CAMetalLayer` made in Swift, filled by wgpu in Rust. Kept because it is the fastest way to tell whether a graphics problem is in the engine or in the shell. |
-| `PhotoEditor` | The macOS application. Opens a photograph, grades it through the pinned panels, undoes, autosaves and exports. The controls for curves, wheels, warps, choices and pins are not drawn yet; their rows say so. |
+| `PhotoEditor` | The macOS application. Opens a photograph, adds and reorders effects, grades through the pinned panels and anything added to the stack, zooms, undoes, autosaves and exports. Curves, the Colour Warper's lattices and its pins are not drawn yet; their rows say so. |
 | `KromaKitTests` | The Swift tests. Compiles `KromaKit/` in as well, under the module name `KromaKit`, so the tests are inside the module they exercise. |
 
 ## Why `KromaKit` is a directory and not a Swift package
