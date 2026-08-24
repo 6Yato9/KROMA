@@ -44,6 +44,43 @@ public struct InspectorPanel: View {
                 isActive: effect.isActive(param.key, values: row.params),
                 store: store
             )
+
+        case let .bool(defaultValue):
+            BoolRow(
+                param: param,
+                row: row.id,
+                value: {
+                    if case let .bool(v) = row.params[param.key] { return v }
+                    return defaultValue
+                }(),
+                isActive: effect.isActive(param.key, values: row.params),
+                store: store
+            )
+
+        case let .choice(options, defaultValue):
+            ChoiceRow(
+                param: param,
+                options: options,
+                row: row.id,
+                value: {
+                    if case let .choice(v) = row.params[param.key] { return v }
+                    return defaultValue
+                }(),
+                isActive: effect.isActive(param.key, values: row.params),
+                store: store
+            )
+
+        case let .rgb(defaultValue):
+            RgbRow(
+                param: param,
+                row: row.id,
+                value: {
+                    if case let .rgb(v) = row.params[param.key] { return v }
+                    return defaultValue
+                }(),
+                isActive: effect.isActive(param.key, values: row.params),
+                store: store
+            )
         default:
             // A kind this slice does not draw yet. Named rather than skipped:
             // a control that silently is not there is a parameter the user
