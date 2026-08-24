@@ -94,3 +94,11 @@ jobs:
           xcodegen generate
           xcodebuild -project PhotoEditor.xcodeproj -scheme Spike \
                      -configuration Debug build CODE_SIGNING_ALLOWED=NO
+      # The Swift half of the fixture check. A field added in Rust and not
+      # here fails on this side, which is the whole reason the fixtures are
+      # committed rather than generated at test time.
+      - name: Test KromaKit
+        run: |
+          cd apps/apple
+          xcodebuild test -project PhotoEditor.xcodeproj -scheme KromaKitTests \
+                     -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
