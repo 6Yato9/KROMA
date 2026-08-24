@@ -42,6 +42,8 @@ targets:
     sources:
       - path: KromaKit
       - path: KromaKitTests
+      - path: Fixtures
+        buildPhase: resources
     settings:
       base:
         # The same bridging header the application uses.
