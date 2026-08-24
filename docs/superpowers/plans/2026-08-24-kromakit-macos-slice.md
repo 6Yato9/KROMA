@@ -1280,7 +1280,14 @@ final class SessionStoreTests: XCTestCase {
 
         store.endInteraction()
         XCTAssertGreaterThan(store.snapshot.version, atRest)
-        XCTAssertEqual(store.snapshot.rows.first { $0.id == row }?.params["amount"]?.floatValue, 0.3)
+        // With an accuracy: Float(30) * 0.01 is 0.29999998, which is not the
+        // same bit pattern as the literal 0.3. Comparing floats for equality
+        // tests the arithmetic of the test rather than the behaviour of the
+        // store.
+        let amount = try XCTUnwrap(
+            store.snapshot.rows.first { $0.id == row }?.params["amount"]?.floatValue
+        )
+        XCTAssertEqual(amount, 0.3, accuracy: 0.0001)
     }
 
     func testARefusalIsReportedRatherThanThrownAway() throws {
