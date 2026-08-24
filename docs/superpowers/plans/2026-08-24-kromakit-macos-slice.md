@@ -108,7 +108,9 @@ Create `apps/apple/KromaKitTests/EngineTests.swift`:
 
 ```swift
 import XCTest
-@testable import KromaKit
+// No import. These sources compile into the test bundle, so the tests are
+// already in module KromaKit; `@testable import KromaKit` is accepted but
+// ignored, and warns on every compile.
 
 final class EngineTests: XCTestCase {
     func testAFreshSessionOpensTheTestChartAndHasThePinnedRows() throws {
@@ -162,15 +164,19 @@ public struct EngineError: Error, CustomStringConvertible {
 /// A class, not a struct, so `deinit` reliably releases the Rust allocation.
 /// Every handle handed across the boundary has exactly one owner on this side.
 public final class Session {
+    /// Plain, unwrapped. cbindgen emits `PeSession` as an incomplete C type,
+    /// so Swift already imports `struct PeSession *` as an `OpaquePointer`;
+    /// wrapping it in `UnsafeMutablePointer` converts nothing and does not
+    /// compile.
     let handle: OpaquePointer
 
     public init?() {
         guard let h = pe_session_new() else { return nil }
-        handle = OpaquePointer(h)
+        handle = h
     }
 
     deinit {
-        pe_session_free(UnsafeMutablePointer(handle))
+        pe_session_free(handle)
     }
 
     /// Turn a status code into a thrown error carrying the engine's own words.
@@ -182,7 +188,7 @@ public final class Session {
     /// The last failure's message. Nil when the last call succeeded, and also
     /// when the handle was null — see the note on the status convention.
     var lastError: String? {
-        guard let raw = pe_session_last_error(UnsafeMutablePointer(handle)) else {
+        guard let raw = pe_session_last_error(handle) else {
             return nil
         }
         defer { pe_string_free(raw) }
@@ -190,11 +196,11 @@ public final class Session {
     }
 
     public var rowCount: Int {
-        Int(pe_session_row_count(UnsafeMutablePointer(handle)))
+        Int(pe_session_row_count(handle))
     }
 
     public func openTestChart(width: UInt32, height: UInt32) throws {
-        try check(pe_session_open_test_chart(UnsafeMutablePointer(handle), width, height))
+        try check(pe_session_open_test_chart(handle, width, height))
     }
 }
 ```
@@ -245,7 +251,12 @@ In `apps/apple/project.yml`, add `KromaKit` to the application's sources and add
         basedOnDependencyAnalysis: false
 ```
 
-**`@testable import KromaKit` needs the module name to match.** Because these sources compile *into* the test bundle rather than into a separate framework, `PRODUCT_MODULE_NAME: KromaKit` makes the bundle's own module that name and `@testable import KromaKit` resolves to it. If the compiler rejects the import as a cycle, delete the `import KromaKit` line from the test file entirely — same-module code needs no import — and record that in your report.
+**There is no import, and that is not an omission.** The sources compile
+*into* the test bundle rather than into a separate framework, so the tests are
+already inside module `KromaKit` — `PRODUCT_MODULE_NAME` names it. Writing
+`@testable import KromaKit` compiles, but the compiler ignores it and warns
+"file is part of module 'KromaKit'; ignoring import" on every build. Every test
+file in this plan omits it.
 
 - [ ] **Step 4: Remove the superseded scaffold**
 
@@ -278,7 +289,15 @@ cd "/Volumes/Projects/Programming/photo editor/apps/apple" && xcodegen generate 
 
 Expected: `** TEST SUCCEEDED **`, 2 tests.
 
-If XcodeGen did not create a scheme for the test target, add `scheme: {}` under `KromaKitTests` in `project.yml` and regenerate.
+`scheme: {}` is not enough — it generates a scheme whose testables list is
+empty, so `xcodebuild test` builds the bundle and runs nothing while still
+reporting success. Name the target:
+
+```yaml
+    scheme:
+      testTargets:
+        - KromaKitTests
+```
 
 - [ ] **Step 6: Commit**
 
@@ -313,7 +332,7 @@ Create `apps/apple/KromaKitTests/SnapshotTests.swift`:
 
 ```swift
 import XCTest
-@testable import KromaKit
+// Same module as the code under test; see EngineTests.swift.
 
 final class SnapshotTests: XCTestCase {
     /// The committed fixture, which a Rust test regenerates and checks. Each
@@ -568,7 +587,9 @@ Create `apps/apple/KromaKitTests/RegistryTests.swift`:
 
 ```swift
 import XCTest
-@testable import KromaKit
+// No import: these sources compile into the test bundle, so the tests are
+// already in the same module. `@testable import KromaKit` is accepted but
+// ignored, with a warning on every compile.
 
 final class RegistryTests: XCTestCase {
     /// The committed fixture, which a Rust test regenerates and checks.
@@ -970,13 +991,13 @@ Append to `apps/apple/KromaKit/Engine.swift`, inside `final class Session`:
     /// `~/.config` for years without anybody noticing.
     public func setSupportDirectory(_ url: URL) throws {
         try check(url.path.withCString {
-            pe_session_set_support_dir(UnsafeMutablePointer(handle), $0)
+            pe_session_set_support_dir(handle, $0)
         })
     }
 
     public func open(_ url: URL) throws {
         try check(url.path.withCString {
-            pe_session_open_path(UnsafeMutablePointer(handle), $0)
+            pe_session_open_path(handle, $0)
         })
     }
 
@@ -988,45 +1009,45 @@ Append to `apps/apple/KromaKit/Engine.swift`, inside `final class Session`:
     /// before that view goes away.
     public func attach(layer: CALayer, width: UInt32, height: UInt32) throws {
         let raw = Unmanaged.passUnretained(layer).toOpaque()
-        try check(pe_session_attach_layer(UnsafeMutablePointer(handle), raw, width, height))
+        try check(pe_session_attach_layer(handle, raw, width, height))
     }
 
     public func resize(width: UInt32, height: UInt32) throws {
-        try check(pe_session_resize(UnsafeMutablePointer(handle), width, height))
+        try check(pe_session_resize(handle, width, height))
     }
 
     public func detachLayer() {
-        _ = pe_session_detach_layer(UnsafeMutablePointer(handle))
+        _ = pe_session_detach_layer(handle)
     }
 
     public func render() throws {
-        try check(pe_session_render(UnsafeMutablePointer(handle)))
+        try check(pe_session_render(handle))
     }
 
     public var needsRender: Bool {
-        pe_session_needs_render(UnsafeMutablePointer(handle))
+        pe_session_needs_render(handle)
     }
 
     /// Passes the last frame executed. The number that proves the stage cache
     /// works: dragging one slider on a deep stack should read 1, not the depth.
     public var lastPasses: Int {
-        Int(pe_session_last_passes(UnsafeMutablePointer(handle)))
+        Int(pe_session_last_passes(handle))
     }
 
     /// Drives the autosave debounce. Called from the display link.
     public func tick() {
-        _ = pe_session_tick(UnsafeMutablePointer(handle))
+        _ = pe_session_tick(handle)
     }
 
     // ---- the document ---------------------------------------------------
 
     public var snapshotVersion: UInt64 {
-        pe_session_snapshot_version(UnsafeMutablePointer(handle))
+        pe_session_snapshot_version(handle)
     }
 
     /// The whole UI-visible state, decoded.
     public func snapshot() throws -> Snapshot {
-        guard let raw = pe_session_snapshot_json(UnsafeMutablePointer(handle)) else {
+        guard let raw = pe_session_snapshot_json(handle) else {
             throw EngineError(code: -1, message: "the engine produced no snapshot")
         }
         defer { pe_string_free(raw) }
@@ -1036,7 +1057,7 @@ Append to `apps/apple/KromaKit/Engine.swift`, inside `final class Session`:
 
     @discardableResult
     public func addEffect(_ key: String) throws -> UInt64 {
-        let id = key.withCString { pe_session_add_effect(UnsafeMutablePointer(handle), $0) }
+        let id = key.withCString { pe_session_add_effect(handle, $0) }
         guard id >= 0 else {
             throw EngineError(code: Int32(id), message: lastError ?? "no reason given")
         }
@@ -1044,46 +1065,46 @@ Append to `apps/apple/KromaKit/Engine.swift`, inside `final class Session`:
     }
 
     public func removeRow(_ row: UInt64) throws {
-        try check(pe_session_remove_row(UnsafeMutablePointer(handle), row))
+        try check(pe_session_remove_row(handle, row))
     }
 
     public func moveRow(_ row: UInt64, to index: UInt32) throws {
-        try check(pe_session_move_row(UnsafeMutablePointer(handle), row, index))
+        try check(pe_session_move_row(handle, row, index))
     }
 
     public func setRowEnabled(_ row: UInt64, _ on: Bool) throws {
-        try check(pe_session_set_row_enabled(UnsafeMutablePointer(handle), row, on))
+        try check(pe_session_set_row_enabled(handle, row, on))
     }
 
     public func setRowOpacity(_ row: UInt64, _ value: Float) throws {
-        try check(pe_session_set_row_opacity(UnsafeMutablePointer(handle), row, value))
+        try check(pe_session_set_row_opacity(handle, row, value))
     }
 
     // ---- parameters, the hot path ---------------------------------------
 
     public func setFloat(row: UInt64, key: String, value: Float) throws {
         try check(key.withCString {
-            pe_session_set_float(UnsafeMutablePointer(handle), row, $0, value)
+            pe_session_set_float(handle, row, $0, value)
         })
     }
 
     public func setBool(row: UInt64, key: String, value: Bool) throws {
         try check(key.withCString {
-            pe_session_set_bool(UnsafeMutablePointer(handle), row, $0, value)
+            pe_session_set_bool(handle, row, $0, value)
         })
     }
 
     public func setChoice(row: UInt64, key: String, value: String) throws {
         try check(key.withCString { k in
             value.withCString { v in
-                pe_session_set_choice(UnsafeMutablePointer(handle), row, k, v)
+                pe_session_set_choice(handle, row, k, v)
             }
         })
     }
 
     public func setRGB(row: UInt64, key: String, _ r: Float, _ g: Float, _ b: Float) throws {
         try check(key.withCString {
-            pe_session_set_rgb(UnsafeMutablePointer(handle), row, $0, r, g, b)
+            pe_session_set_rgb(handle, row, $0, r, g, b)
         })
     }
 
@@ -1094,21 +1115,21 @@ Append to `apps/apple/KromaKit/Engine.swift`, inside `final class Session`:
     /// started, and there is nothing useful for a slider to do about that.
     public func beginInteraction(_ label: String) {
         _ = label.withCString {
-            pe_session_begin_interaction(UnsafeMutablePointer(handle), $0)
+            pe_session_begin_interaction(handle, $0)
         }
     }
 
     public func endInteraction() {
-        _ = pe_session_end_interaction(UnsafeMutablePointer(handle))
+        _ = pe_session_end_interaction(handle)
     }
 
-    public var canUndo: Bool { pe_session_can_undo(UnsafeMutablePointer(handle)) }
-    public var canRedo: Bool { pe_session_can_redo(UnsafeMutablePointer(handle)) }
+    public var canUndo: Bool { pe_session_can_undo(handle) }
+    public var canRedo: Bool { pe_session_can_redo(handle) }
 
     /// True when it moved, false when there was nothing to undo.
     @discardableResult
     public func undo() throws -> Bool {
-        let moved = pe_session_undo(UnsafeMutablePointer(handle))
+        let moved = pe_session_undo(handle)
         guard moved >= 0 else {
             throw EngineError(code: moved, message: lastError ?? "no reason given")
         }
@@ -1117,7 +1138,7 @@ Append to `apps/apple/KromaKit/Engine.swift`, inside `final class Session`:
 
     @discardableResult
     public func redo() throws -> Bool {
-        let moved = pe_session_redo(UnsafeMutablePointer(handle))
+        let moved = pe_session_redo(handle)
         guard moved >= 0 else {
             throw EngineError(code: moved, message: lastError ?? "no reason given")
         }
@@ -1128,7 +1149,7 @@ Append to `apps/apple/KromaKit/Engine.swift`, inside `final class Session`:
 
     @discardableResult
     public func saveSidecar() throws -> URL {
-        guard let raw = pe_session_save_sidecar(UnsafeMutablePointer(handle)) else {
+        guard let raw = pe_session_save_sidecar(handle) else {
             throw EngineError(code: -1, message: lastError ?? "the sidecar was not written")
         }
         defer { pe_string_free(raw) }
@@ -1137,17 +1158,17 @@ Append to `apps/apple/KromaKit/Engine.swift`, inside `final class Session`:
 
     public func loadSidecar(_ url: URL) throws {
         try check(url.path.withCString {
-            pe_session_load_sidecar(UnsafeMutablePointer(handle), $0)
+            pe_session_load_sidecar(handle, $0)
         })
     }
 
     public func revert() throws {
-        try check(pe_session_revert(UnsafeMutablePointer(handle)))
+        try check(pe_session_revert(handle))
     }
 
     public func setExport(format: String, quality: UInt8) throws {
         try check(format.withCString {
-            pe_session_set_export(UnsafeMutablePointer(handle), $0, quality)
+            pe_session_set_export(handle, $0, quality)
         })
     }
 
@@ -1158,7 +1179,7 @@ Append to `apps/apple/KromaKit/Engine.swift`, inside `final class Session`:
     /// not an error condition to work around.
     @discardableResult
     public func export() throws -> URL {
-        guard let raw = pe_session_export(UnsafeMutablePointer(handle)) else {
+        guard let raw = pe_session_export(handle) else {
             throw EngineError(code: -1, message: lastError ?? "the export was not written")
         }
         defer { pe_string_free(raw) }
@@ -1215,7 +1236,7 @@ Create `apps/apple/KromaKitTests/SessionStoreTests.swift`:
 
 ```swift
 import XCTest
-@testable import KromaKit
+// Same module as the code under test; see EngineTests.swift.
 
 @MainActor
 final class SessionStoreTests: XCTestCase {
@@ -1498,7 +1519,7 @@ Create `apps/apple/KromaKitTests/SliderGeometryTests.swift`:
 
 ```swift
 import XCTest
-@testable import KromaKit
+// Same module as the code under test; see EngineTests.swift.
 
 final class SliderGeometryTests: XCTestCase {
     private let bounds = Bounds(min: -5, max: 5, default: 0, neutral: 0)
@@ -2383,7 +2404,7 @@ In `apps/apple/KromaKit/SessionStore.swift`, add to `Session` in
     /// for the debounce would mean waiting for something that is about to stop
     /// happening.
     public func flushAutosave() throws {
-        try check(pe_session_tick(UnsafeMutablePointer(handle)))
+        try check(pe_session_tick(handle))
     }
 ```
 
@@ -2415,7 +2436,7 @@ Then the Swift side is:
 
 ```swift
     public func flushAutosave() throws {
-        try check(pe_session_flush_autosave(UnsafeMutablePointer(handle)))
+        try check(pe_session_flush_autosave(handle))
     }
 ```
 
