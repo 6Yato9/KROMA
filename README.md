@@ -117,7 +117,7 @@ crates/
 shaders/       .wgsl, shared by every platform
 apps/
   windows/     Rust shell — contains no image processing
-  apple/       the Xcode project, and the C ABI's Swift side
+  apple/       macOS shell, and the Swift it shares with iOS later
 tests/golden/  reference renders, diffed by CI
 docs/          the two decision records worth reading first
 ```
@@ -174,7 +174,7 @@ A golden test blindly regenerated is a golden test deleted.
 | M3 | Isolation — qualifier, power windows, masks | |
 | M4 | Grading workflow — stills gallery, versions, compare | |
 | M5 | RAW | |
-| M6 | macOS | |
+| M6 | macOS | in progress — engine, C ABI and the pinned panels |
 
 ## Known constraints
 

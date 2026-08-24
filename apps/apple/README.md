@@ -27,16 +27,18 @@ regenerates `pe_ffi.h`.
 | | |
 |---|---|
 | `Spike` | The smallest thing that proves the layer path: a `CAMetalLayer` made in Swift, filled by wgpu in Rust. Kept because it is the fastest way to tell whether a graphics problem is in the engine or in the shell. |
-| `PhotoEditor` | Where the macOS application goes. It compiles `KromaKit/` in and links against the engine; the interface itself is still a placeholder. |
+| `PhotoEditor` | The macOS application. Opens a photograph, grades it through the pinned panels, undoes, autosaves and exports. The controls for curves, wheels, warps, choices and pins are not drawn yet; their rows say so. |
 | `KromaKitTests` | The Swift tests. Compiles `KromaKit/` in as well, under the module name `KromaKit`, so the tests are inside the module they exercise. |
 
 ## Why `KromaKit` is a directory and not a Swift package
 
-A Swift package cannot have a bridging header, and the engine arrives as a
-generated header plus a static library. So `KromaKit/` is a plain directory of
-sources that XcodeGen compiles into every target that needs it — the
-application, the test bundle, and later the iOS app. `Engine.swift` is the only
-file in it allowed to touch the C ABI.
+A Swift package cannot use a bridging header, and the engine arrives as a
+generated header plus a static library. Consuming it from SwiftPM would need a
+`systemLibrary` target and a hand-written module map pointing at a file that is
+generated and gitignored — three moving parts to save nothing. So `KromaKit/`
+is a plain directory of sources that XcodeGen compiles into every target that
+needs it — the application, the test bundle, and later the iOS app.
+`Engine.swift` is the only file in it allowed to touch the C ABI.
 
 ## Why the .xcodeproj is generated
 
@@ -46,13 +48,10 @@ A `project.pbxproj` is unmergeable — every branch that adds a file conflicts.
 ## Fixtures
 
 `Fixtures/` holds `registry.json` and `snapshot.json`, written by
-`cargo test -p pe-session --test fixtures`. They are committed so that the
-Swift tests can decode them once those exist, which is how the two halves of
-one application will be stopped from drifting apart: add a field in Rust
-without adding it in Swift and one of the two suites fails. Until then the
-Rust half of that check already works — the committed copy is compared against
-what the code produces now, so the registry cannot change without somebody
-noticing.
+`cargo test -p pe-session --test fixtures` and decoded by `KromaKitTests`.
+They are how the two halves of one application are stopped from drifting
+apart: add a field in Rust without adding it in Swift, and one of the two
+suites fails.
 
 Regenerate deliberately, having looked at the diff:
 
