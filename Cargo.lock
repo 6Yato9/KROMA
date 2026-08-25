@@ -1758,6 +1758,7 @@ dependencies = [
  "pe-effects",
  "pe-io",
  "pe-render",
+ "pe-scopes",
  "pollster 0.4.0",
  "serde",
  "serde_json",

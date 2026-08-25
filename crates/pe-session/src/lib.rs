@@ -12,10 +12,12 @@
 pub mod autosave;
 pub mod describe;
 pub mod export;
+pub mod scopes;
 pub mod session;
 pub mod support;
 pub mod surface;
 
+pub use scopes::Scopes;
 pub use session::{Session, SessionError};
 pub use support::Support;
 pub use surface::Attached;

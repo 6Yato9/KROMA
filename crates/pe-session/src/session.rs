@@ -12,6 +12,7 @@ use pe_core::{Document, Geometry, History, ParamValue, RowId, RowIdGenerator, St
 use pe_io::DecodedImage;
 use pe_render::{EffectRenderer, GpuContext, ImageTexture, Region, Sampling, TransformPass};
 
+use crate::scopes::Scopes;
 use crate::surface::Attached;
 use crate::{Support, autosave, export};
 
@@ -155,6 +156,13 @@ pub struct Session {
     /// into one undo step. See `History::edit`.
     interaction: Option<String>,
     needs_render: bool,
+    /// The last measurement of the graded frame, thrown away by every edit.
+    /// See [`crate::scopes`] for why it is dropped rather than kept and
+    /// questioned.
+    scopes: Option<Scopes>,
+    /// Which measurement `scopes` is. Never reset, so a shell holding a copy
+    /// can compare one integer instead of a 2.6 MB waveform.
+    scope_generation: u64,
 }
 
 impl Default for Session {
@@ -177,6 +185,8 @@ impl Session {
             snapshot_version: 0,
             interaction: None,
             needs_render: true,
+            scopes: None,
+            scope_generation: 0,
         }
     }
 
@@ -291,9 +301,15 @@ impl Session {
         self.touched();
     }
 
+    /// The one place every mutation lands: `edit` (and so every setter),
+    /// `undo`, `redo`, `revert`, `load_sidecar` and `adopt` all pass through
+    /// here. Which is why the measurement is dropped here and nowhere else —
+    /// a `self.scopes = None` in twenty setters is a line the twenty-first
+    /// setter will not have.
     fn touched(&mut self) {
         self.snapshot_version += 1;
         self.needs_render = true;
+        self.scopes = None;
     }
 
     // ---- editing --------------------------------------------------------
@@ -882,6 +898,37 @@ impl Session {
         gpu.queue.submit([encoder.finish()]);
         self.needs_render = false;
         pe_render::read_rgba8(gpu, &target).map_err(|e| SessionError::Render(e.to_string()))
+    }
+
+    // ---- scopes ---------------------------------------------------------
+
+    /// Render the current grade at `width` by `height` and bin it.
+    ///
+    /// A separate, smaller render than the preview: 640 by 480 is three hundred
+    /// thousand pixels, a 1.2 MB readback and a couple of milliseconds to bin,
+    /// and the counts do not get better from more of them. The preview's own
+    /// size is driven by the window and would make this cost whatever the user
+    /// last dragged their corner to.
+    pub fn measure_scopes(&mut self, width: u32, height: u32) -> Result<(), SessionError> {
+        let pixels = self.render_offscreen(width, height)?;
+        self.scopes = Some(Scopes::measure(&pixels, width as usize, height as usize));
+        self.scope_generation += 1;
+        Ok(())
+    }
+
+    /// The last measurement, if one has been taken since the last edit.
+    ///
+    /// `None` means "measure before you draw" rather than "there are no
+    /// scopes" — see [`crate::scopes`] on why an edit throws them away.
+    pub fn scopes(&self) -> Option<&Scopes> {
+        self.scopes.as_ref()
+    }
+
+    /// Which measurement this is. Zero before the first, and strictly
+    /// increasing after — a shell holding a copy compares this to know whether
+    /// to copy again, which for a 2.6 MB waveform is worth doing.
+    pub fn scope_generation(&self) -> u64 {
+        self.scope_generation
     }
 
     // ---- the screen -----------------------------------------------------
@@ -1800,5 +1847,63 @@ mod tests {
         s.set_view(0.25, 0.25, 0.25);
         let zoomed = s.render_offscreen(64, 64).unwrap();
         assert_eq!(fitted, zoomed, "the export followed the viewer");
+    }
+
+    #[test]
+    fn measuring_bins_the_frame_that_was_graded() {
+        let mut s = chart_session();
+        // The test chart is a colour target: it must produce counts in more
+        // than one bin, or the scope is measuring a blank.
+        s.measure_scopes(160, 120).unwrap();
+        let scopes = s.scopes().expect("measured");
+        assert!(scopes.histogram.total > 0);
+        assert_eq!(
+            scopes.histogram.total,
+            160 * 120,
+            "every pixel should be counted exactly once"
+        );
+        let occupied = scopes.histogram.luma.iter().filter(|c| **c > 0).count();
+        assert!(occupied > 1, "a colour chart binned into one level");
+        assert_eq!(scopes.waveform.columns(), 160);
+        assert_eq!(scopes.waveform.rows(), 120);
+    }
+
+    #[test]
+    fn the_generation_moves_only_when_something_was_measured() {
+        let mut s = chart_session();
+        assert_eq!(s.scope_generation(), 0, "nothing measured yet");
+        s.measure_scopes(64, 64).unwrap();
+        let first = s.scope_generation();
+        assert!(first > 0);
+        s.measure_scopes(64, 64).unwrap();
+        assert!(
+            s.scope_generation() > first,
+            "a second measurement should be tellable from the first"
+        );
+    }
+
+    #[test]
+    fn measuring_with_nothing_open_is_refused() {
+        let mut s = Session::new();
+        assert!(s.measure_scopes(64, 64).is_err());
+        assert!(s.scopes().is_none());
+    }
+
+    #[test]
+    fn an_edit_does_not_silently_leave_stale_scopes_behind() {
+        // The counts describe a particular grade. Handing back numbers measured
+        // before an edit would draw a scope of a picture that is no longer on
+        // screen, which is the one thing a scope must never do.
+        let mut s = chart_session();
+        s.measure_scopes(64, 64).unwrap();
+        assert!(s.scopes().is_some());
+        let row = s.add_effect("exposure").unwrap();
+        // "ev" is the exposure effect's only parameter; the plan wrote
+        // "exposure", which the session rightly refuses.
+        s.set_float(row, "ev", 1.5).unwrap();
+        assert!(
+            s.scopes().is_none(),
+            "an edit should discard the measurement it invalidated"
+        );
     }
 }
