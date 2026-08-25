@@ -100,7 +100,7 @@ to place a pin against; the docs say what is missing.
 - Modify: `crates/pe-session/tests/fixtures.rs`
 - Create: `apps/apple/Fixtures/pin_samples.json`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to the test module in `crates/pe-core/src/pins.rs`:
 
@@ -149,7 +149,7 @@ Add to the test module in `crates/pe-core/src/pins.rs`:
     }
 ```
 
-- [ ] **Step 2: Run and watch them fail**
+- [x] **Step 2: Run and watch them fail**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo test -p pe-core pins 2>&1 | LC_ALL=C grep -aE "^error|^test result:"
@@ -157,7 +157,7 @@ cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && 
 
 Expected: `cannot find value 'PLOT_SPAN'`.
 
-- [ ] **Step 3: Move the range and the mappings into `pe-core`**
+- [x] **Step 3: Move the range and the mappings into `pe-core`**
 
 Add to `crates/pe-core/src/pins.rs`, at module level:
 
@@ -195,7 +195,7 @@ into a fraction. Rewrite both field comments to say so, and say that
 `plot_fraction` is the conversion, so the next person to reimplement this does
 not put every pin in the wrong place.
 
-- [ ] **Step 4: Make the Windows shell use them**
+- [x] **Step 4: Make the Windows shell use them**
 
 Delete `PLOT_SPAN`, `PLOT_MIN`, `plot_fraction` and `plot_value` from
 `apps/windows/src/warper.rs` and import them from `pe_core::pins`. Find every
@@ -207,7 +207,7 @@ cd "/Volumes/Projects/Programming/photo editor" && LC_ALL=C grep -an "PLOT_SPAN\
 
 `plot_image` uses them too, not just the pin code — check all of them.
 
-- [ ] **Step 5: Give `pins` a section**
+- [x] **Step 5: Give `pins` a section**
 
 The macOS warper panel switches over **sections that contain a lattice**, which
 is how it reproduces Resolve's layout from the registry rather than from a
@@ -225,7 +225,7 @@ the section *is* the view, and the panel switches over sections.
 
 This does not affect the Windows shell, whose three views are its own enum.
 
-- [ ] **Step 6: Write the fixture generator**
+- [x] **Step 6: Write the fixture generator**
 
 Add to `crates/pe-session/tests/fixtures.rs`:
 
@@ -285,7 +285,7 @@ fn the_pin_sample_fixture_is_current() {
 }
 ```
 
-- [ ] **Step 7: Generate it and check it**
+- [x] **Step 7: Generate it and check it**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && PE_UPDATE_FIXTURES=1 cargo test -p pe-session --test fixtures 2>&1 | LC_ALL=C grep -aE "^test result:"
@@ -319,7 +319,7 @@ change, and that nothing else in them moved:
 cd "/Volumes/Projects/Programming/photo editor" && git diff --stat apps/apple/Fixtures/ && git diff apps/apple/Fixtures/registry.json | LC_ALL=C grep -a "^[-+]" | LC_ALL=C grep -av "^[-+][-+]" | head
 ```
 
-- [ ] **Step 8: Verify**
+- [x] **Step 8: Verify**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo fmt --all && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings 2>&1 | LC_ALL=C grep -aE "^error|^warning"; cargo test --workspace --no-fail-fast 2>&1 | LC_ALL=C grep -aE "^test result:|FAILED"
@@ -332,7 +332,7 @@ The Swift suite will now fail — `registry.json` changed and a Swift test may
 assert on the old sectionless `pins`. **That is expected and is fixed in Task
 3**, not here. Note it in your report; do not chase it.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && git add crates apps && git commit -m "The plot's range belongs to the plot, and a pin is a chromaticity"
@@ -350,7 +350,7 @@ paths and take typed scalars.
 - Modify: `crates/pe-session/src/session.rs`
 - Modify: `crates/pe-ffi/src/lib.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to the test module in `crates/pe-session/src/session.rs`, using the
 `warper_row` helper that already exists there:
@@ -455,11 +455,11 @@ Add to the test module in `crates/pe-session/src/session.rs`, using the
     }
 ```
 
-- [ ] **Step 2: Run and watch them fail**
+- [x] **Step 2: Run and watch them fail**
 
 Expected: `no method named 'add_pin'`.
 
-- [ ] **Step 3: Write the session methods**
+- [x] **Step 3: Write the session methods**
 
 Add to `SessionError`:
 
@@ -567,7 +567,7 @@ and to `impl Session`, following the shape of `require_warp`:
     }
 ```
 
-- [ ] **Step 4: Write the C entry points**
+- [x] **Step 4: Write the C entry points**
 
 In `crates/pe-ffi/src/lib.rs`, after `pe_session_clear_warp`. Note `add` returns
 an index, so it cannot use `status` — it needs `with`, and reports failure as a
@@ -682,7 +682,7 @@ closure receives the `PeSession` wrapper (with `inner` and `last_error`), not
 the `Session`. `status` is the one that unwraps to `Session`. Follow whichever
 shape the existing code actually has.
 
-- [ ] **Step 5: Write the failing FFI test**
+- [x] **Step 5: Write the failing FFI test**
 
 Following the shape of `a_vertex_crosses_the_boundary_and_a_bad_one_is_refused`:
 
@@ -723,7 +723,7 @@ objects with snake_case keys.
 Compare floats as `f32`: `0.75` widens exactly but `0.12` does not, and the
 existing curve and warp tests both spell out why.
 
-- [ ] **Step 6: Verify**
+- [x] **Step 6: Verify**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo fmt --all && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings 2>&1 | LC_ALL=C grep -aE "^error|^warning"; cargo test --workspace --no-fail-fast 2>&1 | LC_ALL=C grep -aE "^test result:|FAILED"
@@ -732,7 +732,7 @@ cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && 
 Seven new session tests and one FFI test. Work out the expected total from the
 baseline your Task 1 left and report the real one.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && git add crates && git commit -m "Pins can be placed, dragged, shaped and taken away"
@@ -747,7 +747,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add crates && git commit 
 - Modify: `apps/apple/KromaKitTests/SnapshotTests.swift`
 - Modify: `apps/apple/KromaKitTests/RegistryTests.swift` (if it asserts on sections)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 The wire shape is a **bare array of objects with snake_case keys** — `Pins` is
 `#[serde(transparent)]` over `Vec<Pin>`, and `Pin`'s fields serialise by name:
@@ -827,14 +827,14 @@ Add to `SnapshotTests`:
     }
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 Expected: `type 'ParamValue' has no member 'pins'`. **The registry tests may
 also fail** — Task 1 gave `pins` the section `"Chroma Warp"`, and a Swift test
 may assert the old empty one. Fix that assertion to the new value; it is a
 deliberate change, not a regression.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `apps/apple/KromaKit/Snapshot.swift`:
 
@@ -942,7 +942,7 @@ and refusing it would stop a photograph opening. Update
 keep an `.opaque` assertion using a made-up kind name so the fallback itself
 stays covered.
 
-- [ ] **Step 4: Run the tests and commit**
+- [x] **Step 4: Run the tests and commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && xcodegen generate && xcodebuild test -project PhotoEditor.xcodeproj -scheme KromaKitTests -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO 2>&1 | LC_ALL=C grep -aE "error:|\*\* TEST|Executed [0-9]+ test"
@@ -963,7 +963,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add apps/apple && git com
 - Create: `apps/apple/KromaKit/Controls/PinGeometry.swift`
 - Create: `apps/apple/KromaKitTests/PinGeometryTests.swift`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```swift
 import XCTest
@@ -1075,7 +1075,7 @@ final class PinGeometryTests: XCTestCase {
 }
 ```
 
-- [ ] **Step 2: Run and watch it fail**, then write the implementation
+- [x] **Step 2: Run and watch it fail**, then write the implementation
 
 Create `apps/apple/KromaKit/Controls/PinGeometry.swift`:
 
@@ -1159,7 +1159,7 @@ public struct PinGeometry {
 }
 ```
 
-- [ ] **Step 3: Run the tests and commit**
+- [x] **Step 3: Run the tests and commit**
 
 Baseline is whatever Task 3 left. Ten new tests. Report the real number.
 
@@ -1177,7 +1177,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add apps/apple && git com
 - Modify: `apps/apple/KromaKit/Engine.swift`, `SessionStore.swift`, `WarperPanel.swift`
 - Modify: `apps/apple/KromaKitTests/EngineTests.swift`
 
-- [ ] **Step 1: Extract the slider row**
+- [x] **Step 1: Extract the slider row**
 
 A pin has five controls — Chroma Range, Tonal Range Low, High and Pivot, and
 Exposure — which are not registry parameters. They are floats on a value inside
@@ -1234,7 +1234,7 @@ behaviour. Work out the cleanest split once you have both files open — the
 requirement is that the drawing exists once and every existing test still
 passes unchanged.
 
-- [ ] **Step 2: Write the failing tests for the mutation path**
+- [x] **Step 2: Write the failing tests for the mutation path**
 
 Add to `EngineTests`:
 
@@ -1296,7 +1296,7 @@ Add to `EngineTests`:
     }
 ```
 
-- [ ] **Step 3: Write the engine and store methods**
+- [x] **Step 3: Write the engine and store methods**
 
 In `Engine.swift` (the class is `Session`), after `clearWarp`. Note `addPin`
 returns an index and reports failure as a **negative return**, not through
@@ -1360,7 +1360,7 @@ panel can select what it just made:
 Match how `run` reports failure — if it swallows the error, `index` stays nil,
 which the panel must treat as "no pin was added" rather than selecting one.
 
-- [ ] **Step 4: Write the editor**
+- [x] **Step 4: Write the editor**
 
 Create `apps/apple/KromaKit/Controls/PinsEditor.swift`. The pieces, all
 established by the two editors before it:
@@ -1400,7 +1400,7 @@ established by the two editors before it:
   so a slider drag is one call and one undo step rather than five parameters
   racing.
 
-- [ ] **Step 5: Give the panel a third tab**
+- [x] **Step 5: Give the panel a third tab**
 
 `WarperPanel` switches over **sections containing a lattice**. `pins` now has
 the section `"Chroma Warp"` but is not a lattice, so widen the rule to
@@ -1428,7 +1428,7 @@ falls through to the `default` "not yet" arm. Leave the arm in place — a
 document from a future version can still carry a kind this build does not know,
 and a control that silently is not there is worse than one that says so.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && xcodegen generate && xcodebuild test -project PhotoEditor.xcodeproj -scheme KromaKitTests -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO 2>&1 | LC_ALL=C grep -aE "error:|\*\* TEST|Executed [0-9]+ test" && xcodebuild build -project PhotoEditor.xcodeproj -scheme PhotoEditor -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO 2>&1 | LC_ALL=C grep -aE "error:|warning: |BUILD"
@@ -1449,7 +1449,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add apps/apple && git com
 
 ## Task 6: Eight of eight
 
-- [ ] **Step 1: Update the counts**
+- [x] **Step 1: Update the counts**
 
 `README.md`'s M6 row and `apps/apple/README.md`'s `PhotoEditor` row both say
 seven of eight parameter kinds. It is now **all eight** — say that, and say
@@ -1460,20 +1460,20 @@ two, and record in "What is deliberately absent" that the chromaticity plot
 draws its frame and white point but not the spectral locus or the photograph's
 colour cloud, for the same missing-scope-data reason as the curve histogram.
 
-- [ ] **Step 2: Correct the record on where pins live**
+- [x] **Step 2: Correct the record on where pins live**
 
 `docs/resolve-parameters.md`'s Colour Warper section describes the Chroma Warp.
 Add that `at` and `to` are CIE xy chromaticities over the plot's range, not
 fractions — the comment in `pins.rs` said otherwise until this plan, and that
 is exactly the mistake a reimplementation makes.
 
-- [ ] **Step 3: Verify the whole tree**
+- [x] **Step 3: Verify the whole tree**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings 2>&1 | LC_ALL=C grep -aE "^error|^warning"; cargo test --workspace --no-fail-fast 2>&1 | LC_ALL=C grep -aE "^test result: FAILED|^error"; echo "rust done"
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && git add -A && git commit -m "The Chroma Warp, written down"

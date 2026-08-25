@@ -566,6 +566,15 @@ views switch on an icon rather than being three tools, and why there is one
 two rows per grid from row 10. A 16 by 16 grid is 256 vertices, which is
 exactly one LUT row per component, and that is where the 16 comes from.
 
+**A pin is a chromaticity, not a fraction.** `Pin::at` and `Pin::to` are CIE xy
+coordinates, and the plot they are drawn on runs from `PLOT_MIN` to
+`PLOT_SPAN` — −0.03 to 0.88, chosen so the spectral locus, which reaches 0.8338
+in y, sits inside the frame rather than running out of it. `plot_fraction` is
+the conversion. This is worth stating because the field comments said "0..1"
+for a long time, and 0.33 read as a fraction of the plot lands somewhere
+entirely different from 0.33 read as a chromaticity: plausible, and completely
+wrong.
+
 **A divisions control and its lattice are one thing.** The shader reads a
 grid's size from the divisions choice, while the lattice carries its own
 `cols`/`rows` and is uploaded that many offsets, row-major. They have to agree:
