@@ -45,6 +45,34 @@ pub enum SessionError {
     Surface(#[from] crate::surface::SurfaceError),
 }
 
+/// Which lattices a divisions control governs, and which axis of each.
+///
+/// The Colour Warper's grid size lives in two places that have to agree: the
+/// `Choice` the user sets, and the `Warp`'s own `cols`/`rows`, which is what
+/// gets uploaded and what the shader's index arithmetic assumes. Keeping them
+/// together is not optional — disagree, and the renderer reads real
+/// displacements from the wrong vertices.
+const WARP_DIVISIONS: &[(&str, &[&str], Axis)] = &[
+    ("hue_divisions", &["hue_sat"], Axis::Cols),
+    ("sat_divisions", &["hue_sat"], Axis::Rows),
+    (
+        "chroma_divisions",
+        &["chroma_luma_1", "chroma_luma_2"],
+        Axis::Cols,
+    ),
+    (
+        "luma_divisions",
+        &["chroma_luma_1", "chroma_luma_2"],
+        Axis::Rows,
+    ),
+];
+
+#[derive(Clone, Copy, PartialEq)]
+enum Axis {
+    Cols,
+    Rows,
+}
+
 /// The photograph that is open, and its edit.
 struct Photo {
     path: Option<PathBuf>,
@@ -363,8 +391,83 @@ impl Session {
         self.set_param(id, key, ParamValue::Bool(value))
     }
 
+    /// Set a choice, and move anything else that choice describes.
+    ///
+    /// The whole thing is one undo step. A divisions choice writes the choice
+    /// and then resizes the lattices it names, and those two have to travel
+    /// together: undoing half of it would leave the choice saying 8 over a 6
+    /// by 6 grid, which is exactly the disagreement `follow_divisions` exists
+    /// to prevent — and from the outside it was one press of one control.
+    ///
+    /// Coalescing is how this file already spells "these edits are one step".
+    /// A bracket already in progress is left to own the run and close it.
     pub fn set_choice(&mut self, id: RowId, key: &str, value: &str) -> Result<(), SessionError> {
-        self.set_param(id, key, ParamValue::Choice(value.to_string()))
+        let ours = self.interaction.is_none();
+        if ours {
+            self.begin_interaction(format!("choice:{}:{key}", id.0));
+        }
+        let result = self
+            .set_param(id, key, ParamValue::Choice(value.to_string()))
+            .and_then(|()| self.follow_divisions(id, key));
+        if ours {
+            self.end_interaction();
+        }
+        result
+    }
+
+    /// Bring a warper's lattices in line with a divisions control that just
+    /// changed. A no-op for every other effect and every other parameter.
+    ///
+    /// Resizing resamples rather than clearing: see `Warp::resize`.
+    fn follow_divisions(&mut self, id: RowId, key: &str) -> Result<(), SessionError> {
+        let Some((_, keys, axis)) = WARP_DIVISIONS.iter().find(|(k, _, _)| *k == key) else {
+            return Ok(());
+        };
+
+        // Everything is read out of the document before anything is written
+        // back to it. `set_param` takes the whole session, and the row is
+        // borrowed from it — so the two cannot overlap.
+        let resized: Vec<(&str, pe_core::Warp)> = {
+            let Some(doc) = self.document() else {
+                return Ok(());
+            };
+            let Some(row) = doc.stack.get(id) else {
+                return Ok(());
+            };
+            if row.effect != "colour_warper" {
+                return Ok(());
+            }
+            // The option text is the number: "4", "6", "8", "12", "16".
+            let Some(n) = row
+                .params
+                .get(key)
+                .and_then(ParamValue::as_choice)
+                .and_then(|s| s.parse::<u32>().ok())
+            else {
+                return Ok(());
+            };
+
+            keys.iter()
+                .filter_map(|warp_key| {
+                    let w = row.params.get(warp_key).and_then(ParamValue::as_warp)?;
+                    let (cols, rows) = match axis {
+                        Axis::Cols => (n, w.rows()),
+                        Axis::Rows => (w.cols(), n),
+                    };
+                    if (cols, rows) == (w.cols(), w.rows()) {
+                        return None;
+                    }
+                    let mut next = w.clone();
+                    next.resize(cols, rows);
+                    Some((*warp_key, next))
+                })
+                .collect()
+        };
+
+        for (warp_key, warp) in resized {
+            self.set_param(id, warp_key, ParamValue::Warp(warp))?;
+        }
+        Ok(())
     }
 
     pub fn set_rgb(&mut self, id: RowId, key: &str, value: [f32; 3]) -> Result<(), SessionError> {
@@ -1133,6 +1236,54 @@ mod tests {
             s.set_curve(row, "amount", &[[0.0, 0.0], [1.0, 1.0]])
                 .is_err()
         );
+    }
+
+    /// The shader reads a lattice's grid size from the divisions choice and
+    /// the lattice carries its own. Nothing kept them in agreement, so
+    /// changing the choice left the renderer indexing a 6x6 grid as though it
+    /// were 8x8 — real numbers read from the wrong vertices.
+    #[test]
+    fn changing_the_divisions_resizes_the_lattice_it_describes() {
+        let mut s = chart_session();
+        let row = s
+            .document()
+            .unwrap()
+            .stack
+            .iter()
+            .find(|r| r.effect == "colour_warper")
+            .map(|r| r.id)
+            .expect("the warper is a pinned row");
+
+        let grid_of = |s: &Session, key: &str| {
+            s.document()
+                .unwrap()
+                .stack
+                .get(row)
+                .and_then(|r| r.params.get(key))
+                .and_then(pe_core::ParamValue::as_warp)
+                .map(|w| (w.cols(), w.rows()))
+                .unwrap()
+        };
+
+        assert_eq!(grid_of(&s, "hue_sat"), (6, 6), "the default grid");
+
+        s.set_choice(row, "hue_divisions", "8").unwrap();
+        assert_eq!(
+            grid_of(&s, "hue_sat"),
+            (8, 6),
+            "the hue axis did not follow its own divisions control"
+        );
+
+        s.set_choice(row, "sat_divisions", "12").unwrap();
+        assert_eq!(grid_of(&s, "hue_sat"), (8, 12));
+
+        // The rectangular grids are driven by their own pair, and both of them
+        // follow it — they are one control over two lattices.
+        s.set_choice(row, "chroma_divisions", "4").unwrap();
+        assert_eq!(grid_of(&s, "chroma_luma_1"), (4, 6));
+        assert_eq!(grid_of(&s, "chroma_luma_2"), (4, 6));
+        // And the hue web is not disturbed by them.
+        assert_eq!(grid_of(&s, "hue_sat"), (8, 12));
     }
 
     #[test]
