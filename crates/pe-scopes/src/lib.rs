@@ -14,7 +14,7 @@ pub mod backdrop;
 pub mod warper;
 pub mod waveform;
 
-pub use backdrop::Backdrop;
+pub use backdrop::{Backdrop, SMOOTH, trace};
 pub use warper::Distribution;
 pub use waveform::{Channel, LEVELS, SKIN, TARGETS, VECTOR_SIZE, Vectorscope, Waveform};
 

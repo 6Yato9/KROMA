@@ -538,38 +538,15 @@ public struct HistogramView: View {
         self.levels = levels
     }
 
-    /// How far either side of a bin the smoothing reaches.
-    ///
-    /// A histogram of a photograph is spiky — real images have runs of
-    /// identical values, and every one of them is a bin standing alone. Drawn
-    /// raw that reads as a bar chart, which is a picture of the sampling rather
-    /// than of the photograph.
-    static let smooth = 3
-
     /// One channel smoothed and compressed into 0…1 heights.
     ///
-    /// The power is the same argument as the waveform's square root: one flat
-    /// area of sky can hold a fifth of the frame in a single bin, and against
-    /// that everything else would be a pixel high.
+    /// The smoothing itself is `CurveBackdrop.trace`, which is where it lives
+    /// because the curve editor draws the same trace behind a curve and
+    /// because that copy is checked against the engine's bin for bin. A scope
+    /// counts in whole pixels, so it has a `UInt32` peak to offer and this is
+    /// the one line that says so.
     public static func trace(_ bins: [UInt32], peak: UInt32) -> [Double] {
-        let full = Double(max(peak, 1))
-        let count = bins.count
-        let reach = smooth
-        return (0..<count).map { i in
-            var sum = 0.0
-            var weight = 0.0
-            for d in -reach...reach {
-                let j = i + d
-                guard j >= 0, j < count else { continue }
-                // Triangular, which is a box filter applied twice and quite
-                // smooth enough for something drawn a few hundred points wide.
-                let w = 1 - Double(abs(d)) / Double(reach + 1)
-                sum += Double(bins[j]) * w
-                weight += w
-            }
-            let v = sum / max(weight, 1e-4) / full
-            return pow(min(max(v, 0), 1), 0.42)
-        }
+        CurveBackdrop.trace(bins, peak: Double(peak))
     }
 
     public var body: some View {

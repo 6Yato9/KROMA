@@ -23,7 +23,7 @@ use crate::preview::Scopes;
 use crate::resolve;
 use pe_core::parametric::{LOG_BLACK, LOG_WHITE};
 use pe_core::{Curve, History, ParamValue, RowId};
-use pe_scopes::{BINS, Backdrop, Histogram};
+use pe_scopes::{BINS, Backdrop, Histogram, trace};
 
 /// The seven curves Resolve offers, in the order its icon strip shows them.
 ///
@@ -96,14 +96,6 @@ impl Mode {
             Mode::SatVsSat => ("Input Sat", "Output Sat", |v| v, |v| v * 2.0),
             Mode::SatVsLum => ("Input Sat", "Lum", |v| v, |v| v * 2.0),
         }
-    }
-
-    fn x_is_hue(self) -> bool {
-        matches!(self, Mode::HueVsHue | Mode::HueVsSat | Mode::HueVsLum)
-    }
-
-    fn x_is_saturation(self) -> bool {
-        matches!(self, Mode::SatVsSat | Mode::SatVsLum)
     }
 }
 
@@ -184,8 +176,16 @@ fn mode_strip(ui: &mut egui::Ui, current: &mut Mode) {
 /// rainbow, a luminance curve gets a black-to-white ramp. It is not
 /// decoration — it is the only thing that says where a peak in the histogram
 /// sits without counting grid lines.
-fn axis_background(painter: &egui::Painter, rect: egui::Rect, mode: Mode) {
+///
+/// Which one comes from [`Backdrop::behind`] rather than from a predicate
+/// here, because the paint and the measurement are answers to the same
+/// question: the ramp is a picture of the axis, and the histogram over it
+/// counts the quantity that axis is indexed by. Asked twice they can differ,
+/// and a rainbow over a count of saturations is a plot that lies twice.
+fn axis_background(painter: &egui::Painter, rect: egui::Rect, key: &str) {
     const STEPS: usize = 96;
+    // Asked once rather than at every vertex: it is one answer for the plot.
+    let axis = Backdrop::behind(key);
     let mut mesh = egui::Mesh::default();
     for i in 0..STEPS {
         let t0 = i as f32 / STEPS as f32;
@@ -193,16 +193,19 @@ fn axis_background(painter: &egui::Painter, rect: egui::Rect, mode: Mode) {
         let x0 = rect.min.x + t0 * rect.width();
         let x1 = rect.min.x + t1 * rect.width();
         for (t, x) in [(t0, x0), (t1, x1)] {
-            let colour = if mode.x_is_hue() {
+            let colour = match axis {
                 // Dark, because the curve and the histogram are drawn on top
                 // of it and a full-strength rainbow would drown both.
-                hue_swatch(t).gamma_multiply(0.42)
-            } else if mode.x_is_saturation() {
+                Backdrop::Hue => hue_swatch(t).gamma_multiply(0.42),
                 // Saturation runs grey to grey; the ramp says how far along
                 // the axis you are, not what colour it is.
-                egui::Color32::from_gray((22.0 + t * 150.0) as u8)
-            } else {
-                egui::Color32::from_gray((14.0 + t * 158.0) as u8)
+                Backdrop::Saturation => egui::Color32::from_gray((22.0 + t * 150.0) as u8),
+                // A level axis, and the fallback: black to white, which is
+                // the one ramp that claims nothing a plot with no known
+                // backdrop cannot support.
+                Backdrop::Luma | Backdrop::Tones | Backdrop::Nothing => {
+                    egui::Color32::from_gray((14.0 + t * 158.0) as u8)
+                }
             };
             let base = mesh.vertices.len() as u32;
             mesh.colored_vertex(egui::pos2(x, rect.min.y), colour);
@@ -324,7 +327,10 @@ fn hue_presets(ui: &mut egui::Ui, history: &mut History, id: RowId, mode: Mode) 
     let Some(key) = mode.key() else {
         return;
     };
-    if !mode.x_is_hue() {
+    // A hue button is only a shortcut if the axis it drops a point on is
+    // indexed by hue, which is the same question the backdrop answers — asked
+    // there rather than a second time here.
+    if Backdrop::behind(key) != Backdrop::Hue {
         return;
     }
     ui.horizontal(|ui| {
@@ -1171,41 +1177,6 @@ const CHANNEL_PLANES: [Plane; 3] = [
 /// about channels its x-axis never asks about.
 const LUMA_PLANE: [Plane; 1] = [(|h| &h.luma, egui::Color32::from_gray(230))];
 
-/// How far either side of a bin the smoothing reaches.
-///
-/// A histogram of a photograph is spiky — real images have runs of identical
-/// values, and every one of them is a bin standing alone. Drawn raw that reads
-/// as a bar chart, which is a picture of the sampling rather than of the
-/// photograph. Three bins either side is enough to make it a curve and short
-/// enough that a genuine spike is still a spike.
-const SMOOTH: usize = 3;
-
-/// Smooth and normalise one channel into 0..1 heights.
-fn trace(bins: &[u32; BINS], peak: f32) -> Vec<f32> {
-    (0..BINS)
-        .map(|i| {
-            let mut sum = 0.0;
-            let mut weight = 0.0;
-            for d in -(SMOOTH as i32)..=(SMOOTH as i32) {
-                let j = i as i32 + d;
-                if !(0..BINS as i32).contains(&j) {
-                    continue;
-                }
-                // Triangular, which is a box filter applied twice and quite
-                // smooth enough for something drawn a few hundred pixels wide.
-                let w = 1.0 - (d.abs() as f32 / (SMOOTH as f32 + 1.0));
-                sum += bins[j as usize] as f32 * w;
-                weight += w;
-            }
-            let v = sum / weight.max(1e-4) / peak;
-            // The same compression the panel histogram used: one flat area of
-            // sky can hold a fifth of the frame in a single bin, and against
-            // that everything else would be a pixel high.
-            v.clamp(0.0, 1.0).powf(0.42)
-        })
-        .collect()
-}
-
 /// A secondary curve: the plot, its spectrum, and the readouts under it.
 ///
 /// The editing is the same as a tone curve's — drag a point, click to add,
@@ -1320,7 +1291,7 @@ fn secondary(
 
     if ui.is_rect_visible(rect) {
         let painter = ui.painter_at(rect);
-        axis_background(&painter, rect, mode);
+        axis_background(&painter, rect, key);
         backdrop_behind(&painter, rect, key, scopes);
 
         let grid = egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(26));
@@ -1735,43 +1706,5 @@ mod tests {
             }
         }
         assert_eq!(Backdrop::behind("lum_vs_sat"), Backdrop::Luma);
-    }
-
-    fn spike() -> [u32; BINS] {
-        let mut bins = [0u32; BINS];
-        bins[100] = 1000;
-        bins
-    }
-
-    /// A histogram of a photograph is spiky — real images have runs of
-    /// identical values, and drawn raw that reads as a bar chart rather than
-    /// as a picture of the photograph.
-    #[test]
-    fn smoothing_spreads_a_spike_into_a_curve() {
-        let t = trace(&spike(), 1000.0);
-        assert!(t[100] > 0.0, "the spike vanished");
-        for d in 1..=SMOOTH {
-            assert!(
-                t[100 - d] > 0.0 && t[100 + d] > 0.0,
-                "the spike did not reach {d} bins out"
-            );
-            assert!(
-                t[100 - d] < t[100 - d + 1],
-                "the shoulder should fall away from the peak"
-            );
-        }
-        assert!(
-            t[100 - SMOOTH - 1] == 0.0,
-            "the smoothing reached further than it should"
-        );
-    }
-
-    #[test]
-    fn a_trace_never_leaves_the_plot() {
-        let mut bins = [0u32; BINS];
-        // Everything in one bin, which is what a flat frame gives.
-        bins[10] = u32::MAX / 2;
-        let t = trace(&bins, 1.0);
-        assert!(t.iter().all(|v| (0.0..=1.0).contains(v)), "{:?}", t[10]);
     }
 }

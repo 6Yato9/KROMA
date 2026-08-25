@@ -335,11 +335,15 @@ fn every_registered_curve_has_a_backdrop() {
     assert_eq!(Backdrop::behind("not_a_curve"), Backdrop::Nothing);
 }
 
-/// What belongs behind each curve, and the window a tone plot spans.
+/// What belongs behind each curve, the window a tone plot spans, and one
+/// histogram traced.
 ///
 /// The mapping is shared knowledge with one right answer per curve, and the
 /// window is two numbers that already appear in three places. Both cross to
-/// Swift here rather than being typed a fourth time.
+/// Swift here rather than being typed a fourth time. The trace crosses because
+/// Swift smooths the same bins on its own — a seven-tap filter written twice
+/// agrees until the day one copy is tidied, so the two are compared bin for
+/// bin instead of trusted.
 #[test]
 fn the_backdrop_fixture_is_current() {
     use pe_core::parametric::{LOG_BLACK, LOG_WHITE};
@@ -355,9 +359,25 @@ fn the_backdrop_fixture_is_current() {
         })
         .collect();
 
+    // An input with the features that separate a correct smoothing from a
+    // plausible one. The ends are the part worth shipping: a filter that reads
+    // off the end of the array either clamps, wraps or shortens its window,
+    // and all three agree everywhere in the middle.
+    let mut bins = [0u32; pe_scopes::BINS];
+    bins[0] = 500; // hard against the low end
+    bins[pe_scopes::BINS - 1] = 300; // and the high
+    bins[64] = 1000; // a lone spike, with empty runs either side
+    for b in bins.iter_mut().skip(150).take(30) {
+        *b = 200; // a plateau, which must come back flat
+    }
+    let peak = *bins.iter().max().unwrap() as f32;
+
     let json = serde_json::to_string_pretty(&serde_json::json!({
         "window": { "black": LOG_BLACK, "white": LOG_WHITE },
         "behind": mapping,
+        "bins": bins.to_vec(),
+        "peak": peak,
+        "traced": pe_scopes::trace(&bins, peak),
     }))
     .unwrap();
     check("backdrop_samples.json", json);
