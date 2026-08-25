@@ -28,18 +28,24 @@ public struct InspectorPanel: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            if showsTitle {
-                // The one thing in the panel drawn in the accent. Resolve
-                // titles the open effect in it and spends it nowhere else,
-                // which is what makes it readable at a glance in an interface
-                // that is otherwise entirely grey.
-                Text(effect.name)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Palette.accent.color)
-                    .padding(.bottom, 2)
+        if showsTitle {
+            // Foldable, and titled in the accent only while it is open.
+            // Resolve spends the accent on the effect you are working in and
+            // nowhere else; seven pinned panels shouting it at once is the
+            // same nothing as accenting every heading. Folding is also what
+            // makes a column of nine panels navigable at all.
+            InspectorSection(effect: effect.key, title: effect.name, namesAnEffect: true) {
+                contents
             }
+        } else {
+            contents
+        }
+    }
 
+    /// Everything the panel draws under its own name.
+    @ViewBuilder
+    private var contents: some View {
+        VStack(alignment: .leading, spacing: 2) {
             if !wheels.isEmpty {
                 HStack(alignment: .top, spacing: 4) {
                     ForEach(wheels) { param in
@@ -293,16 +299,43 @@ public struct InspectorPanel: View {
 /// second while a slider is moving.
 struct InspectorSection<Content: View>: View {
     let title: String
+    /// Whether this heading names a whole effect rather than a group inside
+    /// one. An effect's name is accented while its panel is open and grey
+    /// while it is shut, which is what `resolve.rs` does — and the reason the
+    /// accent stays worth something. Seven pinned panels all titled in it at
+    /// once says exactly as little as accenting every heading would.
+    let namesAnEffect: Bool
     private let content: () -> Content
     @AppStorage private var open: Bool
 
-    init(effect: String, title: String, @ViewBuilder content: @escaping () -> Content) {
+    init(
+        effect: String,
+        title: String,
+        namesAnEffect: Bool = false,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
         self.title = title
+        self.namesAnEffect = namesAnEffect
         self.content = content
         // Keyed by effect as well as by section: "Add Vignetting" folded away
         // under one effect says nothing about the section of the same name
         // under another.
-        _open = AppStorage(wrappedValue: true, "section.\(effect).\(title)")
+        _open = AppStorage(
+            wrappedValue: true,
+            namesAnEffect ? "effect.\(effect)" : "section.\(effect).\(title)"
+        )
+    }
+
+    /// What the title is drawn in. Only an *open* effect gets the accent.
+    ///
+    /// A free function so the rule can be asserted without standing a view up
+    /// and driving its stored state — the rule is the point, not the plumbing.
+    static func titleColour(namesAnEffect: Bool, open: Bool) -> Color {
+        namesAnEffect && open ? Palette.accent.color : Palette.title.color
+    }
+
+    var titleColour: Color {
+        Self.titleColour(namesAnEffect: namesAnEffect, open: open)
     }
 
     var body: some View {
@@ -331,8 +364,8 @@ struct InspectorSection<Content: View>: View {
                     .padding(.trailing, 8.4)
 
                 Text(title)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Palette.title.color)
+                    .font(.system(size: 12, weight: namesAnEffect ? .semibold : .regular))
+                    .foregroundStyle(titleColour)
                     .lineLimit(1)
 
                 Spacer(minLength: 0)

@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 
 /// What holds the two shells to one scheme.
@@ -135,6 +136,36 @@ final class PaletteTests: XCTestCase {
             XCTAssertTrue(
                 Ramp.for(effect: effect, key: key).isPlain,
                 "\(effect).\(key) was given a gradient it has no business with")
+        }
+    }
+}
+
+/// Where the accent is allowed to go.
+///
+/// Resolve's interface is almost entirely grey, which is why its one orange
+/// title tells you where you are without having to shout. Spending it on every
+/// heading — or on seven pinned panels at once, which is the same thing
+/// arriving through the layout instead of through the colour — says nothing at
+/// all. `resolve.rs` accents an effect's name only while its panel is open,
+/// and this is that rule.
+final class AccentDisciplineTests: XCTestCase {
+    func testOnlyAnOpenEffectIsAccented() {
+        XCTAssertEqual(
+            InspectorSection<EmptyView>.titleColour(namesAnEffect: true, open: true),
+            Palette.accent.color,
+            "the effect you are working in should be the one thing wearing it")
+        XCTAssertEqual(
+            InspectorSection<EmptyView>.titleColour(namesAnEffect: true, open: false),
+            Palette.title.color,
+            "a folded panel is not the one you are working in")
+    }
+
+    func testASectionInsideAnEffectIsNeverAccented() {
+        for open in [true, false] {
+            XCTAssertEqual(
+                InspectorSection<EmptyView>.titleColour(namesAnEffect: false, open: open),
+                Palette.title.color,
+                "a group inside an effect took the accent (open: \(open))")
         }
     }
 }

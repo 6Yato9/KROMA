@@ -69,7 +69,7 @@ and anywhere the two could differ the Windows one wins.
 - Modify: `crates/pe-session/tests/fixtures.rs`
 - Create: `apps/apple/Fixtures/theme.json`
 
-- [ ] **Step 1: Make the crate**
+- [x] **Step 1: Make the crate**
 
 Move out of `apps/windows/src/theme.rs`, unchanged in behaviour:
 
@@ -92,7 +92,7 @@ than the picture, why the accent is spent on so little, why the ramps are
 hand-picked rather than converted through a linear HSV — and that reasoning is
 the part a second shell most needs.
 
-- [ ] **Step 2: Prove nothing moved**
+- [x] **Step 2: Prove nothing moved**
 
 The Windows shell must be byte-identical in behaviour. It has an ignored test
 that writes plots to files and a suite of ordinary ones:
@@ -160,7 +160,7 @@ wrong:
 
 `Ramp` needs `Debug` for those messages.
 
-- [ ] **Step 3: Write the fixture**
+- [x] **Step 3: Write the fixture**
 
 Add to `crates/pe-session/tests/fixtures.rs`:
 
@@ -228,7 +228,7 @@ missing from `ALL` never reaches Swift**, so add a test that the count matches
 the number of `pub const` colours, or build `ALL` with a macro that declares
 them — whichever you can make genuinely hard to forget. Say which you did.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && PE_UPDATE_FIXTURES=1 cargo test -p pe-session --test fixtures 2>&1 | LC_ALL=C grep -aE "^test result:"; cargo fmt --all && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings 2>&1 | LC_ALL=C grep -aE "^error|^warning"; cargo test --workspace --no-fail-fast 2>&1 | LC_ALL=C grep -aE "^test result:|FAILED"
@@ -246,7 +246,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add -A && git commit -m "
 - Create: `apps/apple/KromaKit/Palette.swift`, `Controls/Ramp.swift`
 - Create: `apps/apple/KromaKitTests/PaletteTests.swift`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```swift
     /// Every colour in the application comes from one place, and that place is
@@ -293,7 +293,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add -A && git commit -m "
     }
 ```
 
-- [ ] **Step 2: Write them**
+- [x] **Step 2: Write them**
 
 `Palette.swift` holds the constants as `Color` **and** as the raw bytes, since
 the test compares hex — build them from one `(r, g, b)` triple each so the two
@@ -309,7 +309,7 @@ two `hsv` implementations fails the test rather than being absorbed. If you
 cannot make them agree to the byte, report the largest difference and where —
 do not switch the test to a tolerance without saying so.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 Baseline **165 Swift tests**. Report the real number.
 
@@ -325,7 +325,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add apps/apple && git com
 - Modify: `apps/apple/KromaKit/ParameterRow.swift`
 - Modify: `apps/apple/KromaKitTests/RowMetricsTests.swift`
 
-- [ ] **Step 1: Rebuild `ScalarRow` on the palette**
+- [x] **Step 1: Rebuild `ScalarRow` on the palette**
 
 Four changes, each with a reason worth keeping in a comment:
 
@@ -347,7 +347,7 @@ Label text is `LABEL` at 11.5pt, right-aligned. A disabled row dims everything
 it draws by 0.42 — SwiftUI's `.disabled` will not do it, because everything
 here is painted with a colour of its own.
 
-- [ ] **Step 2: The box is a control, not a readout**
+- [x] **Step 2: The box is a control, not a readout**
 
 Dragging it changes the value **four times more slowly than the track**, and it
 accepts typing. That ratio is the point of having both: the track is for
@@ -369,7 +369,7 @@ Test the ratio directly:
 Spell those two helpers however the implementation wants; the assertion is
 that one is meaningfully finer than the other.
 
-- [ ] **Step 3: Ramps**
+- [x] **Step 3: Ramps**
 
 `FloatRow` asks `Ramp.for(effect:key:)` and hands the result to `ScalarRow`.
 A ramped track draws the gradient instead of the grey bar and **no fill** —
@@ -379,7 +379,7 @@ part being pointed at.
 `ScalarRow` is also used by the pin controls, which have no registry key; they
 pass `.plain` and keep the grey bar.
 
-- [ ] **Step 4: Test what a render can show**
+- [x] **Step 4: Test what a render can show**
 
 Extend `RowMetricsTests` with the `ImageRenderer` approach already there:
 
@@ -405,7 +405,7 @@ mutations you checked. That discipline is what the last four plans established
 and it is the only thing making a headless assertion about appearance worth
 anything.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && git add apps/apple && git commit -m "The row wears the scheme, and its handle stops hiding the ramp"
@@ -420,7 +420,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add apps/apple && git com
 - Modify: `apps/apple/KromaKit/Controls/{BoolRow,ChoiceRow,RgbRow,WheelView}.swift`
 - Modify: `StackRowView.swift`, `EffectBrowser.swift`, `Controls/ScopeViews.swift`
 
-- [ ] **Step 1: Section headers**
+- [x] **Step 1: Section headers**
 
 The registry gives every parameter a `section`, and the Mac inspector currently
 ignores it except where the warper claims one — which is why the panel is one
@@ -433,7 +433,7 @@ The effect's own name is the one thing drawn in `ACCENT` — Resolve titles the
 open effect in it and spends it nowhere else. Resist using it for anything
 here; an accent on every heading says nothing.
 
-- [ ] **Step 2: Surfaces**
+- [x] **Step 2: Surfaces**
 
 Four greys, doing the job they were chosen for:
 
@@ -448,7 +448,7 @@ Four greys, doing the job they were chosen for:
 
 Divisions are the single `RULE` hairline, not `Divider()`'s default.
 
-- [ ] **Step 3: The other four control kinds**
+- [x] **Step 3: The other four control kinds**
 
 `BoolRow`, `ChoiceRow`, `RgbRow` and `WheelView` are on SwiftUI defaults and
 will now be the only things that are. Put each on the palette, keeping the row
@@ -459,7 +459,7 @@ The `SELECT` blue is for "this is chosen"; `ACCENT` is for "this is doing
 something". They are different facts and Resolve keeps them apart — the scopes
 panel's toggles currently use the accent for selection, which is the wrong one.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Every existing test must still pass — this is appearance, and the geometry
 tests, the fixture checks and the backdrop tests all assert things that must not
@@ -477,7 +477,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add apps/apple && git com
 This is the task that was impossible until today. `screencapture` works; the
 earlier black frames were a sleeping display, not a permission.
 
-- [ ] **Step 1: Build, launch, and capture**
+- [x] **Step 1: Build, launch, and capture**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && xcodegen generate && xcodebuild build -project PhotoEditor.xcodeproj -scheme PhotoEditor -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO 2>&1 | LC_ALL=C grep -aE "error:|BUILD"
@@ -523,7 +523,7 @@ for _ in 0..<abs(n) {
 `set size of window 1` resizes. Both work; the accessibility permission is
 already granted.
 
-- [ ] **Step 2: Actually look, and write down what is wrong**
+- [x] **Step 2: Actually look, and write down what is wrong**
 
 Capture the inspector top, a section further down, the curve editor, and each
 of the warper's three tabs. **Read each image.** For every one, write down what
@@ -539,11 +539,11 @@ Things to check against the Windows shell, which can be run beside it:
 - is the boxed number legible at 17pt, or too tight
 - does a section header read as a division, or as another row
 
-- [ ] **Step 3: Fix what you found, and capture again**
+- [x] **Step 3: Fix what you found, and capture again**
 
 Iterate until the panel reads as one thing. Keep the before and after.
 
-- [ ] **Step 4: Report honestly**
+- [x] **Step 4: Report honestly**
 
 Say what you changed, what still looks wrong and why you left it, and what you
 could not judge. A claim that something "looks right" now has to be backed by
@@ -553,16 +553,16 @@ an image you actually read.
 
 ## Task 6: Write it down
 
-- [ ] **Step 1** — `apps/apple/README.md` gains a note that the scheme lives in
+- [x] **Step 1** — `apps/apple/README.md` gains a note that the scheme lives in
 `pe-theme` and is shared with the Windows shell, with the `theme.json` fixture
 alongside the others and the same warning: regenerating it to make a test pass
 means the two shells have parted company on a colour.
 
-- [ ] **Step 2** — `apps/windows/src/theme.rs` is now glue. Its header explains
+- [x] **Step 2** — `apps/windows/src/theme.rs` is now glue. Its header explains
 the scheme; move that explanation to `pe-theme`'s and leave a pointer, so the
 reasoning sits with the numbers rather than with one shell's adapter.
 
-- [ ] **Step 3: Verify the whole tree and commit**
+- [x] **Step 3: Verify the whole tree and commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings 2>&1 | LC_ALL=C grep -aE "^error|^warning"; cargo test --workspace --no-fail-fast 2>&1 | LC_ALL=C grep -aE "^test result: FAILED|^error"; echo "rust done"

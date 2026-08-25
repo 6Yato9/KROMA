@@ -268,8 +268,17 @@ public struct ScalarRow: View {
         Text(name)
             .font(.system(size: 11.5))
             .foregroundStyle(Palette.label.color)
-            .lineLimit(1)
+            // The width goes on first so the proposal reaches the `Text` and it
+            // truncates. With `lineLimit` first the `Text` sizes to its ideal
+            // width and the frame simply clips it — and because the column is
+            // right-aligned the clip takes the *front* of the word, so
+            // "Orange Saturation" reads "range Saturation".
+            //
+            // Truncated at the tail, because the band name is the part that
+            // tells two of these apart and it is at the front.
             .frame(width: RowMetrics.label, alignment: .trailing)
+            .lineLimit(1)
+            .truncationMode(.tail)
     }
 
     private var resetButton: some View {

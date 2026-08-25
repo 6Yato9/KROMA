@@ -243,6 +243,35 @@ final class RowMetricsTests: XCTestCase {
         }
     }
 
+    /// A label longer than its column stays inside the row.
+    ///
+    /// The column is right-aligned, so a `Text` that sized to its ideal width
+    /// and was then clipped by the frame would lose the *start* of the word —
+    /// "Orange Saturation" reading "range Saturation", which is as unreadable
+    /// as the panel being too narrow. The registry has names up to 25
+    /// characters, so the case is real.
+    ///
+    /// This is a guard, not the fix for a bug that shipped: the order of
+    /// `.frame` and `.lineLimit` in `labelText` is what makes the `Text`
+    /// truncate rather than overflow, and reversing it does not fail this
+    /// test — SwiftUI proposes the width either way when the row is rendered
+    /// on its own. What it does pin is that a long name never starts left of
+    /// the row, which is the thing that would be unreadable.
+    @MainActor
+    func testALabelTooLongForItsColumnTruncatesRatherThanLosingItsFront() throws {
+        let width = RowMetrics.minimumPanel - RowMetrics.inset * 2
+        let long = try Self.render(Self.row(named: "Fine Tune Relative Spread"), width: width)
+        let short = try Self.render(Self.row(named: "Tint"), width: width)
+        // Both must start their ink in the same place — the label column's own
+        // left edge at the earliest, never before it.
+        let a = try XCTUnwrap(Self.firstInkedColumn(long))
+        let b = try XCTUnwrap(Self.firstInkedColumn(short))
+        XCTAssertGreaterThan(a, 0, "the long label runs off the left edge")
+        XCTAssertGreaterThanOrEqual(
+            a, 1, "the long label starts before the row does")
+        XCTAssertGreaterThan(b, a, "the short label should start further right")
+    }
+
     // ---- helpers ---------------------------------------------------------
 
     /// Wide enough that the track is long and the regions sampled along it are
@@ -265,6 +294,20 @@ final class RowMetricsTests: XCTestCase {
 
     /// A row with the longest label the registry actually uses, since that is
     /// the one that clips first.
+    @MainActor
+    private static func row(named name: String) -> some View {
+        ScalarRow(
+            name: name,
+            unit: "",
+            value: 0,
+            bounds: Bounds(min: -1, max: 1, default: 0, neutral: 0),
+            isActive: true,
+            onChange: { _ in },
+            onBegin: {},
+            onEnd: {}
+        )
+    }
+
     @MainActor
     private static var sampleRow: some View {
         row(

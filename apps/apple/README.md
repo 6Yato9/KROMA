@@ -96,6 +96,27 @@ is not a fixture that has gone stale — it is the drawn control and the rendere
 one having parted company, and one of them is wrong. Find out which before
 regenerating.
 
+## The scheme
+
+Every colour comes from `crates/pe-theme`, shared with the Windows shell, and
+`Fixtures/theme.json` is what holds the two to it: 27 named colours, which ramp
+each parameter's track gets, and what each ramp actually paints at seventeen
+steps. Regenerating it to make a test pass means the two shells have parted
+company on a colour.
+
+Four greys carry the structure — the viewer surround darkest so nothing
+competes with the photograph, a well inside anything read as a graph, a panel
+grey for the inspector and scopes, and one step up for headers. One hairline
+for every division. And a single warm accent, spent on the name of the effect
+you have open and nowhere else: the interface is almost entirely grey, which is
+the only reason that one orange title says anything.
+
+`Palette` is a `CaseIterable` enum whose bytes come from an exhaustive switch,
+so a colour cannot be added on the Swift side without the fixture test failing.
+`PaletteDisciplineTests` additionally greps the sources for `.quaternary`,
+`Color(white:)`, `.tint` and friends — crude, but it is what would have caught
+the interface being built out of SwiftUI defaults in the first place.
+
 ## Measuring
 
 The scopes are counts, not pictures. `pe-scopes` bins a frame and the views
