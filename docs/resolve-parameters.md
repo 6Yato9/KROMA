@@ -566,6 +566,19 @@ views switch on an icon rather than being three tools, and why there is one
 two rows per grid from row 10. A 16 by 16 grid is 256 vertices, which is
 exactly one LUT row per component, and that is where the 16 comes from.
 
+**A divisions control and its lattice are one thing.** The shader reads a
+grid's size from the divisions choice, while the lattice carries its own
+`cols`/`rows` and is uploaded that many offsets, row-major. They have to agree:
+disagree, and the renderer indexes a 6 by 6 grid as though it were 8 by 8 and
+reads real displacements from the wrong vertices. `Session::set_choice` keeps
+them in step, resizing the lattice whenever the choice moves, and does both
+inside one interaction so a single undo cannot put them back out of step.
+
+Resizing **resamples** rather than clearing. Somebody who has spent a minute
+pulling a grid around and then wants it finer is asking for more control
+points, not for their work back — and "changing the resolution discards the
+edit" is the kind of behaviour that teaches people never to touch a control.
+
 **Hue wraps and chroma does not.** The vertex at the far right of the hue grid
 *is* the one at the far left; treating it as an edge leaves a seam at red no
 amount of dragging can smooth. Chroma's two ends are grey and full colour,

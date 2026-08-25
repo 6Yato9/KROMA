@@ -113,7 +113,7 @@ about which colours you are moving; the haze is absent and the docs say so.
 **Files:**
 - Modify: `crates/pe-session/src/session.rs`
 
-- [ ] **Step 1: Prove the bug exists**
+- [x] **Step 1: Prove the bug exists**
 
 Write this test first. It must fail before anything is fixed — that is what
 establishes the bug is real rather than a misreading.
@@ -210,7 +210,7 @@ The second test uses `Session::set_warp_vertex`, which Task 3 adds. Write both
 tests now, expect the second not to compile yet, and **come back and run it at
 the end of Task 3** — the plan's verification step for Task 3 says so.
 
-- [ ] **Step 2: Run the first test and watch it fail**
+- [x] **Step 2: Run the first test and watch it fail**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo test -p pe-session changing_the_divisions 2>&1 | LC_ALL=C grep -aE "^test result:|panicked|assertion"
@@ -218,7 +218,7 @@ cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && 
 
 Expected: it fails asserting `(6, 6)` where `(8, 6)` was wanted. That is the bug.
 
-- [ ] **Step 3: Write the fix**
+- [x] **Step 3: Write the fix**
 
 In `crates/pe-session/src/session.rs`, add this beside `set_choice`:
 
@@ -324,11 +324,11 @@ Then call it from `set_choice`, which today is a one-liner at
 Match the existing `set_choice` body — read it first and keep whatever it
 already does, adding only the `follow_divisions` call.
 
-- [ ] **Step 4: Run the first test again**
+- [x] **Step 4: Run the first test again**
 
 Expected: PASS.
 
-- [ ] **Step 5: Check nothing else moved**
+- [x] **Step 5: Check nothing else moved**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo test --workspace --no-fail-fast 2>&1 | LC_ALL=C grep -aE "^test result:|FAILED"
@@ -340,7 +340,7 @@ either leaves the divisions alone or leaves the lattice at identity, and
 resizing an identity lattice yields another identity lattice. **If a golden
 test moves, stop and report which one.** Do not re-bless it.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && git add crates && git commit -m "The divisions control the grid it says it controls"
@@ -362,7 +362,7 @@ lattice's own geometry rather than any shell's.
 - Modify: `crates/pe-session/tests/fixtures.rs`
 - Create: `apps/apple/Fixtures/warp_samples.json`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to the test module in `crates/pe-core/src/warp.rs`:
 
@@ -411,7 +411,7 @@ Add to the test module in `crates/pe-core/src/warp.rs`:
     }
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo test -p pe-core warp 2>&1 | LC_ALL=C grep -aE "^error|^test result:"
@@ -419,7 +419,7 @@ cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && 
 
 Expected: `no method named 'home'`.
 
-- [ ] **Step 3: Write it**
+- [x] **Step 3: Write it**
 
 In `crates/pe-core/src/warp.rs`, in `impl Warp`, beside `sample`:
 
@@ -446,7 +446,7 @@ In `crates/pe-core/src/warp.rs`, in `impl Warp`, beside `sample`:
     }
 ```
 
-- [ ] **Step 4: Make the Windows shell use it**
+- [x] **Step 4: Make the Windows shell use it**
 
 In `apps/windows/src/warper.rs`, delete the private `home_of` and replace its
 call sites with `warp.home(col, row, axes.wraps())`. There are call sites in
@@ -461,7 +461,7 @@ The Windows test `the_hue_axis_spaces_its_vertices_around_a_full_circle` now
 duplicates the two new `pe-core` tests. Delete it rather than leaving a copy
 that can drift — the assertion it makes has moved to where the code moved.
 
-- [ ] **Step 5: Write the fixture generator**
+- [x] **Step 5: Write the fixture generator**
 
 Add to `crates/pe-session/tests/fixtures.rs`:
 
@@ -534,7 +534,7 @@ fn the_warp_sample_fixture_is_current() {
 }
 ```
 
-- [ ] **Step 6: Generate it and look at it**
+- [x] **Step 6: Generate it and look at it**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && PE_UPDATE_FIXTURES=1 cargo test -p pe-session --test fixtures 2>&1 | LC_ALL=C grep -aE "^test result:"
@@ -558,7 +558,7 @@ distinct hues, never reaching 1.0, because 1.0 *is* 0.0. The clamping row runs
 `0, 0.2, 0.4, 0.6, 0.8, 1.0` — reaching both ends. **If those two are the same,
 the `wrap` argument is not being used and the whole distinction is lost.**
 
-- [ ] **Step 7: Verify**
+- [x] **Step 7: Verify**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo fmt --all && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings 2>&1 | LC_ALL=C grep -aE "^error|^warning"; cargo test --workspace --no-fail-fast 2>&1 | LC_ALL=C grep -aE "^test result:|FAILED"
@@ -567,7 +567,7 @@ cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && 
 fmt and clippy silent; no failures. The Windows shell must still build — it is
 part of the workspace, so `cargo clippy --workspace --all-targets` covers it.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && git add crates apps && git commit -m "Where a vertex lives is the lattice's business, and only said once"
@@ -581,7 +581,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add crates apps && git co
 - Modify: `crates/pe-session/src/session.rs`
 - Modify: `crates/pe-ffi/src/lib.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to the test module in `crates/pe-session/src/session.rs`:
 
@@ -656,11 +656,11 @@ too, so put them somewhere both can reach):
 If Task 1's tests already spell these inline, rewrite them to use the helpers
 rather than keeping both.
 
-- [ ] **Step 2: Run and watch them fail**
+- [x] **Step 2: Run and watch them fail**
 
 Expected: `no method named 'set_warp_vertex'`.
 
-- [ ] **Step 3: Write the session methods**
+- [x] **Step 3: Write the session methods**
 
 Add to `SessionError`:
 
@@ -735,7 +735,7 @@ and to `Session`:
 `require_row` already exists at `crates/pe-session/src/session.rs:386` and
 returns the row's effect key.
 
-- [ ] **Step 4: Write the C entry points**
+- [x] **Step 4: Write the C entry points**
 
 In `crates/pe-ffi/src/lib.rs`, after `pe_session_set_curve`:
 
@@ -781,7 +781,7 @@ pub unsafe extern "C" fn pe_session_clear_warp(
 }
 ```
 
-- [ ] **Step 5: Write the failing FFI test**
+- [x] **Step 5: Write the failing FFI test**
 
 Add to `mod tests` in `crates/pe-ffi/src/lib.rs`, following the shape of
 `a_curve_crosses_the_boundary_as_a_flat_array`:
@@ -812,7 +812,7 @@ Add to `mod tests` in `crates/pe-ffi/src/lib.rs`, following the shape of
 snapshot-JSON lookup the curve test uses — read that test and follow it rather
 than inventing a different shape.
 
-- [ ] **Step 6: Run everything, including Task 1's second test**
+- [x] **Step 6: Run everything, including Task 1's second test**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo test -p pe-session a_finer_grid_keeps 2>&1 | LC_ALL=C grep -aE "^test result:|panicked"; cargo fmt --all && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings 2>&1 | LC_ALL=C grep -aE "^error|^warning"; cargo test --workspace --no-fail-fast 2>&1 | LC_ALL=C grep -aE "^test result:|FAILED"
@@ -821,7 +821,7 @@ cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && 
 `a_finer_grid_keeps_the_shape_that_was_drawn_on_the_coarse_one` was written in
 Task 1 and could not compile until now. It must pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && git add crates && git commit -m "A vertex can be dragged from the far side of the boundary"
@@ -835,7 +835,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add crates && git commit 
 - Modify: `apps/apple/KromaKit/Snapshot.swift`
 - Modify: `apps/apple/KromaKitTests/SnapshotTests.swift`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 The wire shape is a **keyed object** — `{"t":"warp","v":{"cols":6,"rows":6,"offsets":[[0,0],…]}}`
 — unlike `Curve`, which is `#[serde(transparent)]` and arrives as a bare array.
@@ -890,11 +890,11 @@ Add to `SnapshotTests`:
     }
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 Expected: `type 'ParamValue' has no member 'warp'`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `apps/apple/KromaKit/Snapshot.swift`:
 
@@ -967,7 +967,7 @@ before the `default`, and an accessor:
 rewritten during the curve work to use their real wire shapes. Update the
 `warp` half of it (a warp is no longer opaque) and leave the `pins` half alone.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && xcodegen generate && xcodebuild test -project PhotoEditor.xcodeproj -scheme KromaKitTests -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO 2>&1 | LC_ALL=C grep -aE "error:|\*\* TEST|Executed [0-9]+ test"
@@ -975,7 +975,7 @@ cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.car
 
 Baseline **63 tests, 0 failures**. Expect **66**.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && git add apps/apple && git commit -m "A lattice arrives as a grid rather than as something unreadable"
@@ -989,7 +989,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add apps/apple && git com
 - Create: `apps/apple/KromaKit/Controls/WarpGeometry.swift`
 - Create: `apps/apple/KromaKitTests/WarpGeometryTests.swift`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```swift
 import XCTest
@@ -1160,11 +1160,11 @@ final class WarpGeometryTests: XCTestCase {
 }
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 Expected: `cannot find 'WarpGeometry' in scope`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `apps/apple/KromaKit/Controls/WarpGeometry.swift`:
 
@@ -1318,7 +1318,7 @@ public struct WarpGeometry {
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && xcodegen generate && xcodebuild test -project PhotoEditor.xcodeproj -scheme KromaKitTests -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO 2>&1 | LC_ALL=C grep -aE "error:|vertex|axis|\*\* TEST|Executed [0-9]+ test"
@@ -1330,7 +1330,7 @@ Baseline **66**. Expect **76, 0 failures**.
 it names and match the engine — do not widen the tolerance.** A lattice drawn
 in the wrong places is a lattice that lies about which colours it moves.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && git add apps/apple && git commit -m "Swift puts a vertex where the engine would, and is checked against it"
@@ -1363,7 +1363,7 @@ next plan.
 - Modify: `apps/apple/KromaKit/InspectorPanel.swift`
 - Modify: `apps/apple/KromaKitTests/EngineTests.swift`
 
-- [ ] **Step 1: Write the failing tests for the mutation path**
+- [x] **Step 1: Write the failing tests for the mutation path**
 
 Add to `EngineTests` — read the neighbouring tests first and match how they
 build a session and read a snapshot (the class is `Session`, the accessor is
@@ -1402,11 +1402,11 @@ build a session and read a snapshot (the class is `Session`, the accessor is
     }
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 Expected: `value of type 'Session' has no member 'setWarpVertex'`.
 
-- [ ] **Step 3: Write the engine and store methods**
+- [x] **Step 3: Write the engine and store methods**
 
 In `apps/apple/KromaKit/Engine.swift`, after `setCurve`:
 
@@ -1456,7 +1456,7 @@ In `apps/apple/KromaKit/SessionStore.swift`, after `setCurve`:
 
 Match the surrounding spelling of `check`, `handle`, `run` and `session`.
 
-- [ ] **Step 4: Write the editor**
+- [x] **Step 4: Write the editor**
 
 Create `apps/apple/KromaKit/Controls/WarpEditor.swift`:
 
@@ -1666,7 +1666,7 @@ public struct WarpEditor: View {
     }
 ```
 
-- [ ] **Step 5: Write the panel**
+- [x] **Step 5: Write the panel**
 
 Create `apps/apple/KromaKit/Controls/WarperPanel.swift`:
 
@@ -1788,7 +1788,7 @@ instance body call the static one. That is what lets both panels render a row
 the same way instead of a second copy of the same `switch` drifting from the
 first.
 
-- [ ] **Step 6: Wire it into the inspector**
+- [x] **Step 6: Wire it into the inspector**
 
 In `apps/apple/KromaKit/InspectorPanel.swift`, add:
 
@@ -1834,7 +1834,7 @@ appears, it belongs in the panel, not in the list. Leave `default` alone.
 `pins` has an empty section and is not a warp, so it still lands in the flat
 list saying "not yet" — which is exactly right until the next plan.
 
-- [ ] **Step 7: Run the tests**
+- [x] **Step 7: Run the tests**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && xcodegen generate && xcodebuild test -project PhotoEditor.xcodeproj -scheme KromaKitTests -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO 2>&1 | LC_ALL=C grep -aE "error:|\*\* TEST|Executed [0-9]+ test"
@@ -1844,7 +1844,7 @@ Baseline **76**. Expect **79, 0 failures** — two engine tests and one
 `replacing` test. Extracting `control(for:)` adds no test of its own; it is
 covered by every panel test that already passes.
 
-- [ ] **Step 8: Build the app**
+- [x] **Step 8: Build the app**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && xcodebuild build -project PhotoEditor.xcodeproj -scheme PhotoEditor -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO 2>&1 | LC_ALL=C grep -aE "error:|warning: |BUILD"
@@ -1855,7 +1855,7 @@ large view bodies are common — if one appears, break the offending expression
 into a named `let` or a small `@ViewBuilder` function rather than simplifying
 the view away, and say in your report exactly what you split.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && git add apps/apple && git commit -m "Three lattices, drawn displaced, dragged a vertex at a time"
@@ -1869,7 +1869,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add apps/apple && git com
 - Modify: `README.md`
 - Modify: `apps/apple/README.md`
 
-- [ ] **Step 1: Update the counts and the claims**
+- [x] **Step 1: Update the counts and the claims**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && LC_ALL=C grep -an "six of eight\|six of the eight\|lattices\|pins\|curve_samples" README.md apps/apple/README.md
@@ -1888,7 +1888,7 @@ the space but not the photograph's own colour distribution — Resolve and the
 Windows shell composite a haze over it, and that needs scope data with no C ABI
 — alongside the curve histogram, which is absent for the same reason.
 
-- [ ] **Step 2: Record the divisions fix where a colourist would look**
+- [x] **Step 2: Record the divisions fix where a colourist would look**
 
 The bug fixed in Task 1 changed rendering behaviour on **both** shells: before
 it, dragging a lattice and then changing its divisions read real displacements
@@ -1898,7 +1898,7 @@ section, saying that a lattice's grid size and its divisions control are one
 thing kept in step by `Session::set_choice`, and that changing the size
 resamples the shape rather than discarding it.
 
-- [ ] **Step 3: Verify the whole tree**
+- [x] **Step 3: Verify the whole tree**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings 2>&1 | LC_ALL=C grep -aE "^error|^warning"; cargo test --workspace --no-fail-fast 2>&1 | LC_ALL=C grep -aE "^test result: FAILED|^error"; echo "rust done"
@@ -1908,7 +1908,7 @@ Expected: silent but for `rust done`. **`--no-fail-fast` is not optional** —
 without it cargo stops at the first failing test binary and reports a fraction
 of the failures as though it were all of them.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && git add -A && git commit -m "The lattices, written down"
