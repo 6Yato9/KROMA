@@ -364,7 +364,7 @@ public struct WarpEditor: View {
                 .overlay(
                     // Saturation grows outward, so the middle washes out.
                     RadialGradient(
-                        colors: [Color(white: 0.5), Color(white: 0.5).opacity(0)],
+                        colors: [Self.achromatic, Self.achromatic.opacity(0)],
                         center: .center, startRadius: 0,
                         endRadius: rect.width * 0.45
                     )
@@ -375,7 +375,7 @@ public struct WarpEditor: View {
         case .chromaLuma:
             // Chroma across, luma up.
             LinearGradient(
-                colors: [Color(white: 0.5), Color(hue: 0.05, saturation: 1, brightness: 1)],
+                colors: [Self.achromatic, Color(hue: 0.05, saturation: 1, brightness: 1)],
                 startPoint: .leading, endPoint: .trailing
             )
             .overlay(
@@ -450,13 +450,25 @@ public struct WarpEditor: View {
         .stroke(.white.opacity(0.6), lineWidth: 1)
     }
 
+    /// Zero chroma, which is where both plots start.
+    ///
+    /// A point in the space being *depicted* rather than a colour of the
+    /// interface: the lattice sits over a slice of colour, and its middle is
+    /// grey because a colour with no chroma in it is grey. Nothing in the
+    /// palette means that, and reaching for one of the surface greys here
+    /// would tie the picture of the space to the colour of the panel round it.
+    private static let achromatic = Rgb8(128, 128, 128).color
+
     private func vertices(_ g: WarpGeometry) -> some View {
         ForEach(0..<(warp.cols * warp.rows), id: \.self) { i in
             let c = i % warp.cols
             let r = i / warp.cols
             let moved = warp.at(col: c, row: r) != .zero
             Circle()
-                .fill(moved ? Color.accentColor : Color.white.opacity(0.85))
+                // A moved vertex in the accent, as the Windows shell draws
+                // it — and not the system accent, which is whatever the user
+                // picked in System Settings.
+                .fill(moved ? Palette.accent.color : Color.white.opacity(0.85))
                 .frame(width: moved ? 6.4 : 4.8, height: moved ? 6.4 : 4.8)
                 .position(g.toScreen(g.displaced(col: c, row: r)))
         }

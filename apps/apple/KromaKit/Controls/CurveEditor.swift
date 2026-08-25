@@ -156,7 +156,7 @@ struct CurveBackdropView: View {
     ) {
         context.fill(
             area(heights, canvas, windowed: windowed),
-            with: .color(Color(white: 0.9).opacity(0.19)))
+            with: .color(Palette.title.color.opacity(0.19)))
         context.stroke(
             top(heights, canvas, windowed: windowed),
             with: .color(.white.opacity(0.82)), lineWidth: 1.2)
@@ -257,10 +257,13 @@ public struct CurveEditor: View {
             }
         }
         .frame(height: 168)
-        .background(.black.opacity(0.28))
+        // The inside of a graph is `WELL` — the same grey the scope wells and
+        // the warper plots are, rather than a black wash at some opacity over
+        // whatever happens to be behind it.
+        .background(Palette.well.color)
         .overlay(
             RoundedRectangle(cornerRadius: 3)
-                .strokeBorder(.quaternary, lineWidth: 1)
+                .strokeBorder(Palette.rule.color, lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 3))
         .opacity(isActive ? 1 : 0.4)
@@ -295,7 +298,7 @@ public struct CurveEditor: View {
                 p.addLine(to: canvas.view(CGPoint(x: 1, y: t)))
             }
         }
-        .stroke(.white.opacity(0.07), lineWidth: 1)
+        .stroke(Palette.grid.color, lineWidth: 1)
     }
 
     /// Where this curve rests. A tone curve's identity is the diagonal; a
@@ -334,19 +337,24 @@ public struct CurveEditor: View {
         let g = curve
         return ForEach(Array(g.points.enumerated()), id: \.offset) { index, point in
             Circle()
-                .fill(index == heldIndex ? tint : Color.white)
+                .fill(index == heldIndex ? tint : Palette.handle.color)
                 .frame(width: 6, height: 6)
                 .position(canvas.view(point))
         }
     }
 
     /// The channel's own colour, so a red curve reads as red without a label.
+    ///
+    /// The palette's three, not SwiftUI's — one set of channel colours across
+    /// the curve traces, the parade panels and the mixer bands, because three
+    /// slightly different reds in three panels reads as three different
+    /// meanings to anyone who has not seen the source.
     private var tint: Color {
         switch param.key {
-        case "red": .red
-        case "green": .green
-        case "blue": .blue
-        default: .white
+        case "red": Palette.channelR.color
+        case "green": Palette.channelG.color
+        case "blue": Palette.channelB.color
+        default: Palette.title.color
         }
     }
 
@@ -423,17 +431,13 @@ public struct CurvePanel: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if params.count > 1 {
-                Picker("", selection: Binding(
-                    get: { current?.key ?? "" },
-                    set: { selected = $0 }
-                )) {
-                    ForEach(params) { p in
-                        Text(p.name).tag(p.key)
-                    }
+                ChoiceMenu(
+                    options: params.map(\.name),
+                    chosen: current?.name ?? ""
+                ) { name in
+                    selected = params.first { $0.name == name }?.key
                 }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .controlSize(.small)
+                .frame(maxWidth: 160)
             }
 
             if let param = current, case let .curve(flat) = param.kind {

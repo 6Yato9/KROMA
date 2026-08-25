@@ -74,4 +74,51 @@ final class WheelGeometryTests: XCTestCase {
         XCTAssertEqual(back.x, start.x, accuracy: 0.5)
         XCTAssertEqual(back.y, start.y, accuracy: 0.5)
     }
+
+    // ---- and what the disc under it is painted -----------------------------
+
+    /// The disc agrees with the wheel it is drawn on.
+    ///
+    /// A colour wheel's background is not decoration: it is the map you aim at.
+    /// `WheelGeometry` puts red up, green at two hundred and ten degrees and
+    /// blue at three hundred and thirty; the disc was an `AngularGradient` of
+    /// SwiftUI's primaries in gradient order, which starts at three o'clock —
+    /// so red was drawn at the right of a wheel that raises red at the top, and
+    /// a handle dragged into what looked like the reds raised something else.
+    func testEachChannelsColourIsPaintedAtThatChannelsOwnAngle() {
+        for (name, angle, channel) in [
+            ("red", WheelGeometry.redAngle, 0),
+            ("green", WheelGeometry.greenAngle, 1),
+            ("blue", WheelGeometry.blueAngle, 2),
+        ] {
+            let painted = WheelView.discHue(atSweep: WheelView.sweep(forWheelAngle: angle))
+            let parts = [Int(painted.r), Int(painted.g), Int(painted.b)]
+            let others = parts.indices.filter { $0 != channel }.map { parts[$0] }
+            XCTAssertGreaterThan(
+                parts[channel], (others.max() ?? 0) + 40,
+                "the disc paints \(painted) at \(angle)°, which is where the wheel "
+                    + "pulls towards \(name)")
+        }
+    }
+
+    /// The disc is one continuous circle that closes, and it is drawn from
+    /// ``Ramp/hue`` — the same circle every Hue track in the application uses
+    /// and the one the engine's fixture checks byte for byte. A wheel and a
+    /// track disagreeing about where the cyans are is two hue circles in one
+    /// panel.
+    func testTheDiscClosesAndComesFromTheHueRamp() {
+        XCTAssertEqual(
+            WheelView.discHue(atSweep: 0), WheelView.discHue(atSweep: 1),
+            "the disc does not come back round to where it started")
+
+        // Red is at the wheel's red angle, and Ramp.hue's red is at zero. So
+        // the sweep the disc paints red at must be the sweep that reads hue
+        // zero off the ramp, whichever way round the two run.
+        XCTAssertEqual(
+            WheelView.discHue(atSweep: WheelView.sweep(forWheelAngle: WheelGeometry.redAngle)),
+            Ramp.hue.at(0))
+        XCTAssertNotEqual(
+            WheelView.discHue(atSweep: 0), Ramp.hue.at(0),
+            "three o'clock is a quarter turn from the wheel's red, not red itself")
+    }
 }

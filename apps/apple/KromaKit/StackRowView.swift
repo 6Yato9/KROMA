@@ -18,7 +18,10 @@ public struct StackRowView: View {
     let floor: Int
     let store: SessionStore
 
-    @State private var dragging: Float?
+    /// What Blend measures over. Neutral at the top, because a row that is
+    /// fully applied is a row doing nothing unusual — so the fill grows
+    /// *leftwards* as it is dialled back, which is the direction the change is.
+    static let blend = Bounds(min: 0, max: 1, default: 1, neutral: 1)
 
     public init(
         effect: Effect, row: Snapshot.Row, index: Int, count: Int, floor: Int,
@@ -34,87 +37,70 @@ public struct StackRowView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
-                Toggle("", isOn: Binding(
-                    get: { row.enabled },
-                    set: { store.setRowEnabled(row.id, $0) }
-                ))
-                .labelsHidden()
-                .toggleStyle(.checkbox)
-                .help("Bypass this row")
+            header
 
-                Text(effect.name)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(row.enabled ? .secondary : .tertiary)
-
-                Spacer()
-
-                Button {
-                    store.moveRow(row.id, to: UInt32(max(floor, index - 1)))
-                } label: {
-                    Image(systemName: "chevron.up")
-                }
-                .buttonStyle(.borderless)
-                .disabled(index <= floor)
-
-                Button {
-                    store.moveRow(row.id, to: UInt32(min(count - 1, index + 1)))
-                } label: {
-                    Image(systemName: "chevron.down")
-                }
-                .buttonStyle(.borderless)
-                .disabled(index >= count - 1)
-
-                if store.canRemove(row) {
-                    Button(role: .destructive) {
-                        store.removeRow(row.id)
-                    } label: {
-                        Image(systemName: "trash")
-                    }
-                    .buttonStyle(.borderless)
-                }
-            }
-
-            // Opacity, as the same four-column row every parameter uses, so the
-            // columns line up with the controls underneath it.
-            HStack(spacing: RowMetrics.gap) {
-                Text("Blend")
-                    .frame(width: RowMetrics.label, alignment: .trailing)
-                    .foregroundStyle(.tertiary)
-                GeometryReader { geo in
-                    let bounds = Bounds(min: 0, max: 1, default: 1, neutral: 1)
-                    let g = SliderGeometry(bounds: bounds, width: geo.size.width)
-                    let shown = dragging ?? row.opacity
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(.quaternary).frame(height: 3)
-                        Circle()
-                            .fill(.primary)
-                            .frame(width: 8, height: 8)
-                            .offset(x: g.position(of: shown) - 4)
-                    }
-                    .frame(maxHeight: .infinity)
-                    .contentShape(Rectangle())
-                    .gesture(
-                        DragGesture(minimumDistance: 0)
-                            .onChanged { drag in
-                                if dragging == nil { store.beginInteraction("Opacity") }
-                                let v = g.value(at: drag.location.x)
-                                dragging = v
-                                store.setRowOpacity(row.id, v)
-                            }
-                            .onEnded { _ in
-                                store.endInteraction()
-                                dragging = nil
-                            }
-                    )
-                }
-                Text(String(format: "%.0f%%", (dragging ?? row.opacity) * 100))
-                    .frame(width: RowMetrics.value, alignment: .trailing)
-                    .monospacedDigit()
-                    .foregroundStyle(.tertiary)
-            }
-            .frame(height: RowMetrics.height)
-            .font(.caption)
+            // Blend, as the same row every other parameter is: the same track,
+            // the same pointer, the same boxed number that can be dragged at a
+            // quarter speed or typed into. It was a capsule with a disc on it,
+            // which is the one row in the panel drawn unlike the thirty under
+            // it — and that reads as a bug rather than as a distinction.
+            ScalarRow(
+                name: "Blend",
+                unit: "",
+                value: row.opacity,
+                bounds: Self.blend,
+                isActive: row.enabled,
+                onChange: { store.setRowOpacity(row.id, $0) },
+                onBegin: { store.beginInteraction("Opacity") },
+                onEnd: { store.endInteraction() }
+            )
         }
+    }
+
+    /// The row's own header: what it is, whether it is doing anything, and the
+    /// buttons that move or remove it.
+    ///
+    /// On `RAISED`, one step up from the panel it sits on — which is the job
+    /// that grey was chosen for, and what separates one effect's controls from
+    /// the next one's without a second rule.
+    private var header: some View {
+        HStack(spacing: 4) {
+            Toggle("", isOn: Binding(
+                get: { row.enabled },
+                set: { store.setRowEnabled(row.id, $0) }
+            ))
+            .labelsHidden()
+            .toggleStyle(KromaCheckboxStyle())
+            .help("Bypass this row")
+
+            // The accent, and the only thing wearing it here. A bypassed row
+            // is doing nothing, so it is dimmed rather than recoloured.
+            Text(effect.name)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Palette.accent.color)
+                .opacity(row.enabled ? 1 : ScalarRow.dimmed)
+                .lineLimit(1)
+
+            Spacer()
+
+            IconButton("chevron.up", help: "Move up") {
+                store.moveRow(row.id, to: UInt32(max(floor, index - 1)))
+            }
+            .disabled(index <= floor)
+
+            IconButton("chevron.down", help: "Move down") {
+                store.moveRow(row.id, to: UInt32(min(count - 1, index + 1)))
+            }
+            .disabled(index >= count - 1)
+
+            if store.canRemove(row) {
+                IconButton("trash", help: "Remove this row") {
+                    store.removeRow(row.id)
+                }
+            }
+        }
+        .padding(.horizontal, 4)
+        .frame(height: RowMetrics.height)
+        .background(Palette.raised.color)
     }
 }

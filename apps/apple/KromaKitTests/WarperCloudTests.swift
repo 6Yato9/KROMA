@@ -580,11 +580,16 @@ final class WarperCloudTests: XCTestCase {
 
     /// The plot's own rectangle, found rather than assumed.
     ///
-    /// `PinsEditor` fills it with black at 0.28 and nothing else in the view is
-    /// that: premultiplied, its interior is a near-black at an alpha of about
-    /// seventy. Where the plot sits depends on how the stack under it lays out,
+    /// `PinsEditor` fills it with `WELL` and nothing else in the view is that
+    /// colour. Where the plot sits depends on how the stack under it lays out,
     /// and a rect guessed wrong reads every position off by the difference —
     /// which is this test's own version of the bug it is looking for.
+    ///
+    /// The fill was spelled out here as "near-black at an alpha of about
+    /// seventy", which was `.black.opacity(0.28)` written down a second time.
+    /// It is now asked of ``Palette`` — the plot's well is one of the four
+    /// greys, and a test that carries its own copy of a colour is a test that
+    /// fails the next time the colour is named properly.
     private static func plotRect(_ image: [UInt8], width: Int, height: Int) -> CGRect {
         // The stack is centred in whatever frame it is given, so the plot's
         // top is the first row with any ink in it at all.
@@ -597,9 +602,13 @@ final class WarperCloudTests: XCTestCase {
         // stack this narrow gives it. Checked rather than assumed: both of the
         // plot's own top corners have to be the fill, and the row below its
         // foot has to be clear of it.
+        let well = Palette.well.rgb
         let fill = { (x: Int, y: Int) -> Bool in
             let p = pixel(image, x: x, y: y, width: width)
-            return p.a > 55 && p.a < 90 && p.r < 40 && p.g < 40 && p.b < 40
+            return p.a > 250
+                && abs(Int(p.r) - Int(well.r)) < 6
+                && abs(Int(p.g) - Int(well.g)) < 6
+                && abs(Int(p.b) - Int(well.b)) < 6
         }
         guard fill(6, top + 6), fill(width - 7, top + 6), !fill(6, top + width + 3) else {
             return .zero

@@ -27,24 +27,20 @@ public struct ChoiceRow: View {
     public var body: some View {
         HStack(spacing: RowMetrics.gap) {
             Text(param.name)
+                .font(.system(size: 11.5))
+                .foregroundStyle(Palette.label.color)
                 .frame(width: RowMetrics.label, alignment: .trailing)
                 .lineLimit(1)
-                .foregroundStyle(isActive ? .primary : .tertiary)
 
-            Picker("", selection: Binding(
-                get: { value },
-                set: { store.setChoice(row: row, key: param.key, value: $0) }
-            )) {
-                ForEach(options, id: \.self) { option in
-                    Text(option).tag(option)
-                }
+            ChoiceMenu(options: options, chosen: value) {
+                store.setChoice(row: row, key: param.key, value: $0)
             }
-            .labelsHidden()
             .frame(maxWidth: 140)
 
             Spacer()
         }
         .frame(height: RowMetrics.height)
+        .opacity(isActive ? 1 : ScalarRow.dimmed)
         .disabled(!isActive)
     }
 }

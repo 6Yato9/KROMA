@@ -102,15 +102,13 @@ public struct WarperPanel: View {
     @ViewBuilder
     private var sectionPicker: some View {
         if sections.count > 1 {
-            Picker("", selection: Binding(
-                get: { section },
-                set: { chosen = $0; whichLattice = 0 }
-            )) {
-                ForEach(sections, id: \.self) { Text($0).tag($0) }
+            // `SELECT` for the tab that is showing. A segmented picker paints
+            // its chosen segment in the system accent, which is the one colour
+            // in this scheme that is spent on something else entirely.
+            ChoiceChips(options: sections, chosen: section) {
+                chosen = $0
+                whichLattice = 0
             }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .controlSize(.small)
         }
     }
 
@@ -118,14 +116,13 @@ public struct WarperPanel: View {
     private var latticePicker: some View {
         let grids = lattices(in: section)
         if grids.count > 1 {
-            Picker("", selection: $whichLattice) {
-                ForEach(Array(grids.enumerated()), id: \.offset) { i, p in
-                    Text(p.name).tag(i)
-                }
+            let names = grids.map(\.name)
+            ChoiceChips(
+                options: names,
+                chosen: names.indices.contains(whichLattice) ? names[whichLattice] : (names.first ?? "")
+            ) { name in
+                if let i = names.firstIndex(of: name) { whichLattice = i }
             }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .controlSize(.small)
         }
     }
 
@@ -156,7 +153,6 @@ public struct WarperPanel: View {
         Button("Reset \(param.name)") {
             store.clearWarp(row: row.id, key: param.key)
         }
-        .buttonStyle(.borderless)
-        .controlSize(.small)
+        .buttonStyle(KromaButtonStyle())
     }
 }

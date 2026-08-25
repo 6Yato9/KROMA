@@ -16,6 +16,8 @@ public struct EffectBrowser: View {
         self.store = store
     }
 
+    @State private var hovering = false
+
     public var body: some View {
         Menu {
             // Skipping the empty ones. Every Basic effect is pinned, so that
@@ -31,9 +33,21 @@ public struct EffectBrowser: View {
                 }
             }
         } label: {
-            Label("Add effect", systemImage: "plus")
+            HStack(spacing: 5) {
+                Image(systemName: "plus")
+                    .imageScale(.small)
+                    .foregroundStyle(Palette.icon.color)
+                Text("Add effect")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Palette.label.color)
+            }
+            .modifier(ControlFace(hot: hovering))
         }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { hovering = $0 }
+        .opacity(store.snapshot.isOpen ? 1 : ScalarRow.dimmed)
         .disabled(!store.snapshot.isOpen)
     }
 

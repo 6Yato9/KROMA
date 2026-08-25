@@ -117,10 +117,12 @@ public struct PinsEditor: View {
 
     private func background(_ rect: CGRect) -> some View {
         RoundedRectangle(cornerRadius: 3)
-            .fill(.black.opacity(0.28))
+            // The inside of a graph: the same `WELL` the curve editor and the
+            // scope wells are.
+            .fill(Palette.well.color)
             .overlay(
                 RoundedRectangle(cornerRadius: 3)
-                    .strokeBorder(.quaternary, lineWidth: 1)
+                    .strokeBorder(Palette.rule.color, lineWidth: 1)
             )
             .frame(width: rect.width, height: rect.height)
             .position(x: rect.midX, y: rect.midY)
@@ -160,7 +162,7 @@ public struct PinsEditor: View {
                 p.addLine(to: CGPoint(x: rect.maxX, y: y))
             }
         }
-        .stroke(.white.opacity(0.07), lineWidth: 1)
+        .stroke(Palette.grid.color, lineWidth: 1)
     }
 
     /// The white point, as a small cross. Drawn under the pins, because it is
@@ -192,7 +194,11 @@ public struct PinsEditor: View {
         let from = g.screen(of: pin.at)
         let to = g.screen(of: pin.to)
         let on = chosen == index
-        let tint: Color = on ? .accentColor : .white.opacity(0.82)
+        // The accent for the pin being worked on and nothing else — which is
+        // what the Windows shell does with the same drawing. `.accentColor` is
+        // whatever the user chose in System Settings, so the one colour in the
+        // scheme that is supposed to mean something meant "blue, probably".
+        let tint: Color = on ? Palette.accent.color : .white.opacity(0.82)
         let reach = max(g.reach(chromaRange: pin.chromaRange), 2)
 
         // How far the pin reaches, which is the control people forget is there
@@ -264,11 +270,10 @@ public struct PinsEditor: View {
                 .disabled(selectedIndex == nil)
 
             Text(tally)
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+                .font(.system(size: 11))
+                .foregroundStyle(Palette.dim.color)
         }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
+        .buttonStyle(KromaButtonStyle())
     }
 
     private var tally: String {
@@ -304,8 +309,8 @@ public struct PinsEditor: View {
     private var controls: some View {
         let pin = selected ?? PinValue.placed(at: Self.whitePoint)
         Text("Pin")
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(Palette.label.color)
 
         ForEach(Control.allCases, id: \.self) { control in
             ScalarRow(

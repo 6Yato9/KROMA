@@ -26,6 +26,9 @@ struct ContentView: View {
                 )
         }
         .frame(minWidth: 900, minHeight: 560)
+        // Behind the splits, so the seams between them are the panel grey
+        // rather than whatever the window's own background happens to be.
+        .background(Palette.panel.color)
         .onAppear {
             store.setSupportDirectory(Self.supportDirectory)
             store.openTestChart()
@@ -42,15 +45,26 @@ struct ContentView: View {
     private var viewerAndScopes: some View {
         if showScopes {
             VSplitView {
-                MetalViewer(store: store)
+                viewer
                     .frame(minWidth: 480, minHeight: 200)
                 ScopesPanel(store: store)
                     .frame(minHeight: 140, idealHeight: 240, maxHeight: .infinity)
+                    .background(Palette.panel.color)
             }
         } else {
-            MetalViewer(store: store)
+            viewer
                 .frame(minWidth: 480, minHeight: 320)
         }
+    }
+
+    /// The photograph, on the darkest of the four greys.
+    ///
+    /// `VIEWER` and not `PANEL`, and the difference is not taste: a surround
+    /// lighter than the picture's own shadows makes the shadows look lifted,
+    /// which is a lie told to the one person in the room grading them.
+    private var viewer: some View {
+        MetalViewer(store: store)
+            .background(Palette.viewer.color)
     }
 
     /// The pinned panels, then everything that has been added, then the button
@@ -70,8 +84,13 @@ struct ContentView: View {
                                 store: store
                             )
                         }
-                        InspectorPanel(effect: effect, row: row, store: store)
-                        Divider()
+                        InspectorPanel(
+                            effect: effect, row: row, store: store,
+                            // An added row's name is already drawn by the
+                            // header above it, beside the box that bypasses it.
+                            showsTitle: row.pinned
+                        )
+                        Hairline()
                     }
                 }
 
@@ -80,6 +99,7 @@ struct ContentView: View {
             }
             .padding(.horizontal, RowMetrics.inset)
         }
+        .background(Palette.panel.color)
     }
 
     /// `~/Library/Application Support/Kroma`, which is where a Mac application
@@ -97,27 +117,30 @@ struct ContentView: View {
         HStack(spacing: 12) {
             if let problem = store.problem {
                 Text(problem)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Palette.error.color)
                     .lineLimit(1)
                     .help(problem)
             } else if store.snapshot.isOpen {
                 Text(store.snapshot.name ?? "test chart")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Palette.label.color)
                 Text("\(store.snapshot.width)x\(store.snapshot.height)")
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(Palette.dim.color)
             }
             Spacer()
             Toggle("Scopes", isOn: $showScopes)
-                .toggleStyle(.button)
-                .controlSize(.small)
+                .toggleStyle(KromaToggleButtonStyle())
                 .help("Waveform, parade, vectorscope and histogram")
             Text("passes \(store.snapshot.passes)")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Palette.label.color)
                 .monospacedDigit()
         }
-        .font(.caption)
+        .font(.system(size: 11))
         .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(.bar)
+        .padding(.vertical, 4)
+        // The status bar is a panel, like the inspector and the scopes. It was
+        // `.bar` — a system material — which is how one background became
+        // three different greys on one screen.
+        .background(Palette.panel.color)
+        .overlay(alignment: .top) { Hairline() }
     }
 }

@@ -38,10 +38,17 @@ public struct RgbRow: View {
     public var body: some View {
         HStack(spacing: RowMetrics.gap) {
             Text(param.name)
+                .font(.system(size: 11.5))
+                .foregroundStyle(Palette.label.color)
                 .frame(width: RowMetrics.label, alignment: .trailing)
                 .lineLimit(1)
-                .foregroundStyle(isActive ? .primary : .tertiary)
 
+            // The well itself stays a `ColorPicker`. What it shows is the
+            // parameter's own colour rather than a colour of the interface's,
+            // and the panel it opens is the system's — there is no API that
+            // recolours either, and a hand-made well would be a second colour
+            // picker to maintain for no gain in a scheme that never draws in
+            // it anyway.
             ColorPicker("", selection: Binding<Color>(
                 get: { colour },
                 set: { picked in
@@ -63,6 +70,7 @@ public struct RgbRow: View {
             Spacer()
         }
         .frame(height: RowMetrics.height)
+        .opacity(isActive ? 1 : ScalarRow.dimmed)
         .disabled(!isActive)
     }
 }

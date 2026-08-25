@@ -719,15 +719,20 @@ public struct ScopesPanel: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 10))
+                .foregroundStyle(Palette.dim.color)
             content()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(.black.opacity(0.34))
+                // `WELL`, which is what the inside of anything read as a graph
+                // is: the curve editor, the warper plots and these. It was a
+                // black wash at a third opacity, which came out a different
+                // grey from the curve editor's black wash at a different
+                // opacity, over a different panel.
+                .background(Palette.well.color)
                 .clipShape(RoundedRectangle(cornerRadius: 3))
                 .overlay(
                     RoundedRectangle(cornerRadius: 3)
-                        .strokeBorder(.quaternary, lineWidth: 1)
+                        .strokeBorder(Palette.rule.color, lineWidth: 1)
                 )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -735,7 +740,7 @@ public struct ScopesPanel: View {
 
     @ViewBuilder
     private var picker: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 4) {
             Toggle("Waveform", isOn: $shown.waveform)
             Toggle("RGB", isOn: $shown.waveformRGB)
                 .disabled(!shown.waveform)
@@ -744,16 +749,18 @@ public struct ScopesPanel: View {
             Toggle("Histogram", isOn: $shown.histogram)
             Spacer()
         }
-        .toggleStyle(.button)
-        .controlSize(.small)
-        .font(.caption)
+        // `SELECT`, not `ACCENT`. Which scopes are on screen is a *choice*,
+        // and `.toggleStyle(.button)` painted it in the system accent — the
+        // colour Resolve reserves for the one effect that is open. Two
+        // different facts, and the scheme keeps them apart.
+        .toggleStyle(KromaToggleButtonStyle())
     }
 
     @ViewBuilder
     private func note(_ text: String) -> some View {
         Text(text)
-            .font(.caption)
-            .foregroundStyle(.tertiary)
+            .font(.system(size: 11))
+            .foregroundStyle(Palette.dim.color)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 

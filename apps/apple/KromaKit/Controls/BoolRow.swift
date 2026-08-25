@@ -23,20 +23,24 @@ public struct BoolRow: View {
     public var body: some View {
         HStack(spacing: RowMetrics.gap) {
             Text(param.name)
+                .font(.system(size: 11.5))
+                .foregroundStyle(Palette.label.color)
                 .frame(width: RowMetrics.label, alignment: .trailing)
                 .lineLimit(1)
-                .foregroundStyle(isActive ? .primary : .tertiary)
 
             Toggle("", isOn: Binding(
                 get: { value },
                 set: { store.setBool(row: row, key: param.key, value: $0) }
             ))
             .labelsHidden()
-            .toggleStyle(.checkbox)
+            .toggleStyle(KromaCheckboxStyle())
 
             Spacer()
         }
         .frame(height: RowMetrics.height)
+        // The same dim every other row uses. `.disabled` alone fades SwiftUI's
+        // semantic styles, and nothing here is one of those any more.
+        .opacity(isActive ? 1 : ScalarRow.dimmed)
         .disabled(!isActive)
     }
 }
