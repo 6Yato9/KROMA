@@ -121,3 +121,69 @@ fn the_curve_sample_fixture_is_current() {
     let json = serde_json::to_string_pretty(&serde_json::Value::Object(out)).unwrap();
     check("curve_samples.json", json);
 }
+
+/// The lattice's own geometry, and what the engine makes of it.
+///
+/// The Swift warper reimplements this so a vertex drag costs no round trip,
+/// exactly as the curve editor reimplements the curve evaluator. This is what
+/// keeps the copy honest.
+#[test]
+fn the_warp_sample_fixture_is_current() {
+    use pe_core::Warp;
+
+    let mut out = serde_json::Map::new();
+
+    // Where every vertex of a few grid sizes sits, on both kinds of axis.
+    let mut homes = serde_json::Map::new();
+    for (cols, rows) in [(4u32, 4u32), (6, 6), (6, 4), (8, 12), (16, 16), (2, 2)] {
+        let w = Warp::identity(cols, rows);
+        for wrap in [true, false] {
+            let mut points = Vec::new();
+            for r in 0..rows {
+                for c in 0..cols {
+                    points.push(w.home(c, r, wrap));
+                }
+            }
+            homes.insert(
+                format!("{cols}x{rows}{}", if wrap { "_wrap" } else { "_clamp" }),
+                serde_json::json!({ "cols": cols, "rows": rows, "wrap": wrap, "homes": points }),
+            );
+        }
+    }
+    out.insert("homes".into(), serde_json::Value::Object(homes));
+
+    // And what a dragged lattice samples to between its vertices — the part
+    // the shader reads, and the part a plausible reimplementation gets subtly
+    // wrong at the seam.
+    let mut sampled = serde_json::Map::new();
+    let mut w = Warp::identity(6, 4);
+    w.set(0, 0, [0.12, -0.2]);
+    w.set(1, 2, [-0.3, 0.15]);
+    w.set(5, 3, [0.4, 0.4]);
+    for wrap in [true, false] {
+        let mut values = Vec::new();
+        for i in 0..32 {
+            for j in 0..32 {
+                let u = i as f32 / 31.0;
+                let v = j as f32 / 31.0;
+                values.push(w.sample(u, v, wrap));
+            }
+        }
+        sampled.insert(
+            if wrap { "wrap" } else { "clamp" }.into(),
+            serde_json::json!({ "grid": 32, "values": values }),
+        );
+    }
+    out.insert(
+        "sampled".into(),
+        serde_json::json!({
+            "cols": w.cols(),
+            "rows": w.rows(),
+            "offsets": w.offsets(),
+            "at": sampled,
+        }),
+    );
+
+    let json = serde_json::to_string_pretty(&serde_json::Value::Object(out)).unwrap();
+    check("warp_samples.json", json);
+}

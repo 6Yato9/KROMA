@@ -135,6 +135,27 @@ impl Warp {
         mix(top, bottom, ty)
     }
 
+    /// Where a vertex sits before anything has been dragged, in axis units.
+    ///
+    /// `wrap` means the same thing it does in `sample`: the first axis is a
+    /// circle. That changes the spacing, not just the sampling — a wrapping
+    /// axis has `cols` distinct positions around the ring, so the step is
+    /// `1 / cols`; an axis with ends has to reach both of them, so the step is
+    /// `1 / (cols - 1)`. Using one rule for both leaves either a kink at red
+    /// or a lattice that stops short of full chroma.
+    ///
+    /// The second axis always has ends. Saturation, chroma and luma all run
+    /// from something to something rather than round.
+    pub fn home(&self, col: u32, row: u32, wrap: bool) -> [f32; 2] {
+        let u = if wrap {
+            col as f32 / self.cols.max(1) as f32
+        } else {
+            col as f32 / self.cols.saturating_sub(1).max(1) as f32
+        };
+        let v = row as f32 / self.rows.saturating_sub(1).max(1) as f32;
+        [u, v]
+    }
+
     /// Change the grid, keeping the shape that has been drawn on it.
     ///
     /// Resampled rather than cleared. A colourist who has spent a minute
@@ -260,5 +281,46 @@ mod tests {
         let w = Warp::identity(1, 400);
         assert!(w.cols() >= 2 && w.rows() <= MAX_DIVISIONS);
         assert_eq!(w.offsets().len(), (w.cols() * w.rows()) as usize);
+    }
+
+    /// The hue axis has `cols` distinct hues around the circle, not `cols - 1`
+    /// plus a repeat of the first. Getting this wrong puts every vertex in
+    /// slightly the wrong place and leaves a visible kink at red.
+    #[test]
+    fn a_wrapping_axis_spaces_its_vertices_around_a_full_circle() {
+        let w = Warp::identity(6, 4);
+        assert_eq!(w.home(0, 0, true)[0], 0.0);
+        assert!((w.home(3, 0, true)[0] - 0.5).abs() < 1e-6);
+        // The last column is a hue of its own, not the first one again.
+        assert!((w.home(5, 0, true)[0] - 5.0 / 6.0).abs() < 1e-6);
+    }
+
+    /// An axis with ends uses them. Chroma runs grey to full colour, and its
+    /// last column *is* the end rather than one step short of coming round.
+    #[test]
+    fn a_clamping_axis_reaches_both_of_its_ends() {
+        let w = Warp::identity(6, 4);
+        assert_eq!(w.home(0, 0, false)[0], 0.0);
+        assert!((w.home(5, 0, false)[0] - 1.0).abs() < 1e-6);
+    }
+
+    /// The second axis always has ends, whatever the first is doing.
+    #[test]
+    fn the_second_axis_runs_end_to_end_either_way() {
+        let w = Warp::identity(6, 5);
+        for wrap in [true, false] {
+            assert_eq!(w.home(0, 0, wrap)[1], 0.0);
+            assert!((w.home(0, 4, wrap)[1] - 1.0).abs() < 1e-6);
+        }
+    }
+
+    /// A minimal grid cannot divide by zero on its way to a position.
+    #[test]
+    fn a_degenerate_grid_does_not_divide_by_zero() {
+        let w = Warp::identity(2, 2);
+        for wrap in [true, false] {
+            assert!(w.home(0, 0, wrap).iter().all(|v| v.is_finite()));
+            assert!(w.home(1, 1, wrap).iter().all(|v| v.is_finite()));
+        }
     }
 }

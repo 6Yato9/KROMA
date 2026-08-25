@@ -509,7 +509,7 @@ fn grid_plot(
         && let Some(p) = response.interact_pointer_pos()
     {
         let want = from_screen(rect, axes, p);
-        let home = home_of(&warp, axes, col, row);
+        let home = warp.home(col, row, axes.wraps());
         // The offset is what is stored, so it is the *difference* from where
         // the vertex would sit if it had never been touched.
         let mut offset = [want[0] - home[0], want[1] - home[1]];
@@ -826,18 +826,6 @@ fn draw_plot(ui: &mut egui::Ui, rect: egui::Rect, plot: Plot, seen: Option<&Dist
     }
 }
 
-/// Where a vertex sits when nothing has been done to it, in axis units.
-fn home_of(warp: &Warp, axes: Axes, col: u32, row: u32) -> [f32; 2] {
-    let u = match axes {
-        // Hue wraps, so the last column is *not* the first: there are `cols`
-        // distinct hues around the circle, not `cols - 1` plus a repeat.
-        Axes::HueSat => col as f32 / warp.cols() as f32,
-        Axes::ChromaLuma => col as f32 / (warp.cols() - 1).max(1) as f32,
-    };
-    let v = row as f32 / (warp.rows() - 1).max(1) as f32;
-    [u, v]
-}
-
 /// Axis units to a point on screen.
 fn to_screen(rect: egui::Rect, axes: Axes, at: [f32; 2]) -> egui::Pos2 {
     match axes {
@@ -876,7 +864,7 @@ fn nearest(rect: egui::Rect, warp: &Warp, axes: Axes, p: egui::Pos2) -> Option<(
     let mut best: Option<((u32, u32), f32)> = None;
     for row in 0..warp.rows() {
         for col in 0..warp.cols() {
-            let home = home_of(warp, axes, col, row);
+            let home = warp.home(col, row, axes.wraps());
             let o = warp.at(col, row);
             let at = to_screen(rect, axes, [home[0] + o[0], home[1] + o[1]]);
             let d = at.distance(p);
@@ -891,7 +879,7 @@ fn nearest(rect: egui::Rect, warp: &Warp, axes: Axes, p: egui::Pos2) -> Option<(
 /// The web itself, drawn where the warp has put it.
 fn lattice(painter: &egui::Painter, rect: egui::Rect, warp: &Warp, axes: Axes) {
     let at = |col: u32, row: u32| {
-        let home = home_of(warp, axes, col, row);
+        let home = warp.home(col, row, axes.wraps());
         let o = warp.at(col, row);
         to_screen(rect, axes, [home[0] + o[0], home[1] + o[1]])
     };
@@ -989,25 +977,13 @@ mod tests {
         }
     }
 
-    /// The hue axis has `cols` distinct hues around the circle, not `cols - 1`
-    /// plus a repeat of the first. Getting this wrong puts every vertex in
-    /// slightly the wrong place and leaves a visible kink at red.
-    #[test]
-    fn the_hue_axis_spaces_its_vertices_around_a_full_circle() {
-        let w = Warp::identity(6, 4);
-        assert_eq!(home_of(&w, Axes::HueSat, 0, 0)[0], 0.0);
-        assert!((home_of(&w, Axes::HueSat, 3, 0)[0] - 0.5).abs() < 1e-6);
-        // The chroma axis does not wrap, so its last column *is* the end.
-        assert!((home_of(&w, Axes::ChromaLuma, 5, 0)[0] - 1.0).abs() < 1e-6);
-    }
-
     #[test]
     fn a_vertex_is_only_grabbed_when_it_was_aimed_at() {
         let w = Warp::identity(6, 6);
         let on_it = to_screen(
             plot(),
             Axes::ChromaLuma,
-            home_of(&w, Axes::ChromaLuma, 2, 3),
+            w.home(2, 3, Axes::ChromaLuma.wraps()),
         );
         assert_eq!(nearest(plot(), &w, Axes::ChromaLuma, on_it), Some((2, 3)));
         // The middle of a cell, which is the only place genuinely far from
