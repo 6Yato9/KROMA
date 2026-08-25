@@ -46,6 +46,161 @@ public struct CurveCanvas {
     }
 }
 
+/// The photograph's own measurements, behind the curve that acts on them.
+///
+/// A curve editor with nothing behind it is a diagram of a function: you can
+/// see the shape you have drawn and not the thing you drew it for. Every peak
+/// here is a tone — or a hue, or a saturation — the picture actually has, and
+/// moving the curve *there* rather than a third of the way along is the whole
+/// difference between grading and guessing.
+///
+/// *Which* measurement belongs behind a given curve is `CurveBackdrop.behind`,
+/// checked against the engine's own table rather than decided here. This draws
+/// whichever one it is handed.
+struct CurveBackdropView: View {
+    let backdrop: CurveBackdrop
+    /// The last measurement, or nil when there is none.
+    ///
+    /// Nil draws nothing, and in particular does not ask for one. The editor
+    /// is not what decides when to measure — a measurement is a full extra
+    /// render plus a 1.2 MB readback, and a view that started one from its own
+    /// body would do it on every layout pass.
+    let scopes: Scopes?
+    /// The same margin the curve is drawn in, so the two share an origin.
+    let inset: CGFloat
+
+    /// How much of the plot a full-scale peak fills.
+    ///
+    /// Short of the top edge, so a peak that reaches full scale does not touch
+    /// the ceiling and read as clipped when it is not.
+    private static let ceiling = 0.92
+
+    var body: some View {
+        Canvas { context, size in
+            guard let scopes else { return }
+            let canvas = CurveCanvas(size: size, inset: inset)
+            switch backdrop {
+            case .tones:
+                tones(&context, canvas, scopes.logHistogram)
+            case .luma:
+                // The luma trace is the tone drawing with one plane, read
+                // through the same SDR window — which is exactly what the
+                // shader's `lum_in` indexes.
+                let levels = scopes.logHistogram
+                single(
+                    &context, canvas,
+                    CurveBackdrop.trace(levels.plane(.luma), peak: Double(levels.fullScale)),
+                    windowed: true)
+            case .hue:
+                let spread = scopes.colour
+                single(
+                    &context, canvas,
+                    CurveBackdrop.trace(spread.hue, peak: Double(spread.fullScale)),
+                    windowed: false)
+            case .saturation:
+                let spread = scopes.colour
+                single(
+                    &context, canvas,
+                    CurveBackdrop.trace(spread.saturation, peak: Double(spread.fullScale)),
+                    windowed: false)
+            case .nothing:
+                // Nothing is known to belong behind this curve, so nothing is
+                // drawn. A plausible count of the wrong quantity would be the
+                // worse of the two, and it is not an error either way.
+                break
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    /// The three channels overlaid, each a filled area with a line along its
+    /// top.
+    ///
+    /// **Added, not blended.** Three translucent layers painted in order leave
+    /// the last one on top, so a neutral picture — one where all three
+    /// channels agree — comes out whichever colour is drawn last; the other
+    /// shell's came out blue, because blue is drawn last. Adding makes
+    /// agreement read as grey and disagreement as the colour that is in
+    /// excess, which is the entire reason for overlaying them.
+    private func tones(
+        _ context: inout GraphicsContext, _ canvas: CurveCanvas, _ levels: Scopes.Levels
+    ) {
+        context.blendMode = .plusLighter
+        for channel in [Scopes.Channel.red, .green, .blue] {
+            let heights = CurveBackdrop.trace(
+                levels.plane(channel), peak: Double(levels.fullScale))
+            let ink = ScopeImage.tint(channel)
+            let colour = Color(red: ink.red, green: ink.green, blue: ink.blue)
+            context.fill(
+                area(heights, canvas, windowed: true),
+                with: .color(colour.opacity(0.22)))
+            // Added like the fill under it: where the three agree the outlines
+            // land on one another and sum towards white, which is what "this
+            // picture is neutral here" should look like; where they part, each
+            // keeps its own colour.
+            context.stroke(
+                top(heights, canvas, windowed: true),
+                with: .color(colour.opacity(0.55)), lineWidth: 1.2)
+        }
+    }
+
+    /// One plane, drawn neutral.
+    ///
+    /// Grey rather than one of the channel colours: a curve indexed by
+    /// luminance, hue or saturation reads a single number off the picture, and
+    /// three coloured traces would be saying something about channels its
+    /// x-axis never asks about. One layer, so there is nothing to add it to.
+    private func single(
+        _ context: inout GraphicsContext, _ canvas: CurveCanvas,
+        _ heights: [Double], windowed: Bool
+    ) {
+        context.fill(
+            area(heights, canvas, windowed: windowed),
+            with: .color(Color(white: 0.9).opacity(0.19)))
+        context.stroke(
+            top(heights, canvas, windowed: windowed),
+            with: .color(.white.opacity(0.82)), lineWidth: 1.2)
+    }
+
+    /// Which bin a fraction across the plot reads from.
+    ///
+    /// A tone plot's edges are diffuse black and diffuse white, so its bins are
+    /// read through that window; a hue runs once round the circle and a
+    /// saturation from nothing to full, so both fill their plot edge to edge.
+    /// Laid out edge to edge instead, every tone would sit about a seventh of
+    /// the plot to the left of where the curve acts on it.
+    private func bin(_ fraction: Double, windowed: Bool) -> Int {
+        windowed
+            ? CurveBackdrop.bin(atPlotFraction: fraction)
+            : CurveBackdrop.spreadBin(atPlotFraction: fraction)
+    }
+
+    /// The outline of one trace across the plot.
+    private func top(_ heights: [Double], _ canvas: CurveCanvas, windowed: Bool) -> Path {
+        Path { p in
+            guard heights.count > 1 else { return }
+            let steps = CurveBackdrop.binCount - 1
+            for i in 0...steps {
+                let t = Double(i) / Double(steps)
+                let h = heights[min(bin(t, windowed: windowed), heights.count - 1)]
+                let point = canvas.view(CGPoint(x: t, y: h * Self.ceiling))
+                if i == 0 { p.move(to: point) } else { p.addLine(to: point) }
+            }
+        }
+    }
+
+    /// Its filled body, down to the plot's own baseline — the same zero the
+    /// curve is drawn against, not the bottom of the view.
+    private func area(_ heights: [Double], _ canvas: CurveCanvas, windowed: Bool) -> Path {
+        var path = top(heights, canvas, windowed: windowed)
+        guard heights.count > 1 else { return path }
+        path.addLine(to: canvas.view(CGPoint(x: 1, y: 0)))
+        path.addLine(to: canvas.view(CGPoint(x: 0, y: 0)))
+        path.closeSubpath()
+        return path
+    }
+}
+
 /// One curve, drawn and editable.
 ///
 /// Drag a point to move it, press empty space to add one, and double-click a
@@ -89,6 +244,7 @@ public struct CurveEditor: View {
         GeometryReader { geo in
             let canvas = CurveCanvas(size: geo.size, inset: Self.inset)
             ZStack {
+                backdrop
                 grid(canvas)
                 identity(canvas)
                 line(canvas)
@@ -112,6 +268,22 @@ public struct CurveEditor: View {
     }
 
     // ---- drawing ---------------------------------------------------------
+
+    /// The picture behind the curve: the tones this curve acts on, or the hues
+    /// or saturations, or nothing at all.
+    ///
+    /// Under the grid, the identity line, the curve and its handles, because a
+    /// backdrop painted over them is a backdrop that has eaten the control.
+    /// Which measurement belongs here is `CurveBackdrop.behind`, asked by key
+    /// rather than decided from the effect — Custom Curves edits four of them
+    /// and the editor drawing one already knows which.
+    private var backdrop: some View {
+        CurveBackdropView(
+            backdrop: CurveBackdrop.behind(param.key),
+            scopes: store.scopes,
+            inset: Self.inset
+        )
+    }
 
     private func grid(_ canvas: CurveCanvas) -> some View {
         Path { p in

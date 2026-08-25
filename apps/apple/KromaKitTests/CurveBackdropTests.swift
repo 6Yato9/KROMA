@@ -1,3 +1,5 @@
+import CoreGraphics
+import SwiftUI
 import XCTest
 
 final class CurveBackdropTests: XCTestCase {
@@ -91,5 +93,336 @@ final class CurveBackdropTests: XCTestCase {
         // both fill their plot, so neither is windowed.
         XCTAssertEqual(CurveBackdrop.spreadBin(atPlotFraction: 0), 0)
         XCTAssertEqual(CurveBackdrop.spreadBin(atPlotFraction: 1), 255)
+    }
+
+    // ---- what it draws ----------------------------------------------------
+    //
+    // This machine cannot look at the screen, so everything below renders the
+    // view headlessly and reads the bitmap back, the way `ScopeViewsTests`
+    // does. What that can check is where the ink lands and what colour it came
+    // out; what it cannot check is whether the result is *pleasant*, which
+    // stays unverified until somebody looks at it.
+
+    /// The rule the other shell got wrong, and recorded getting wrong.
+    ///
+    /// Three translucent layers painted in order leave the last one on top, so
+    /// a picture where all three channels agree comes out whichever colour is
+    /// drawn last — blue, there, because blue is drawn last. Added, agreement
+    /// reads as grey. A blend would fail this on the blue component alone.
+    @MainActor
+    func testAgreeingChannelsAddToGreyRatherThanTheColourDrawnLast() throws {
+        let flat = [UInt32](repeating: 1000, count: 256)
+        let scopes = Self.scopes(
+            levels: Scopes.Levels(
+                red: flat, green: flat, blue: flat, luma: flat, total: 256_000, peak: 1000))
+        let image = try Self.render(
+            CurveBackdropView(backdrop: .tones, scopes: scopes, inset: 7),
+            width: 270, height: 168)
+        let pixel = Self.pixel(image, x: 135, y: 100)
+
+        XCTAssertGreaterThan(pixel.a, 0, "the tone backdrop drew nothing at all")
+        // Where the three tints are summed the result is very nearly neutral;
+        // where the last one wins it is the blue tint, which is half again as
+        // much blue as red.
+        let spread = Double(max(pixel.r, max(pixel.g, pixel.b)) - min(pixel.r, min(pixel.g, pixel.b)))
+        let mean = Double(Int(pixel.r) + Int(pixel.g) + Int(pixel.b)) / 3
+        XCTAssertLessThan(
+            spread / mean, 0.12,
+            "a neutral picture came out \(pixel), which is a cast the photograph does not have")
+        XCTAssertGreaterThanOrEqual(
+            Int(pixel.r), Int(pixel.b),
+            "blue outran red at \(pixel) — the fills are being blended, so the "
+                + "last channel painted is showing through as its own colour")
+    }
+
+    /// A tone's peak has to sit where the curve acts on it.
+    ///
+    /// The plot spans diffuse black to diffuse white rather than the whole log
+    /// domain. Bin 80 belongs at the middle of the plot; laid out edge to edge
+    /// it would land at 80/255 of the way across, which is about a fifth of the
+    /// plot to the left of the tone it is drawn for.
+    @MainActor
+    func testATonePeakDrawsWhereTheCurveActsOnItAndNotASeventhToTheLeft() throws {
+        let scopes = Self.scopes(levels: Self.spike(at: 80))
+        let image = try Self.render(
+            CurveBackdropView(backdrop: .luma, scopes: scopes, inset: 7),
+            width: 270, height: 168)
+        let peak = try XCTUnwrap(Self.tallestColumn(image), "nothing was drawn")
+
+        // 7 points of inset either side, so the plot runs 7…263.
+        let windowed = 7.0 + 256 * (80.0 / 255 - CurveBackdrop.logBlack)
+            / (CurveBackdrop.logWhite - CurveBackdrop.logBlack)
+        let edgeToEdge = 7.0 + 256 * 80.0 / 255
+        XCTAssertEqual(
+            Double(peak), windowed, accuracy: 8,
+            "bin 80 peaked at x=\(peak); through the SDR window it belongs at "
+                + "\(Int(windowed)), and edge to edge it would land at \(Int(edgeToEdge))")
+    }
+
+    /// A hue runs once round the circle and fills its plot, so its bins are not
+    /// windowed. Read through the tone window instead, the reds at bin zero
+    /// would be off the left edge entirely.
+    ///
+    /// The two planes are spiked in different places, so a curve drawn against
+    /// the wrong one of them fails here rather than looking plausible.
+    @MainActor
+    func testASpreadPeakDrawsEdgeToEdge() throws {
+        var hue = [UInt32](repeating: 0, count: 256)
+        hue[128] = 5000
+        var saturation = [UInt32](repeating: 0, count: 256)
+        saturation[40] = 5000
+        let scopes = Self.scopes(
+            spread: Scopes.Spread(
+                hue: hue, saturation: saturation, total: 10_000, peak: 5000))
+
+        let hues = try Self.render(
+            CurveBackdropView(backdrop: .hue, scopes: scopes, inset: 7),
+            width: 270, height: 168)
+        XCTAssertEqual(
+            Double(try XCTUnwrap(Self.tallestColumn(hues), "no hue spread was drawn")),
+            7.0 + 256 * 128.0 / 255, accuracy: 6,
+            "the middle hue did not peak in the middle of the plot")
+
+        let saturations = try Self.render(
+            CurveBackdropView(backdrop: .saturation, scopes: scopes, inset: 7),
+            width: 270, height: 168)
+        XCTAssertEqual(
+            Double(try XCTUnwrap(Self.tallestColumn(saturations), "no saturation was drawn")),
+            7.0 + 256 * 40.0 / 255, accuracy: 6,
+            "the saturation plot peaked somewhere its own counts are not")
+    }
+
+    /// A peak that reaches full scale must not touch the top edge, or it reads
+    /// as clipped when it is not.
+    @MainActor
+    func testAFullScalePeakStopsShortOfTheTop() throws {
+        let flat = [UInt32](repeating: 1000, count: 256)
+        let scopes = Self.scopes(
+            levels: Scopes.Levels(
+                red: flat, green: flat, blue: flat, luma: flat, total: 256_000, peak: 1000))
+        let image = try Self.render(
+            CurveBackdropView(backdrop: .luma, scopes: scopes, inset: 7),
+            width: 270, height: 168)
+        let top = try XCTUnwrap(Self.topmostInkedRow(image), "nothing was drawn")
+        // Plot top at y=7, plot height 154; 92% of it leaves about 12 points.
+        XCTAssertGreaterThan(
+            top, 14,
+            "a full-scale peak drew up to y=\(top), which is the top of the plot")
+        XCTAssertLessThan(top, 26, "a full-scale peak only reached y=\(top)")
+    }
+
+    // ---- and where it sits in the editor -----------------------------------
+
+    /// The backdrop goes under the grid, the identity line, the curve and the
+    /// handles. Painted over them instead it would be a backdrop that has
+    /// eaten the control.
+    ///
+    /// The curve's own line is opaque, so wherever it covers the backdrop its
+    /// pixels are exactly the line's colour — the same pixels the editor draws
+    /// with no measurement at all. An additive fill laid over the top would
+    /// brighten every one of them.
+    @MainActor
+    func testTheBackdropIsDrawnBehindTheCurveAndNotOverIt() throws {
+        let store = try XCTUnwrap(SessionStore())
+        store.openTestChart(width: 64, height: 64)
+        // Low across the plot, so the trace is above it nearly everywhere.
+        let value = CurveValue(points: [CGPoint(x: 0, y: 0.08), CGPoint(x: 1, y: 0.08)])
+        let view = CurveEditor(
+            param: try Self.curveParam(key: "red"), flat: false, row: 0,
+            value: value, isActive: true, store: store)
+
+        let bare = try Self.render(view, width: 270, height: 168)
+        store.requestScopes(ScopeSize(width: 64, height: 48))
+        XCTAssertTrue(store.measureScopesIfNeeded(), "nothing measured, so nothing to draw")
+        let withBackdrop = try Self.render(view, width: 270, height: 168)
+
+        let a = Self.bytes(bare), b = Self.bytes(withBackdrop)
+        XCTAssertNotEqual(a, b, "measuring changed nothing — no backdrop was drawn")
+
+        var checked = 0
+        var changed: [String] = []
+        for x in 0..<270 {
+            for y in 0..<168 {
+                let line = Self.pixel(a, x: x, y: y, width: 270)
+                // The curve's own line at full coverage, which is the only
+                // strongly red thing here and the only kind of pixel that says
+                // anything: an antialiased edge blends with whatever is under
+                // it whichever order the two are drawn in.
+                guard line.a == 255, Int(line.r) - max(Int(line.g), Int(line.b)) > 80
+                else { continue }
+                // And only where there is backdrop under it to be covered by.
+                guard y + 6 < 168,
+                    Self.pixel(a, x: x, y: y + 6, width: 270)
+                        != Self.pixel(b, x: x, y: y + 6, width: 270)
+                else { continue }
+                checked += 1
+                let now = Self.pixel(b, x: x, y: y, width: 270)
+                if now != line { changed.append("(\(x), \(y)) \(line) became \(now)") }
+            }
+        }
+        XCTAssertGreaterThan(
+            checked, 20,
+            "found only \(checked) pixels of curve over backdrop, so this proved nothing")
+        XCTAssertEqual(
+            changed.count, 0,
+            "the backdrop is being painted over the curve: \(changed.prefix(3))")
+    }
+
+    /// `.nothing` is not an error. A curve nobody has a measurement for still
+    /// draws its grid, its identity and its own line.
+    @MainActor
+    func testACurveWithNoKnownBackdropStillDraws() throws {
+        let store = try XCTUnwrap(SessionStore())
+        store.openTestChart(width: 64, height: 64)
+        store.requestScopes(ScopeSize(width: 64, height: 48))
+        XCTAssertTrue(store.measureScopesIfNeeded())
+        XCTAssertEqual(CurveBackdrop.behind("not_a_curve"), .nothing)
+
+        let view = CurveEditor(
+            param: try Self.curveParam(key: "not_a_curve"), flat: false, row: 0,
+            value: CurveValue(points: [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 1)]),
+            isActive: true, store: store)
+        let image = try Self.render(view, width: 270, height: 168)
+        XCTAssertGreaterThan(Self.inked(image), 500, "the editor came out blank")
+
+        // And silently: a measurement it has no use for changes nothing.
+        let unmeasured = try XCTUnwrap(SessionStore())
+        unmeasured.openTestChart(width: 64, height: 64)
+        let quiet = try Self.render(
+            CurveEditor(
+                param: try Self.curveParam(key: "not_a_curve"), flat: false, row: 0,
+                value: CurveValue(points: [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 1)]),
+                isActive: true, store: unmeasured),
+            width: 270, height: 168)
+        XCTAssertEqual(
+            Self.bytes(image), Self.bytes(quiet),
+            "an unknown curve drew something behind itself")
+    }
+
+    /// No measurement, no backdrop — and no measurement asked for. The editor
+    /// is not what decides when to measure.
+    @MainActor
+    func testAnEditorWithNoMeasurementDrawsNoBackdropAndAsksForNone() throws {
+        let store = try XCTUnwrap(SessionStore())
+        store.openTestChart(width: 64, height: 64)
+        let view = CurveEditor(
+            param: try Self.curveParam(key: "red"), flat: false, row: 0,
+            value: CurveValue(points: [CGPoint(x: 0, y: 0.08), CGPoint(x: 1, y: 0.08)]),
+            isActive: true, store: store)
+        _ = try Self.render(view, width: 270, height: 168)
+        XCTAssertNil(store.scopes, "the editor drew and something measured a frame")
+        XCTAssertNil(store.scopeRequest, "the editor asked for a measurement from its own body")
+    }
+
+    // ---- helpers -----------------------------------------------------------
+
+    /// A curve parameter with an arbitrary key. Decoded rather than built,
+    /// because `Param` is what the engine's registry says it is.
+    private static func curveParam(key: String) throws -> Param {
+        let json = #"{"key": "\#(key)", "name": "\#(key)", "kind": "curve", "flat": false}"#
+        return try JSONDecoder().decode(Param.self, from: Data(json.utf8))
+    }
+
+    /// One bin standing alone, so a test can say exactly where its peak belongs.
+    private static func spike(at bin: Int) -> Scopes.Levels {
+        var plane = [UInt32](repeating: 0, count: 256)
+        plane[bin] = 5000
+        return Scopes.Levels(
+            red: plane, green: plane, blue: plane, luma: plane, total: 5000, peak: 5000)
+    }
+
+    /// A `Scopes` carrying the given counts and nothing else.
+    private static func scopes(
+        levels: Scopes.Levels? = nil, spread: Scopes.Spread? = nil
+    ) -> Scopes {
+        let empty = [UInt32](repeating: 0, count: 256)
+        let blank = Scopes.Levels(
+            red: empty, green: empty, blue: empty, luma: empty, total: 0, peak: 0)
+        let plane = Scopes.Plane(counts: [0], width: 1, height: 1, total: 0, peak: 0)
+        return Scopes(
+            histogram: blank,
+            logHistogram: levels ?? blank,
+            colour: spread ?? Scopes.Spread(hue: empty, saturation: empty, total: 0, peak: 0),
+            waveform: Scopes.WaveformCounts(
+                columns: 1, levels: 256, total: 0,
+                red: empty, green: empty, blue: empty, luma: empty),
+            vectorscope: plane,
+            warper: Scopes.WarperClouds(chromaticity: plane, hueSat: plane, chromaLuma: plane),
+            generation: 1)
+    }
+
+    @MainActor
+    private static func render<V: View>(
+        _ view: V, width: CGFloat, height: CGFloat
+    ) throws -> CGImage {
+        let renderer = ImageRenderer(content: view.frame(width: width, height: height))
+        renderer.scale = 1
+        return try XCTUnwrap(renderer.cgImage, "the renderer produced no image")
+    }
+
+    /// The image as premultiplied RGBA, which is what makes a translucent
+    /// overlap comparable with an opaque line.
+    private static func bytes(_ image: CGImage) -> [UInt8] {
+        let (w, h) = (image.width, image.height)
+        var bytes = [UInt8](repeating: 0, count: w * h * 4)
+        guard
+            let context = CGContext(
+                data: &bytes, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return bytes }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return bytes
+    }
+
+    private struct Pixel: Equatable, CustomStringConvertible {
+        let r: UInt8, g: UInt8, b: UInt8, a: UInt8
+        var description: String { "(\(r), \(g), \(b), \(a))" }
+    }
+
+    private static func pixel(_ bytes: [UInt8], x: Int, y: Int, width: Int) -> Pixel {
+        let i = (y * width + x) * 4
+        guard i + 3 < bytes.count else { return Pixel(r: 0, g: 0, b: 0, a: 0) }
+        return Pixel(r: bytes[i], g: bytes[i + 1], b: bytes[i + 2], a: bytes[i + 3])
+    }
+
+    private static func pixel(_ image: CGImage, x: Int, y: Int) -> Pixel {
+        pixel(bytes(image), x: x, y: y, width: image.width)
+    }
+
+    /// How many pixels came out with any ink on them.
+    private static func inked(_ image: CGImage) -> Int {
+        let data = bytes(image)
+        return stride(from: 3, to: data.count, by: 4)
+            .reduce(into: 0) { $0 += data[$1] > 0 ? 1 : 0 }
+    }
+
+    /// The column whose trace reaches highest — the peak, in view coordinates.
+    ///
+    /// Thresholded above the fill so this follows the line along the top of the
+    /// trace rather than the pale wash under it.
+    private static func tallestColumn(_ image: CGImage) -> Int? {
+        let (w, h) = (image.width, image.height)
+        let data = bytes(image)
+        var best: (x: Int, y: Int)?
+        for x in 0..<w {
+            for y in 0..<h where pixel(data, x: x, y: y, width: w).a > 100 {
+                if best == nil || y < best!.y { best = (x, y) }
+                break
+            }
+        }
+        return best?.x
+    }
+
+    /// The topmost row with any ink in it.
+    private static func topmostInkedRow(_ image: CGImage) -> Int? {
+        let (w, h) = (image.width, image.height)
+        let data = bytes(image)
+        for y in 0..<h {
+            for x in 0..<w where pixel(data, x: x, y: y, width: w).a > 0 {
+                return y
+            }
+        }
+        return nil
     }
 }
