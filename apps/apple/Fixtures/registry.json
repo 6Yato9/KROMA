@@ -512,7 +512,7 @@
           "name": "Chroma Warp",
           "kind": "pins",
           "unit": "",
-          "section": ""
+          "section": "Chroma Warp"
         },
         {
           "key": "hue_sat",

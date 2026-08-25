@@ -450,10 +450,11 @@ pub static EFFECTS: &[EffectDef] = &[
                 name: "Chroma Warp",
                 kind: ParamKind::Pins,
                 unit: "",
-                // No heading: the warper draws its own panel and never lays
-                // its parameters out as rows, so a section here would be a
-                // heading over a control nobody ever sees in a list.
-                section: "",
+                // The section *is* the view. The macOS panel switches over the
+                // sections its parameters name rather than over a hard-coded
+                // list of effect keys, so a sectionless `pins` is a view no tab
+                // claims and a control nobody can reach.
+                section: "Chroma Warp",
             },
             ParamDef {
                 key: "hue_sat",

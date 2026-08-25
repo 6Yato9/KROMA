@@ -24,15 +24,47 @@ pub const MAX_PINS: usize = 8;
 /// control does not move every pin's offset.
 pub const PIN_STRIDE: usize = 12;
 
+/// How far the chromaticity plot reaches, in xy.
+///
+/// The locus reaches 0.7347 in x and **0.8338** in y — that second number is
+/// the one that matters, because a span of 0.8 quietly cut the top off the
+/// curve, and the part it cut was the greenest colour there is. 0.88 clears it
+/// with a little air, which is also how Resolve draws it: the shape sits in the
+/// plot rather than running out of it.
+pub const PLOT_SPAN: f32 = 0.88;
+
+/// And where it starts. A hair below zero, so the locus has air around it
+/// rather than sitting hard against the frame — at exactly zero the curve
+/// touches the left edge at 500 nm and reads as though it had been cut off.
+pub const PLOT_MIN: f32 = -0.03;
+
+/// A chromaticity as a fraction across the plot.
+pub fn plot_fraction(v: f32) -> f32 {
+    ((v - PLOT_MIN) / (PLOT_SPAN - PLOT_MIN)).clamp(0.0, 1.0)
+}
+
+/// And back. Clamped, so a pin dragged past the frame stops at it rather than
+/// acquiring a chromaticity no colour has.
+pub fn plot_value(t: f32) -> f32 {
+    PLOT_MIN + t.clamp(0.0, 1.0) * (PLOT_SPAN - PLOT_MIN)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Pin {
-    /// Where the pin was placed, in the plot's own 0..1 coordinates.
+    /// Where the pin was placed, as a **CIE xy chromaticity** — not a fraction
+    /// of the plot. `[0.33, 0.35]` is a point near the white point, and it is
+    /// [`plot_fraction`] that turns one of these into a fraction across the
+    /// plot, whose range is [`PLOT_MIN`]..[`PLOT_SPAN`]. Read as a fraction
+    /// instead, 0.33 lands somewhere entirely different.
     pub at: [f32; 2],
-    /// Where it has been dragged to. Equal to `at` on a pin that has been
-    /// placed and not yet moved, which is exactly the pin that should do
-    /// nothing.
+    /// Where it has been dragged to, in the same CIE xy chromaticities. Equal
+    /// to `at` on a pin that has been placed and not yet moved, which is
+    /// exactly the pin that should do nothing.
     pub to: [f32; 2],
-    /// How far around `at` the pull reaches, in the same units.
+    /// How far around `at` the pull reaches, as a distance in xy — the same
+    /// units as `at` and `to`, so [`plot_fraction`] does not apply to it;
+    /// dividing by `PLOT_SPAN - PLOT_MIN` is what turns it into a fraction of
+    /// the plot's width.
     pub chroma_range: f32,
     /// How much of the pull the shadows and the highlights take, and where the
     /// boundary between them sits. Both at one is every tone equally, which is
@@ -203,5 +235,52 @@ mod tests {
         // And removing past the end is not a panic.
         pins.remove(9);
         assert_eq!(pins.len(), 1);
+    }
+
+    /// The plot has to clear the spectral locus, which reaches 0.8338 in y.
+    /// A span of 0.8 quietly cut the top off the curve, and the part it cut
+    /// was the greenest colour there is.
+    #[test]
+    #[allow(
+        clippy::assertions_on_constants,
+        reason = "constant is the point: these two are the values under test"
+    )]
+    fn the_plot_clears_the_locus() {
+        assert!(PLOT_SPAN > 0.8338, "the plot cuts off the green corner");
+        assert!(PLOT_MIN < 0.0, "the locus sits hard against the left frame");
+    }
+
+    /// A chromaticity as a fraction across the plot, and back.
+    #[test]
+    fn the_two_plot_mappings_are_inverses() {
+        for v in [0.0_f32, 0.15, 0.3333, 0.5, 0.8338] {
+            assert!(
+                (plot_value(plot_fraction(v)) - v).abs() < 1e-5,
+                "{v} came back as {}",
+                plot_value(plot_fraction(v))
+            );
+        }
+    }
+
+    /// Outside the plot is clamped rather than extrapolated — a pin dragged
+    /// past the frame stops at it rather than acquiring a chromaticity no
+    /// colour has.
+    #[test]
+    fn the_plot_clamps_at_its_edges() {
+        assert_eq!(plot_fraction(-99.0), 0.0);
+        assert_eq!(plot_fraction(99.0), 1.0);
+        assert_eq!(plot_value(-99.0), PLOT_MIN);
+        assert_eq!(plot_value(99.0), PLOT_SPAN);
+    }
+
+    /// The white point is where a fresh pin goes, and it must land inside the
+    /// plot rather than on its edge.
+    #[test]
+    fn a_fresh_pin_lands_well_inside_the_plot() {
+        let p = Pin::placed([0.33, 0.35]);
+        for v in p.at {
+            let f = plot_fraction(v);
+            assert!(f > 0.1 && f < 0.9, "{v} maps to {f}, which is at the frame");
+        }
     }
 }

@@ -11,6 +11,7 @@
 //! its lattice and showed the displacement some other way would be a table of
 //! numbers with lines between them.
 
+use pe_core::pins::{PLOT_MIN, PLOT_SPAN, plot_fraction, plot_value};
 use pe_core::{History, ParamValue, Pin, Pins, RowId, Warp};
 use pe_scopes::warper::{Distribution, GRID};
 
@@ -378,29 +379,10 @@ fn read_pins(history: &History, id: RowId) -> Pins {
         .unwrap_or_default()
 }
 
-/// Plot coordinates are CIE xy, which the plot draws directly: x across and
-/// y up, over 0..[`PLOT_SPAN`].
-///
-/// The locus reaches 0.7347 in x and **0.8338** in y — that second number is
-/// the one that matters, because a span of 0.8 quietly cut the top off the
-/// curve, and the part it cut was the greenest colour there is. 0.88 clears it
-/// with a little air, which is also how Resolve draws it: the shape sits in
-/// the plot rather than running out of it.
-const PLOT_SPAN: f32 = 0.88;
-
-/// And where it starts. A hair below zero, so the locus has air around it
-/// rather than sitting hard against the frame — at exactly zero the curve
-/// touches the left edge at 500 nm and reads as though it had been cut off.
-const PLOT_MIN: f32 = -0.03;
-
-/// A chromaticity as a fraction across the plot, and back.
-fn plot_fraction(v: f32) -> f32 {
-    ((v - PLOT_MIN) / (PLOT_SPAN - PLOT_MIN)).clamp(0.0, 1.0)
-}
-
-fn plot_value(t: f32) -> f32 {
-    PLOT_MIN + t.clamp(0.0, 1.0) * (PLOT_SPAN - PLOT_MIN)
-}
+// Plot coordinates are CIE xy, which the plot draws directly: x across and y
+// up, over `PLOT_MIN..PLOT_SPAN`. The range and both mappings live in
+// `pe_core::pins` rather than here, because the macOS shell draws the same plot
+// and a shell is not somewhere the other shell can read a constant from.
 
 fn plot_to_screen(rect: egui::Rect, at: [f32; 2]) -> egui::Pos2 {
     egui::pos2(

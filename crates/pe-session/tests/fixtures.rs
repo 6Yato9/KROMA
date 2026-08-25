@@ -187,3 +187,57 @@ fn the_warp_sample_fixture_is_current() {
     let json = serde_json::to_string_pretty(&serde_json::Value::Object(out)).unwrap();
     check("warp_samples.json", json);
 }
+
+/// The chromaticity plot's mapping, and a set of pins through it.
+///
+/// The Swift editor reimplements the mapping so a pin drag costs no round
+/// trip, exactly as the curve and lattice editors do. This is what keeps the
+/// copy honest.
+#[test]
+fn the_pin_sample_fixture_is_current() {
+    use pe_core::pins::{PLOT_MIN, PLOT_SPAN, Pin, Pins, plot_fraction, plot_value};
+
+    // The mapping, at points that matter: both frame edges, the white point, a
+    // fresh pin's home, and the greenest corner of the locus.
+    let probes: Vec<f32> = vec![
+        PLOT_MIN, 0.0, 0.15, 0.3127, 0.33, 0.35, 0.5, 0.7347, 0.8338, PLOT_SPAN,
+    ];
+    let fractions: Vec<[f32; 2]> = probes.iter().map(|v| [*v, plot_fraction(*v)]).collect();
+    // And back, so a reimplementation that is right in one direction and wrong
+    // in the other is caught.
+    let values: Vec<[f32; 2]> = (0..=20)
+        .map(|i| {
+            let t = i as f32 / 20.0;
+            [t, plot_value(t)]
+        })
+        .collect();
+
+    // A set of pins, including one dragged, one with exposure only, and one
+    // left alone — the three states `is_neutral` has to tell apart.
+    let mut pins = Pins::default();
+    pins.add(Pin::placed([0.33, 0.35]));
+    let mut dragged = Pin::placed([0.20, 0.65]);
+    dragged.to = [0.28, 0.55];
+    dragged.chroma_range = 0.12;
+    pins.add(dragged);
+    let mut lifted = Pin::placed([0.45, 0.40]);
+    lifted.exposure = 0.75;
+    lifted.tonal_low = 0.2;
+    lifted.tonal_pivot = 0.6;
+    pins.add(lifted);
+
+    let packed: Vec<Vec<f32>> = pins.iter().map(|p| p.pack().to_vec()).collect();
+    let neutral: Vec<bool> = pins.iter().map(Pin::is_neutral).collect();
+
+    let json = serde_json::to_string_pretty(&serde_json::json!({
+        "plot": { "min": PLOT_MIN, "span": PLOT_SPAN },
+        "fractions": fractions,
+        "values": values,
+        "pins": pins,
+        "packed": packed,
+        "neutral": neutral,
+        "max_pins": pe_core::pins::MAX_PINS,
+    }))
+    .unwrap();
+    check("pin_samples.json", json);
+}

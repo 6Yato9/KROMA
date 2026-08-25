@@ -505,6 +505,16 @@ fn row_ui(
         }
         seen.push(param.section);
         let section = param.section;
+        // The warper's views name themselves with a section, because that is
+        // how the panel finds its tabs — but a view is a plot, not a row, so a
+        // section holding only those would be a chevron over empty space.
+        if !def
+            .params
+            .iter()
+            .any(|p| p.section == section && draws_a_row(&p.kind))
+        {
+            continue;
+        }
         resolve::section(ui, row_id.with(section), section, |ui| {
             for p in def.params.iter().filter(|p| p.section == section) {
                 param_ui(ui, history, id, p, row_id);
@@ -589,6 +599,15 @@ fn decimals(min: f32, max: f32) -> usize {
     } else {
         3
     }
+}
+
+/// Whether this parameter draws itself as a row under a heading.
+///
+/// A lattice and a set of pins do not: the warper draws them on its own plot,
+/// and [`param_ui`] deliberately draws nothing for them. A heading whose
+/// parameters are all of that kind is a heading over nothing.
+pub fn draws_a_row(kind: &ParamKind) -> bool {
+    !matches!(kind, ParamKind::Warp | ParamKind::Pins)
 }
 
 pub fn param_ui(
@@ -977,6 +996,12 @@ mod tests {
     /// member — "Chroma" says the control below it is about colour and the
     /// ones above are about luminance. Naming them here keeps the rule with
     /// teeth for anything we invent ourselves.
+    ///
+    /// Counted by what a section *draws*, not by what it declares. The
+    /// warper's views file themselves under a section so the panel can find
+    /// its tabs, and a view is a plot rather than a row — a section holding
+    /// only those is never drawn at all, which
+    /// [`a_section_of_nothing_but_plots_is_not_drawn`] is what checks.
     #[test]
     fn no_heading_holds_a_single_control() {
         const RESOLVE_HAS_THESE: [(&str, &str); 2] = [
@@ -985,7 +1010,11 @@ mod tests {
         ];
         for effect in pe_effects::all() {
             let mut sections: Vec<(&str, usize)> = Vec::new();
-            for p in effect.params.iter().filter(|p| !p.section.is_empty()) {
+            for p in effect
+                .params
+                .iter()
+                .filter(|p| !p.section.is_empty() && draws_a_row(&p.kind))
+            {
                 match sections.iter_mut().find(|(s, _)| *s == p.section) {
                     Some((_, n)) => *n += 1,
                     None => sections.push((p.section, 1)),
@@ -998,5 +1027,38 @@ mod tests {
                 assert!(n > 1, "{}'s \"{name}\" holds only {n} control", effect.key);
             }
         }
+    }
+
+    /// And a heading over *nothing* is worse than a heading over one control.
+    ///
+    /// `Chroma Warp` holds the pins and nothing else, and the pins are drawn
+    /// on the warper's own plot — so the inspector skips that heading rather
+    /// than drawing a chevron over empty space. Listing the one section this
+    /// is true of, rather than allowing it in general, is what stops the next
+    /// heading over nothing from arriving unnoticed.
+    #[test]
+    fn a_section_of_nothing_but_plots_is_not_drawn() {
+        let mut invisible: Vec<(&str, &str)> = Vec::new();
+        for effect in pe_effects::all() {
+            let mut seen: Vec<&str> = Vec::new();
+            for p in effect.params.iter().filter(|p| !p.section.is_empty()) {
+                if seen.contains(&p.section) {
+                    continue;
+                }
+                seen.push(p.section);
+                if !effect
+                    .params
+                    .iter()
+                    .any(|q| q.section == p.section && draws_a_row(&q.kind))
+                {
+                    invisible.push((effect.key, p.section));
+                }
+            }
+        }
+        assert_eq!(
+            invisible,
+            vec![("colour_warper", "Chroma Warp")],
+            "a heading the inspector skips is a heading nobody meant to write"
+        );
     }
 }
