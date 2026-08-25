@@ -59,12 +59,17 @@ final class SnapshotTests: XCTestCase {
         // An int reads as a float, because every consumer of a number here
         // wants one and the document is the only thing that cares which it was.
         XCTAssertEqual(values["e"]?.floatValue, 7)
-        // A curve, a warp and a pin lattice are structure the slice does not
-        // draw yet. They must decode as *something* rather than failing the
-        // whole snapshot, or one Curves row makes the application unopenable.
-        let curve = Data(#"{"k":{"t":"curve","v":{"points":[[0,0],[1,1]]}}}"#.utf8)
-        let decoded = try JSONDecoder().decode([String: ParamValue].self, from: curve)
-        XCTAssertEqual(decoded["k"], .opaque("curve"))
+        // A warp and a pin lattice are structure the slice does not draw yet.
+        // They must decode as *something* rather than failing the whole
+        // snapshot: the Colour Warper is pinned, so a decoder that refused them
+        // would make every photograph unopenable.
+        let warp = Data(#"""
+        {"k":{"t":"warp","v":{"cols":2,"offsets":[[0.0,0.0],[0.0,0.0]]}},
+         "p":{"t":"pins","v":[]}}
+        """#.utf8)
+        let decoded = try JSONDecoder().decode([String: ParamValue].self, from: warp)
+        XCTAssertEqual(decoded["k"], .opaque("warp"))
+        XCTAssertEqual(decoded["p"], .opaque("pins"))
     }
 
     func testAWheelDecodesItsFourComponents() throws {
@@ -81,6 +86,38 @@ final class SnapshotTests: XCTestCase {
         XCTAssertEqual(w.rgb[0], 0.25, accuracy: 0.0001)
         XCTAssertEqual(w.rgb[1], 0.5, accuracy: 0.0001)
         XCTAssertEqual(w.rgb[2], 0.75, accuracy: 0.0001)
+    }
+
+    func testACurveDecodesItsPoints() throws {
+        let json = Data(#"{"k":{"t":"curve","v":[[0.0,0.0],[0.5,0.7],[1.0,1.0]]}}"#.utf8)
+        let values = try JSONDecoder().decode([String: ParamValue].self, from: json)
+        guard case let .curve(c) = try XCTUnwrap(values["k"]) else {
+            return XCTFail("not a curve")
+        }
+        XCTAssertEqual(c.points.count, 3)
+        XCTAssertEqual(c.points[1].x, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(c.points[1].y, 0.7, accuracy: 0.0001)
+    }
+
+    func testTheCommittedSnapshotCarriesReadableCurves() throws {
+        // Custom Curves is pinned, so every fresh document has ten of them. If
+        // they decode as opaque the panel cannot draw.
+        let snap = try JSONDecoder().decode(Snapshot.self, from: fixture("snapshot"))
+        let curves = try XCTUnwrap(snap.rows.first { $0.effect == "curves" })
+        guard case let .curve(luma) = try XCTUnwrap(curves.params["luma"]) else {
+            return XCTFail("luma is not a curve")
+        }
+        // A tone curve's identity is the diagonal.
+        XCTAssertEqual(try XCTUnwrap(luma.points.first).y, 0, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(luma.points.last).y, 1, accuracy: 0.0001)
+
+        guard case let .curve(hue) = try XCTUnwrap(curves.params["hue_vs_hue"]) else {
+            return XCTFail("hue_vs_hue is not a curve")
+        }
+        // A secondary's identity is a level line down the middle — a different
+        // question, and a different answer.
+        XCTAssertEqual(try XCTUnwrap(hue.points.first).y, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(hue.points.last).y, 0.5, accuracy: 0.0001)
     }
 
     func testTheCommittedSnapshotCarriesReadableWheels() throws {

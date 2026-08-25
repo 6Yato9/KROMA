@@ -95,15 +95,16 @@ public struct Snapshot: Decodable, Sendable {
 /// One parameter's value, in the document's own representation.
 ///
 /// Adjacently tagged as `{"t": "float", "v": 0.35}`, which is what
-/// `pe-core`'s `ParamValue` writes. Kinds this slice does not draw — curves,
-/// warps, pin lattices — decode as `.opaque` rather than failing, so a
-/// photograph carrying one still opens.
+/// `pe-core`'s `ParamValue` writes. Kinds this slice does not draw — warps,
+/// pin lattices — decode as `.opaque` rather than failing, so a photograph
+/// carrying one still opens.
 public enum ParamValue: Decodable, Sendable, Equatable {
     case float(Float)
     case bool(Bool)
     case choice(String)
     case rgb([Float])
     case wheel(WheelValue)
+    case curve(CurveValue)
     /// Structure this build does not draw. Carries its tag so the inspector
     /// can say what it is declining to show.
     case opaque(String)
@@ -128,6 +129,8 @@ public enum ParamValue: Decodable, Sendable, Equatable {
             self = .rgb(try c.decode([Float].self, forKey: .v))
         case "wheel":
             self = .wheel(try c.decode(WheelValue.self, forKey: .v))
+        case "curve":
+            self = .curve(try c.decode(CurveValue.self, forKey: .v))
         default:
             self = .opaque(tag)
         }
@@ -144,6 +147,33 @@ public enum ParamValue: Decodable, Sendable, Equatable {
     public var wheelValue: WheelValue? {
         if case let .wheel(w) = self { return w }
         return nil
+    }
+
+    /// The value as a curve, for the editor that draws one.
+    public var curveValue: CurveValue? {
+        if case let .curve(c) = self { return c }
+        return nil
+    }
+}
+
+/// A curve's control points.
+///
+/// `CGPoint` rather than pairs of `Float`, because everything that draws one
+/// wants points and the conversion would otherwise happen at every call site.
+///
+/// The wire shape is a bare array of pairs, not an object — `pe_core::Curve`
+/// is `#[serde(transparent)]`, so the struct's field name never reaches the
+/// JSON.
+public struct CurveValue: Decodable, Sendable, Equatable {
+    public let points: [CGPoint]
+
+    public init(points: [CGPoint]) {
+        self.points = points
+    }
+
+    public init(from decoder: Decoder) throws {
+        let pairs = try [[Double]](from: decoder)
+        points = pairs.map { CGPoint(x: $0.first ?? 0, y: $0.dropFirst().first ?? 0) }
     }
 }
 
