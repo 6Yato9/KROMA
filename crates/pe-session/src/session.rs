@@ -39,6 +39,15 @@ pub enum SessionError {
     TooFewPoints(usize),
     #[error("{effect}.{key} is not a curve")]
     NotACurve { effect: String, key: String },
+    #[error("{effect} has no lattice called {key}")]
+    NotAWarp { effect: String, key: String },
+    #[error("no vertex at {col}, {row} in a {cols} by {rows} grid")]
+    NoSuchVertex {
+        col: u32,
+        row: u32,
+        cols: u32,
+        rows: u32,
+    },
     #[error("no layer attached")]
     NoLayer,
     #[error(transparent)]
@@ -523,6 +532,58 @@ impl Session {
                 points: points.to_vec(),
             }),
         )
+    }
+
+    /// Move one vertex of a lattice.
+    ///
+    /// The offset is a displacement from where the vertex would sit if it had
+    /// never been touched, which is what a warp stores. Refused for a vertex
+    /// the grid does not have: `Warp::set` ignores one silently, and over the C
+    /// ABI a call that reports success and does nothing is the hardest kind of
+    /// bug to see from the far side.
+    pub fn set_warp_vertex(
+        &mut self,
+        id: RowId,
+        key: &str,
+        col: u32,
+        row: u32,
+        offset: [f32; 2],
+    ) -> Result<(), SessionError> {
+        let mut warp = self.require_warp(id, key)?;
+        if col >= warp.cols() || row >= warp.rows() {
+            return Err(SessionError::NoSuchVertex {
+                col,
+                row,
+                cols: warp.cols(),
+                rows: warp.rows(),
+            });
+        }
+        warp.set(col, row, offset);
+        self.set_param(id, key, ParamValue::Warp(warp))
+    }
+
+    /// Put a lattice back to identity, keeping its grid size — this undoes the
+    /// dragging, not the setting up.
+    pub fn clear_warp(&mut self, id: RowId, key: &str) -> Result<(), SessionError> {
+        let mut warp = self.require_warp(id, key)?;
+        warp.clear();
+        self.set_param(id, key, ParamValue::Warp(warp))
+    }
+
+    /// The lattice at a key, or an error naming what was actually there.
+    fn require_warp(&self, id: RowId, key: &str) -> Result<pe_core::Warp, SessionError> {
+        let effect = self.require_row(id)?;
+        self.document()
+            .ok_or(SessionError::NothingOpen)?
+            .stack
+            .get(id)
+            .and_then(|r| r.params.get(key))
+            .and_then(ParamValue::as_warp)
+            .cloned()
+            .ok_or(SessionError::NotAWarp {
+                effect,
+                key: key.to_string(),
+            })
     }
 
     /// The effect key of the row, or an error naming the id that was missing.
@@ -1080,6 +1141,27 @@ mod tests {
         s
     }
 
+    fn warper_row(s: &Session) -> RowId {
+        s.document()
+            .unwrap()
+            .stack
+            .iter()
+            .find(|r| r.effect == "colour_warper")
+            .map(|r| r.id)
+            .expect("the warper is a pinned row")
+    }
+
+    fn warp_of(s: &Session, id: RowId, key: &str) -> pe_core::Warp {
+        s.document()
+            .unwrap()
+            .stack
+            .get(id)
+            .and_then(|r| r.params.get(key))
+            .and_then(pe_core::ParamValue::as_warp)
+            .cloned()
+            .expect("that parameter is not a lattice")
+    }
+
     #[test]
     fn a_fresh_session_has_nothing_open() {
         let s = Session::new();
@@ -1245,14 +1327,7 @@ mod tests {
     #[test]
     fn changing_the_divisions_resizes_the_lattice_it_describes() {
         let mut s = chart_session();
-        let row = s
-            .document()
-            .unwrap()
-            .stack
-            .iter()
-            .find(|r| r.effect == "colour_warper")
-            .map(|r| r.id)
-            .expect("the warper is a pinned row");
+        let row = warper_row(&s);
 
         let grid_of = |s: &Session, key: &str| {
             s.document()
@@ -1284,6 +1359,76 @@ mod tests {
         assert_eq!(grid_of(&s, "chroma_luma_2"), (4, 6));
         // And the hue web is not disturbed by them.
         assert_eq!(grid_of(&s, "hue_sat"), (8, 12));
+    }
+
+    #[test]
+    fn a_vertex_is_read_back_where_it_was_put() {
+        let mut s = chart_session();
+        let row = warper_row(&s);
+        s.set_warp_vertex(row, "hue_sat", 2, 3, [0.25, -0.1])
+            .unwrap();
+        let w = warp_of(&s, row, "hue_sat");
+        assert_eq!(w.at(2, 3), [0.25, -0.1]);
+        assert!(!w.is_identity());
+    }
+
+    #[test]
+    fn a_vertex_outside_the_grid_is_refused_rather_than_dropped() {
+        // `Warp::set` silently ignores an out-of-range vertex. Over the C ABI
+        // that would be a call that reports success and does nothing, which is
+        // the hardest kind of bug to see from the far side of a boundary.
+        let mut s = chart_session();
+        let row = warper_row(&s);
+        assert!(
+            s.set_warp_vertex(row, "hue_sat", 99, 0, [0.1, 0.1])
+                .is_err()
+        );
+        assert!(
+            s.set_warp_vertex(row, "hue_sat", 0, 99, [0.1, 0.1])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_vertex_sent_to_a_parameter_that_is_not_a_lattice_is_refused() {
+        let mut s = chart_session();
+        let row = warper_row(&s);
+        assert!(
+            s.set_warp_vertex(row, "axis_angle", 0, 0, [0.1, 0.1])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_lattice_can_be_put_back_to_nothing() {
+        let mut s = chart_session();
+        let row = warper_row(&s);
+        s.set_warp_vertex(row, "hue_sat", 1, 1, [0.2, 0.2]).unwrap();
+        assert!(!warp_of(&s, row, "hue_sat").is_identity());
+        s.clear_warp(row, "hue_sat").unwrap();
+        assert!(warp_of(&s, row, "hue_sat").is_identity());
+        // Clearing keeps the grid size — it undoes the drag, not the setup.
+        assert_eq!(warp_of(&s, row, "hue_sat").cols(), 6);
+    }
+
+    /// Resizing resamples. A colourist who has pulled a grid around and then
+    /// wants it finer is asking for more control points, not for their work
+    /// back.
+    #[test]
+    fn a_finer_grid_keeps_the_shape_that_was_drawn_on_the_coarse_one() {
+        let mut s = chart_session();
+        let row = warper_row(&s);
+        for c in 0..6 {
+            s.set_warp_vertex(row, "hue_sat", c, 0, [0.0, 0.3]).unwrap();
+        }
+        s.set_choice(row, "hue_divisions", "12").unwrap();
+        let w = warp_of(&s, row, "hue_sat");
+        assert_eq!(w.cols(), 12);
+        assert!(
+            (w.sample(0.5, 0.0, true)[1] - 0.3).abs() < 0.05,
+            "the shape was lost: {:?}",
+            w.sample(0.5, 0.0, true)
+        );
     }
 
     #[test]

@@ -577,6 +577,46 @@ pub unsafe extern "C" fn pe_session_set_curve(
     status(s, move |s| s.set_curve(pe_core::RowId(row), &key, &points))
 }
 
+/// Move one vertex of a lattice. `dx` and `dy` are a displacement in axis
+/// units, not a position.
+///
+/// Typed scalars rather than JSON because this is a drag path: a vertex being
+/// dragged sends its offset on every frame.
+///
+/// # Safety
+/// `s` and `key` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_set_warp_vertex(
+    s: *mut PeSession,
+    row: u64,
+    key: *const c_char,
+    col: u32,
+    vertex_row: u32,
+    dx: f32,
+    dy: f32,
+) -> i32 {
+    let Some(key) = as_str(key) else { return -1 };
+    let key = key.to_string();
+    status(s, move |s| {
+        s.set_warp_vertex(pe_core::RowId(row), &key, col, vertex_row, [dx, dy])
+    })
+}
+
+/// Put a lattice back to identity, keeping its grid size.
+///
+/// # Safety
+/// `s` and `key` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_clear_warp(
+    s: *mut PeSession,
+    row: u64,
+    key: *const c_char,
+) -> i32 {
+    let Some(key) = as_str(key) else { return -1 };
+    let key = key.to_string();
+    status(s, move |s| s.clear_warp(pe_core::RowId(row), &key))
+}
+
 // ---- history --------------------------------------------------------------
 
 /// Bracket a drag so it becomes one undo step rather than three hundred.
@@ -765,6 +805,28 @@ mod tests {
 
     fn cstr(s: &str) -> CString {
         CString::new(s).unwrap()
+    }
+
+    /// The session as the shell sees it: JSON out, parsed, string freed.
+    fn snapshot(s: *mut PeSession) -> serde_json::Value {
+        let json = unsafe { pe_session_snapshot_json(s) };
+        let text = unsafe { CStr::from_ptr(json) }.to_str().unwrap().to_owned();
+        unsafe { pe_string_free(json) };
+        serde_json::from_str(&text).unwrap()
+    }
+
+    /// The `hue_sat` lattice of a row, as the object a `Warp` serialises to.
+    fn warp_of(s: *mut PeSession, row: u64) -> serde_json::Value {
+        let snap = snapshot(s);
+        let param = snap["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == row)
+            .map(|r| r["params"]["hue_sat"].clone())
+            .expect("the row that was just written to");
+        assert_eq!(param["t"], "warp");
+        param["v"].clone()
     }
 
     #[test]
@@ -1022,6 +1084,59 @@ mod tests {
             unsafe { pe_session_set_curve(s, 0, key.as_ptr(), std::ptr::null(), 3) },
             -1
         );
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn a_vertex_crosses_the_boundary_and_a_bad_one_is_refused() {
+        let s = pe_session_new();
+        unsafe { pe_session_open_test_chart(s, 64, 64) };
+
+        // The warper's row id is not knowable from out here without asking.
+        let snap = snapshot(s);
+        let row = snap["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["effect"] == "colour_warper")
+            .and_then(|r| r["id"].as_u64())
+            .expect("the warper is a pinned row");
+
+        let key = cstr("hue_sat");
+        assert_eq!(
+            unsafe { pe_session_set_warp_vertex(s, row, key.as_ptr(), 2, 3, 0.25, -0.1) },
+            0
+        );
+
+        // A status of 0 does not prove the document moved; read it back.
+        // `Warp` serialises as a keyed object whose offsets are row-major, so
+        // the vertex at column 2 of row 3 of a 6 by 6 grid is index 20. Read
+        // as f32: the offset was stored as one, and -0.1 widened to f64 is
+        // -0.10000000149011612 — a difference in the printing, not the value.
+        let hue_sat = warp_of(s, row);
+        assert_eq!(hue_sat["cols"], 6);
+        let v = &hue_sat["offsets"][3 * 6 + 2];
+        assert_eq!(v[0].as_f64().unwrap() as f32, 0.25);
+        assert_eq!(v[1].as_f64().unwrap() as f32, -0.1);
+
+        // Out of range is refused, not silently dropped.
+        assert_eq!(
+            unsafe { pe_session_set_warp_vertex(s, row, key.as_ptr(), 99, 0, 0.1, 0.1) },
+            -2
+        );
+        assert_eq!(unsafe { pe_session_clear_warp(s, row, key.as_ptr()) }, 0);
+
+        let hue_sat = warp_of(s, row);
+        assert_eq!(hue_sat["cols"], 6, "clearing kept the grid");
+        assert!(
+            hue_sat["offsets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|o| o[0] == 0.0 && o[1] == 0.0),
+            "the lattice was not put back to identity"
+        );
+
         unsafe { pe_session_free(s) };
     }
 
