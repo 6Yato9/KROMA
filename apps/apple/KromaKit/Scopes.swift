@@ -32,6 +32,22 @@ public struct Scopes: Sendable {
     public let generation: UInt64
 }
 
+/// What a frame is measured at.
+///
+/// The scope's size, not the photograph's: a waveform has one column per pixel
+/// of the measured frame, so this is how wide the panel that will draw it is.
+/// Nested nowhere, because it is what a view hands the store rather than part
+/// of what comes back.
+public struct ScopeSize: Equatable, Sendable {
+    public let width: UInt32
+    public let height: UInt32
+
+    public init(width: UInt32, height: UInt32) {
+        self.width = width
+        self.height = height
+    }
+}
+
 extension Scopes {
     /// Which plane of a four-channel measurement. The order is the ABI's.
     public enum Channel: Int, Sendable, CaseIterable {

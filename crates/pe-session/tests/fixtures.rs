@@ -241,3 +241,55 @@ fn the_pin_sample_fixture_is_current() {
     .unwrap();
     check("pin_samples.json", json);
 }
+
+/// The vectorscope's graticule, and where pixels of those same colours land.
+///
+/// The Swift panel draws the colour-bar boxes and the skin line by
+/// reimplementing `pe_scopes::waveform::position`, because that projection is
+/// `pub` Rust with no C ABI and a handful of multiplications is not worth a
+/// round trip through the engine to place six boxes. This is what keeps the
+/// copy honest, exactly as `curve_samples.json` does for the curve evaluator.
+///
+/// `cell` is not computed from `position`: it is found by putting one pixel of
+/// that colour through `Vectorscope::from_display` and seeing which bin lights
+/// up. That is what makes the fixture worth having rather than a restatement
+/// of the formula — a box can only be checked against somewhere the pixels
+/// actually reach if the fixture went there the way the pixels do.
+#[test]
+fn the_scope_graticule_fixture_is_current() {
+    use pe_scopes::{SKIN, TARGETS, VECTOR_SIZE, Vectorscope, waveform::position};
+
+    fn cell(rgb: [u8; 3]) -> [usize; 2] {
+        let v = Vectorscope::from_display(&[rgb[0], rgb[1], rgb[2], 255]);
+        let lit = v
+            .bins()
+            .iter()
+            .position(|c| *c > 0)
+            .expect("one pixel lands in one bin");
+        [lit % VECTOR_SIZE, lit / VECTOR_SIZE]
+    }
+
+    let targets: Vec<serde_json::Value> = TARGETS
+        .iter()
+        .map(|(name, rgb)| {
+            serde_json::json!({
+                "name": name,
+                "rgb": rgb,
+                "position": position(*rgb),
+                "cell": cell(*rgb),
+            })
+        })
+        .collect();
+
+    let json = serde_json::to_string_pretty(&serde_json::json!({
+        "size": VECTOR_SIZE,
+        "targets": targets,
+        "skin": {
+            "rgb": SKIN,
+            "position": position(SKIN),
+            "cell": cell(SKIN),
+        },
+    }))
+    .unwrap();
+    check("scope_graticule.json", json);
+}

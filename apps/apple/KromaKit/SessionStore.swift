@@ -86,8 +86,12 @@ public final class SessionStore {
         // written. It goes to the status bar like any other refusal, and does
         // not stop the frame being drawn.
         run { try session.tick() }
-        guard session.needsRender else { return }
-        run { try session.render() }
+        if session.needsRender {
+            run { try session.render() }
+        }
+        // After the frame, not before: the scopes describe what was just drawn.
+        // Costs nothing at all unless a panel is open and the counts are stale.
+        measureScopesIfNeeded()
     }
 
     // ---- opening ---------------------------------------------------------
@@ -281,6 +285,46 @@ public final class SessionStore {
     public func measureScopes(width: UInt32, height: UInt32) {
         run { try session.measureScopes(width: width, height: height) }
         syncScopes()
+    }
+
+    /// What a visible scopes panel wants measured, or nil when no panel is on
+    /// screen.
+    ///
+    /// The visibility lives here rather than in the panel because it is the
+    /// store that decides to spend the measurement, and a measurement is a full
+    /// extra render plus a 1.2 MB readback. Paid behind a closed panel that is
+    /// the kind of cost nobody attributes correctly later, so the panel says
+    /// when it is looking and the store measures only then.
+    @ObservationIgnored public private(set) var scopeRequest: ScopeSize?
+
+    /// What the held counts were measured at. A panel that has been made wider
+    /// wants more columns, and a waveform stretched from three hundred to six
+    /// is a picture of the interpolation.
+    @ObservationIgnored private var scopeMeasured: ScopeSize?
+
+    /// Say whether a scopes panel is on screen, and at what size.
+    public func requestScopes(_ size: ScopeSize?) {
+        scopeRequest = size
+    }
+
+    /// Measure if a panel is looking and what it would draw is stale.
+    ///
+    /// Called from the frame tick. The answer says whether the measurement was
+    /// actually taken, which is the one thing worth knowing about a call that
+    /// renders the photograph a second time.
+    @discardableResult
+    public func measureScopesIfNeeded() -> Bool {
+        guard let request = scopeRequest, snapshot.isOpen else { return false }
+        // Every edit throws the engine's measurement away, and mid-drag this is
+        // the only place the store hears about it: `setFloat` and its kin
+        // deliberately skip `refresh` while a gesture is in flight. Without this
+        // line the scopes freeze under the hand that is grading, which is
+        // exactly when they are being watched.
+        syncScopes()
+        guard scopes == nil || scopeMeasured != request else { return false }
+        scopeMeasured = request
+        measureScopes(width: request.width, height: request.height)
+        return true
     }
 
     /// Bring the copy into step with the engine, doing nothing when it already

@@ -48,12 +48,12 @@ A `project.pbxproj` is unmergeable — every branch that adds a file conflicts.
 ## Fixtures
 
 `Fixtures/` holds `registry.json`, `snapshot.json`, `curve_samples.json`,
-`warp_samples.json` and `pin_samples.json`, written by `cargo test -p pe-session --test fixtures` and decoded by
+`warp_samples.json`, `pin_samples.json` and `scope_graticule.json`, written by `cargo test -p pe-session --test fixtures` and decoded by
 `KromaKitTests`. They are how the two halves of one application are stopped
 from drifting apart: add a field in Rust without adding it in Swift, and one of
 the two suites fails.
 
-The last three carry more weight than the first two. The curve editor
+The last four carry more weight than the first two. The curve editor
 draws its preview from a **second implementation of the engine's interpolation**,
 written in Swift — because asking the engine to bake on every frame of a drag
 would put a C call and a 256-float copy inside a gesture. Duplicating an
@@ -74,7 +74,15 @@ conversion. `pins.rs` documented them as "0..1" until this was written, and
 0.33 read as a fraction lands somewhere entirely different from 0.33 read as a
 chromaticity: plausible, and completely wrong.
 
-So if any of those three ever needs regenerating to make the tests pass, that
+`scope_graticule.json` does it for the vectorscope's boxes.
+`pe_scopes::waveform::position`, `TARGETS` and `SKIN` are `pub` Rust with no C
+ABI, so the Swift panel projects the six colour bar targets itself. The fixture
+carries each target's position *and* the bin one pixel of that colour actually
+lights when it goes through `Vectorscope::from_display` — so a box that ended
+up somewhere the pixels cannot reach fails a test rather than looking slightly
+wrong on a screen nobody is checking.
+
+So if any of those four ever needs regenerating to make the tests pass, that
 is not a fixture that has gone stale — it is the drawn control and the rendered
 one having parted company, and one of them is wrong. Find out which before
 regenerating.
