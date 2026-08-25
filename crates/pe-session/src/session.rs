@@ -48,6 +48,12 @@ pub enum SessionError {
         cols: u32,
         rows: u32,
     },
+    #[error("{effect} has no pin set called {key}")]
+    NotAPinSet { effect: String, key: String },
+    #[error("no pin at {index}, of {count}")]
+    NoSuchPin { index: usize, count: usize },
+    #[error("a warper takes at most {0} pins")]
+    TooManyPins(usize),
     #[error("no layer attached")]
     NoLayer,
     #[error(transparent)]
@@ -581,6 +587,99 @@ impl Session {
             .and_then(ParamValue::as_warp)
             .cloned()
             .ok_or(SessionError::NotAWarp {
+                effect,
+                key: key.to_string(),
+            })
+    }
+
+    /// Place a pin, returning its index.
+    ///
+    /// Refused once the set is full: `Pins::add` returns `None` there, and a
+    /// call that reports success and adds nothing is the same silence the
+    /// vertex check exists to prevent.
+    pub fn add_pin(&mut self, id: RowId, key: &str, at: [f32; 2]) -> Result<usize, SessionError> {
+        let mut pins = self.require_pins(id, key)?;
+        let index = pins
+            .add(pe_core::pins::Pin::placed(at))
+            .ok_or(SessionError::TooManyPins(pe_core::pins::MAX_PINS))?;
+        self.set_param(id, key, ParamValue::Pins(pins))?;
+        Ok(index)
+    }
+
+    /// Drag a pin. The origin stays where it was put — `at` is where the
+    /// colour is, `to` is where it should go, and only the second moves.
+    ///
+    /// Refused for an index the set does not have: `Pins::get_mut` returns
+    /// `None` and the drag would otherwise be swallowed.
+    pub fn move_pin(
+        &mut self,
+        id: RowId,
+        key: &str,
+        index: usize,
+        to: [f32; 2],
+    ) -> Result<(), SessionError> {
+        let mut pins = self.require_pins(id, key)?;
+        let count = pins.len();
+        let pin = pins
+            .get_mut(index)
+            .ok_or(SessionError::NoSuchPin { index, count })?;
+        pin.to = to;
+        self.set_param(id, key, ParamValue::Pins(pins))
+    }
+
+    /// The five controls that say how far a pin reaches and what it does
+    /// there, set together — they are one panel and one undo step.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_pin_shape(
+        &mut self,
+        id: RowId,
+        key: &str,
+        index: usize,
+        chroma_range: f32,
+        tonal_low: f32,
+        tonal_high: f32,
+        tonal_pivot: f32,
+        exposure: f32,
+    ) -> Result<(), SessionError> {
+        let mut pins = self.require_pins(id, key)?;
+        let count = pins.len();
+        let pin = pins
+            .get_mut(index)
+            .ok_or(SessionError::NoSuchPin { index, count })?;
+        pin.chroma_range = chroma_range;
+        pin.tonal_low = tonal_low;
+        pin.tonal_high = tonal_high;
+        pin.tonal_pivot = tonal_pivot;
+        pin.exposure = exposure;
+        self.set_param(id, key, ParamValue::Pins(pins))
+    }
+
+    /// Take a pin away.
+    ///
+    /// Refused past the end: `Pins::remove` ignores one silently, and a
+    /// deletion that reports success and deletes nothing is worse than a
+    /// deletion that fails.
+    pub fn remove_pin(&mut self, id: RowId, key: &str, index: usize) -> Result<(), SessionError> {
+        let mut pins = self.require_pins(id, key)?;
+        let count = pins.len();
+        if index >= count {
+            return Err(SessionError::NoSuchPin { index, count });
+        }
+        pins.remove(index);
+        self.set_param(id, key, ParamValue::Pins(pins))
+    }
+
+    /// The pin set at a key, or an error naming what was actually there.
+    fn require_pins(&self, id: RowId, key: &str) -> Result<pe_core::pins::Pins, SessionError> {
+        let effect = self.require_row(id)?;
+        self.document()
+            .ok_or(SessionError::NothingOpen)?
+            .stack
+            .get(id)
+            .and_then(|r| r.params.get(key))
+            .and_then(ParamValue::as_pins)
+            .cloned()
+            .ok_or(SessionError::NotAPinSet {
                 effect,
                 key: key.to_string(),
             })
@@ -1162,6 +1261,17 @@ mod tests {
             .expect("that parameter is not a lattice")
     }
 
+    fn pins_of(s: &Session, id: RowId) -> pe_core::pins::Pins {
+        s.document()
+            .unwrap()
+            .stack
+            .get(id)
+            .and_then(|r| r.params.get("pins"))
+            .and_then(pe_core::ParamValue::as_pins)
+            .cloned()
+            .expect("pins is not a pin set")
+    }
+
     #[test]
     fn a_fresh_session_has_nothing_open() {
         let s = Session::new();
@@ -1429,6 +1539,104 @@ mod tests {
             "the shape was lost: {:?}",
             w.sample(0.5, 0.0, true)
         );
+    }
+
+    #[test]
+    fn a_pin_is_placed_where_it_was_asked_for_and_does_nothing_yet() {
+        let mut s = chart_session();
+        let row = warper_row(&s);
+        assert_eq!(s.add_pin(row, "pins", [0.33, 0.35]).unwrap(), 0);
+        let pins = pins_of(&s, row);
+        assert_eq!(pins.len(), 1);
+        let p = pins.get(0).unwrap();
+        assert_eq!(p.at, [0.33, 0.35]);
+        assert_eq!(p.to, p.at, "a fresh pin has not been dragged");
+        assert!(
+            p.is_neutral(),
+            "placing a pin should not change the picture"
+        );
+    }
+
+    #[test]
+    fn a_pin_moves_where_it_is_dragged() {
+        let mut s = chart_session();
+        let row = warper_row(&s);
+        s.add_pin(row, "pins", [0.33, 0.35]).unwrap();
+        s.move_pin(row, "pins", 0, [0.40, 0.30]).unwrap();
+        let pins = pins_of(&s, row);
+        assert_eq!(pins.get(0).unwrap().to, [0.40, 0.30]);
+        assert_eq!(
+            pins.get(0).unwrap().at,
+            [0.33, 0.35],
+            "the origin stays put"
+        );
+        assert!(!pins.get(0).unwrap().is_neutral());
+    }
+
+    #[test]
+    fn a_pins_shape_can_be_set_in_one_call() {
+        let mut s = chart_session();
+        let row = warper_row(&s);
+        s.add_pin(row, "pins", [0.33, 0.35]).unwrap();
+        s.set_pin_shape(row, "pins", 0, 0.12, 0.2, 0.9, 0.6, 0.75)
+            .unwrap();
+        let pins = pins_of(&s, row);
+        let p = pins.get(0).unwrap();
+        assert_eq!(p.chroma_range, 0.12);
+        assert_eq!(p.tonal_low, 0.2);
+        assert_eq!(p.tonal_high, 0.9);
+        assert_eq!(p.tonal_pivot, 0.6);
+        assert_eq!(p.exposure, 0.75);
+        // Exposure alone is enough to make a pin do something, even undragged.
+        assert!(!p.is_neutral());
+    }
+
+    #[test]
+    fn a_pin_can_be_removed_and_the_others_stay() {
+        let mut s = chart_session();
+        let row = warper_row(&s);
+        s.add_pin(row, "pins", [0.1, 0.1]).unwrap();
+        s.add_pin(row, "pins", [0.2, 0.2]).unwrap();
+        s.remove_pin(row, "pins", 0).unwrap();
+        let pins = pins_of(&s, row);
+        assert_eq!(pins.len(), 1);
+        assert_eq!(pins.get(0).unwrap().at, [0.2, 0.2]);
+    }
+
+    #[test]
+    fn a_pin_that_is_not_there_is_refused_rather_than_ignored() {
+        // `Pins::remove` and `get_mut` both ignore an out-of-range index. Over
+        // the C ABI that is a call reporting success and doing nothing, which
+        // is the hardest kind of bug to see from the far side.
+        let mut s = chart_session();
+        let row = warper_row(&s);
+        assert!(s.move_pin(row, "pins", 0, [0.4, 0.4]).is_err());
+        assert!(s.remove_pin(row, "pins", 0).is_err());
+        assert!(
+            s.set_pin_shape(row, "pins", 0, 0.1, 1.0, 1.0, 0.5, 0.0)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_ninth_pin_is_refused() {
+        // Bounded because they travel to the GPU inside the curve LUT, and
+        // because the honest number is small: past a handful you are
+        // describing a field, and the grid views already do fields.
+        let mut s = chart_session();
+        let row = warper_row(&s);
+        for i in 0..pe_core::pins::MAX_PINS {
+            assert_eq!(s.add_pin(row, "pins", [0.1 * i as f32, 0.3]).unwrap(), i);
+        }
+        assert!(s.add_pin(row, "pins", [0.5, 0.5]).is_err());
+        assert_eq!(pins_of(&s, row).len(), pe_core::pins::MAX_PINS);
+    }
+
+    #[test]
+    fn pins_sent_to_a_parameter_that_is_not_a_pin_set_are_refused() {
+        let mut s = chart_session();
+        let row = warper_row(&s);
+        assert!(s.add_pin(row, "axis_angle", [0.3, 0.3]).is_err());
     }
 
     #[test]

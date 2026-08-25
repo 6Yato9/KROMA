@@ -617,6 +617,115 @@ pub unsafe extern "C" fn pe_session_clear_warp(
     status(s, move |s| s.clear_warp(pe_core::RowId(row), &key))
 }
 
+/// Place a pin at a chromaticity, returning its index, or a negative number on
+/// failure — `-1` for a bad argument, `-2` for a refusal whose reason is in
+/// [`pe_session_last_error`].
+///
+/// The odd one out: this call answers with an index rather than a status, so
+/// it cannot use the `status` helper, and failure has to arrive in the same
+/// integer as the answer. A negative index is the sentinel, and the reason is
+/// recorded exactly where `status` would have put it.
+///
+/// # Safety
+/// `s` and `key` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_add_pin(
+    s: *mut PeSession,
+    row: u64,
+    key: *const c_char,
+    x: f32,
+    y: f32,
+) -> i32 {
+    let Some(key) = as_str(key) else { return -1 };
+    let key = key.to_string();
+    with(s, -1, move |s| {
+        match s.inner.add_pin(pe_core::RowId(row), &key, [x, y]) {
+            Ok(i) => {
+                s.last_error = None;
+                i as i32
+            }
+            Err(e) => {
+                s.last_error = Some(e.to_string());
+                -2
+            }
+        }
+    })
+}
+
+/// Drag a pin. Only `to` moves — `at` is where the colour is.
+///
+/// Typed scalars rather than JSON because this is a drag path: a pin being
+/// dragged sends its chromaticity on every frame.
+///
+/// # Safety
+/// `s` and `key` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_move_pin(
+    s: *mut PeSession,
+    row: u64,
+    key: *const c_char,
+    index: u32,
+    x: f32,
+    y: f32,
+) -> i32 {
+    let Some(key) = as_str(key) else { return -1 };
+    let key = key.to_string();
+    status(s, move |s| {
+        s.move_pin(pe_core::RowId(row), &key, index as usize, [x, y])
+    })
+}
+
+/// The five controls that shape a pin, set together.
+///
+/// # Safety
+/// `s` and `key` must be valid or null.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn pe_session_set_pin_shape(
+    s: *mut PeSession,
+    row: u64,
+    key: *const c_char,
+    index: u32,
+    chroma_range: f32,
+    tonal_low: f32,
+    tonal_high: f32,
+    tonal_pivot: f32,
+    exposure: f32,
+) -> i32 {
+    let Some(key) = as_str(key) else { return -1 };
+    let key = key.to_string();
+    status(s, move |s| {
+        s.set_pin_shape(
+            pe_core::RowId(row),
+            &key,
+            index as usize,
+            chroma_range,
+            tonal_low,
+            tonal_high,
+            tonal_pivot,
+            exposure,
+        )
+    })
+}
+
+/// Take a pin away.
+///
+/// # Safety
+/// `s` and `key` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_remove_pin(
+    s: *mut PeSession,
+    row: u64,
+    key: *const c_char,
+    index: u32,
+) -> i32 {
+    let Some(key) = as_str(key) else { return -1 };
+    let key = key.to_string();
+    status(s, move |s| {
+        s.remove_pin(pe_core::RowId(row), &key, index as usize)
+    })
+}
+
 // ---- history --------------------------------------------------------------
 
 /// Bracket a drag so it becomes one undo step rather than three hundred.
@@ -827,6 +936,20 @@ mod tests {
             .expect("the row that was just written to");
         assert_eq!(param["t"], "warp");
         param["v"].clone()
+    }
+
+    /// The `pins` set of a row, as the bare list a `Pins` serialises to.
+    fn pins_of(s: *mut PeSession, row: u64) -> Vec<serde_json::Value> {
+        let snap = snapshot(s);
+        let param = snap["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == row)
+            .map(|r| r["params"]["pins"].clone())
+            .expect("the row that was just written to");
+        assert_eq!(param["t"], "pins");
+        param["v"].as_array().expect("a pin set is a list").clone()
     }
 
     #[test]
@@ -1136,6 +1259,71 @@ mod tests {
                 .all(|o| o[0] == 0.0 && o[1] == 0.0),
             "the lattice was not put back to identity"
         );
+
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn pins_cross_the_boundary_and_bad_ones_are_refused() {
+        let s = pe_session_new();
+        unsafe { pe_session_open_test_chart(s, 64, 64) };
+
+        // The warper's row id is not knowable from out here without asking.
+        let snap = snapshot(s);
+        let row = snap["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["effect"] == "colour_warper")
+            .and_then(|r| r["id"].as_u64())
+            .expect("the warper is a pinned row");
+
+        let key = cstr("pins");
+
+        assert_eq!(
+            unsafe { pe_session_add_pin(s, row, key.as_ptr(), 0.33, 0.35) },
+            0
+        );
+        assert_eq!(
+            unsafe { pe_session_add_pin(s, row, key.as_ptr(), 0.20, 0.65) },
+            1
+        );
+        assert_eq!(
+            unsafe { pe_session_move_pin(s, row, key.as_ptr(), 1, 0.28, 0.55) },
+            0
+        );
+        assert_eq!(
+            unsafe { pe_session_set_pin_shape(s, row, key.as_ptr(), 1, 0.12, 0.2, 0.9, 0.6, 0.75) },
+            0
+        );
+
+        // A pin that is not there is refused, not ignored.
+        assert_eq!(
+            unsafe { pe_session_move_pin(s, row, key.as_ptr(), 9, 0.1, 0.1) },
+            -2
+        );
+        assert_eq!(
+            unsafe { pe_session_remove_pin(s, row, key.as_ptr(), 9) },
+            -2
+        );
+
+        // And the document actually changed — a status code alone proves
+        // nothing. `Pins` is `#[serde(transparent)]`, so `v` is the list of
+        // pins itself rather than an object wrapping it. Read back as f32:
+        // 0.75 widens to f64 exactly but 0.12 does not, and the value that was
+        // stored was an f32 either way.
+        let pins = pins_of(s, row);
+        assert_eq!(pins.len(), 2);
+        assert_eq!(pins[1]["to"][0].as_f64().unwrap() as f32, 0.28);
+        assert_eq!(pins[1]["to"][1].as_f64().unwrap() as f32, 0.55);
+        assert_eq!(pins[1]["at"][0].as_f64().unwrap() as f32, 0.20);
+        assert_eq!(pins[1]["chroma_range"].as_f64().unwrap() as f32, 0.12);
+        assert_eq!(pins[1]["exposure"].as_f64().unwrap() as f32, 0.75);
+
+        assert_eq!(unsafe { pe_session_remove_pin(s, row, key.as_ptr(), 0) }, 0);
+        let pins = pins_of(s, row);
+        assert_eq!(pins.len(), 1);
+        assert_eq!(pins[0]["to"][0].as_f64().unwrap() as f32, 0.28);
 
         unsafe { pe_session_free(s) };
     }
