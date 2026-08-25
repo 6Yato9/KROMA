@@ -100,4 +100,35 @@ final class EngineTests: XCTestCase {
             try session.setCurve(row: curves.id, key: "luma", points: [CGPoint(x: 0.5, y: 0.5)])
         )
     }
+
+    func testAVertexSurvivesTheRoundTrip() throws {
+        let session = try XCTUnwrap(Session())
+        try session.openTestChart(width: 64, height: 64)
+        let warper = try XCTUnwrap(try session.snapshot().rows.first { $0.effect == "colour_warper" })
+
+        try session.setWarpVertex(row: warper.id, key: "hue_sat", col: 2, vertexRow: 3,
+                                  offset: CGPoint(x: 0.25, y: -0.1))
+
+        let after = try XCTUnwrap(try session.snapshot().rows.first { $0.id == warper.id })
+        let w = try XCTUnwrap(after.params["hue_sat"]?.warpValue)
+        XCTAssertEqual(w.at(col: 2, row: 3).x, 0.25, accuracy: 0.0001)
+        XCTAssertEqual(w.at(col: 2, row: 3).y, -0.1, accuracy: 0.0001)
+        XCTAssertFalse(w.isIdentity)
+
+        try session.clearWarp(row: warper.id, key: "hue_sat")
+        let cleared = try XCTUnwrap(try session.snapshot().rows.first { $0.id == warper.id })
+        XCTAssertTrue(try XCTUnwrap(cleared.params["hue_sat"]?.warpValue).isIdentity)
+    }
+
+    func testAVertexTheGridDoesNotHaveIsRefused() throws {
+        // The engine refuses it rather than dropping it. This checks Swift
+        // surfaces the refusal instead of reporting a success that did nothing.
+        let session = try XCTUnwrap(Session())
+        try session.openTestChart(width: 64, height: 64)
+        let warper = try XCTUnwrap(try session.snapshot().rows.first { $0.effect == "colour_warper" })
+        XCTAssertThrowsError(
+            try session.setWarpVertex(row: warper.id, key: "hue_sat", col: 99, vertexRow: 0,
+                                      offset: CGPoint(x: 0.1, y: 0.1))
+        )
+    }
 }

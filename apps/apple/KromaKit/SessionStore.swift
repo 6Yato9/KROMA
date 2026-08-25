@@ -176,6 +176,24 @@ public final class SessionStore {
         if !dragging { refresh() }
     }
 
+    /// A lattice's hot path. Like `setFloat`, it does not refresh the snapshot
+    /// mid-drag — the editor holds the in-flight lattice and draws from that.
+    public func setWarpVertex(
+        row: UInt64, key: String, col: Int, vertexRow: Int, offset: CGPoint
+    ) {
+        run {
+            try session.setWarpVertex(
+                row: row, key: key, col: col, vertexRow: vertexRow, offset: offset
+            )
+        }
+        if !dragging { refresh() }
+    }
+
+    public func clearWarp(row: UInt64, key: String) {
+        run { try session.clearWarp(row: row, key: key) }
+        refresh()
+    }
+
     public func setBool(row: UInt64, key: String, value: Bool) {
         run { try session.setBool(row: row, key: key, value: value) }
         refresh()

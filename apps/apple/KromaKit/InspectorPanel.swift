@@ -37,7 +37,13 @@ public struct InspectorPanel: View {
                 CurvePanel(effect: effect, params: curves, row: row, store: store)
             }
 
-            ForEach(effect.params.filter { !isWheel($0) && !isCurve($0) }) { param in
+            if !warpSections.isEmpty {
+                WarperPanel(effect: effect, sections: warpSections, row: row, store: store)
+            }
+
+            ForEach(effect.params.filter {
+                !isWheel($0) && !isCurve($0) && !warpSections.contains($0.section)
+            }) { param in
                 control(for: param)
             }
         }
@@ -62,6 +68,24 @@ public struct InspectorPanel: View {
         effect.params.filter(isCurve)
     }
 
+    private func isWarp(_ param: Param) -> Bool {
+        if case .warp = param.kind { return true }
+        return false
+    }
+
+    /// Sections that contain a lattice, in registry order and without repeats.
+    ///
+    /// A lattice with an *empty* section is claimed by no tab and would fall
+    /// through to the flat list. No registered effect has one; if one appears
+    /// it belongs in the panel, not in the list.
+    private var warpSections: [String] {
+        var seen = Set<String>()
+        return effect.params
+            .filter { isWarp($0) && !$0.section.isEmpty }
+            .map(\.section)
+            .filter { seen.insert($0).inserted }
+    }
+
     @ViewBuilder
     private func wheel(_ param: Param) -> some View {
         if case let .wheel(bounds, master) = param.kind {
@@ -81,6 +105,19 @@ public struct InspectorPanel: View {
 
     @ViewBuilder
     private func control(for param: Param) -> some View {
+        Self.control(for: param, effect: effect, row: row, store: store)
+    }
+
+    /// One parameter's row, chosen by kind.
+    ///
+    /// Static, and taking its context explicitly, because `WarperPanel` draws
+    /// the rows of the section it has claimed and must draw them exactly as
+    /// the inspector does. A second copy of this `switch` would be two
+    /// switches drifting apart, and a parameter kind added to one of them.
+    @ViewBuilder
+    static func control(
+        for param: Param, effect: Effect, row: Snapshot.Row, store: SessionStore
+    ) -> some View {
         switch param.kind {
         case let .float(bounds):
             FloatRow(

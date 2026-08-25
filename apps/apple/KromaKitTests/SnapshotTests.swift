@@ -175,4 +175,15 @@ final class SnapshotTests: XCTestCase {
         }
         XCTAssertEqual(gain.master, 1.0, accuracy: 0.0001)
     }
+
+    func testReplacingAVertexLeavesTheRestAlone() {
+        let w = WarpValue(cols: 2, rows: 2, offsets: [.zero, .zero, .zero, .zero])
+        let moved = w.replacing(col: 1, row: 1, with: CGPoint(x: 0.3, y: 0.4))
+        XCTAssertEqual(moved.at(col: 1, row: 1).x, 0.3, accuracy: 0.0001)
+        XCTAssertEqual(moved.at(col: 0, row: 0), .zero)
+        XCTAssertEqual(moved.cols, 2)
+        // And a vertex the grid does not have changes nothing rather than
+        // growing the array.
+        XCTAssertEqual(w.replacing(col: 9, row: 0, with: CGPoint(x: 1, y: 1)).offsets.count, 4)
+    }
 }

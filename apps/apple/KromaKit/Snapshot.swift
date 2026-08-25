@@ -223,6 +223,16 @@ public struct WarpValue: Decodable, Sendable, Equatable {
         return offsets.indices.contains(i) ? offsets[i] : .zero
     }
 
+    /// A lattice with one vertex moved, for a view holding an in-flight drag.
+    public func replacing(col: Int, row: Int, with offset: CGPoint) -> WarpValue {
+        guard col >= 0, row >= 0, col < cols, row < rows else { return self }
+        let i = row * cols + col
+        guard offsets.indices.contains(i) else { return self }
+        var next = offsets
+        next[i] = offset
+        return WarpValue(cols: cols, rows: rows, offsets: next)
+    }
+
     /// Whether this lattice leaves the picture alone. Exactly zero rather than
     /// nearly: a vertex dragged and put back should read as untouched, and
     /// drags land on exact values because the widget writes the position it

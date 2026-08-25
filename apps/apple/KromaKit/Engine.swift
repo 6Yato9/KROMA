@@ -225,6 +225,26 @@ public final class Session {
         )
     }
 
+    /// Move one vertex of a lattice. The offset is a displacement in axis
+    /// units, not a position — that is what a warp stores.
+    public func setWarpVertex(
+        row: UInt64, key: String, col: Int, vertexRow: Int, offset: CGPoint
+    ) throws {
+        try check(
+            key.withCString {
+                pe_session_set_warp_vertex(
+                    handle, row, $0, UInt32(col), UInt32(vertexRow),
+                    Float(offset.x), Float(offset.y)
+                )
+            }
+        )
+    }
+
+    /// Put a lattice back to identity, keeping its grid size.
+    public func clearWarp(row: UInt64, key: String) throws {
+        try check(key.withCString { pe_session_clear_warp(handle, row, $0) })
+    }
+
     // ---- history ------------------------------------------------------------
 
     /// Bracket a drag so it collapses into one undo step rather than three
