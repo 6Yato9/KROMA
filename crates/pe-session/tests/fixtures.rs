@@ -293,3 +293,72 @@ fn the_scope_graticule_fixture_is_current() {
     .unwrap();
     check("scope_graticule.json", json);
 }
+
+/// The ten curves of the `curves` effect, read out of the registry.
+///
+/// Read rather than typed: a list edited by hand when a curve is added is a
+/// list that will not be, and the one thing worse than a curve with no
+/// backdrop is a test that says every curve has one because it never heard of
+/// the new curve.
+fn curve_keys() -> Vec<&'static str> {
+    pe_effects::by_key("curves")
+        .expect("the curves effect is in the registry")
+        .params
+        .iter()
+        .filter(|p| matches!(p.kind, pe_effects::ParamKind::Curve { .. }))
+        .map(|p| p.key)
+        .collect()
+}
+
+/// Every curve the registry declares must have an answer. A curve added later
+/// with no backdrop would silently draw against nothing, which reads as "this
+/// photograph has no colours there".
+///
+/// Here rather than in `pe-scopes` beside `Backdrop` itself, because the
+/// question is about two crates at once — what `pe-effects` declares and what
+/// `pe-scopes` answers — and this suite is the one that already sees both. It
+/// also puts the list in the same place as the fixture that ships it to Swift,
+/// so there is one source for both rather than two that can disagree.
+#[test]
+fn every_registered_curve_has_a_backdrop() {
+    use pe_scopes::backdrop::Backdrop;
+
+    let keys = curve_keys();
+    assert_eq!(keys.len(), 10, "the curves effect grew or shrank: {keys:?}");
+    for key in keys {
+        assert_ne!(
+            Backdrop::behind(key),
+            Backdrop::Nothing,
+            "{key} has no backdrop"
+        );
+    }
+    assert_eq!(Backdrop::behind("not_a_curve"), Backdrop::Nothing);
+}
+
+/// What belongs behind each curve, and the window a tone plot spans.
+///
+/// The mapping is shared knowledge with one right answer per curve, and the
+/// window is two numbers that already appear in three places. Both cross to
+/// Swift here rather than being typed a fourth time.
+#[test]
+fn the_backdrop_fixture_is_current() {
+    use pe_core::parametric::{LOG_BLACK, LOG_WHITE};
+    use pe_scopes::backdrop::Backdrop;
+
+    let mapping: serde_json::Map<String, serde_json::Value> = curve_keys()
+        .iter()
+        .map(|k| {
+            (
+                k.to_string(),
+                serde_json::json!(format!("{:?}", Backdrop::behind(k))),
+            )
+        })
+        .collect();
+
+    let json = serde_json::to_string_pretty(&serde_json::json!({
+        "window": { "black": LOG_BLACK, "white": LOG_WHITE },
+        "behind": mapping,
+    }))
+    .unwrap();
+    check("backdrop_samples.json", json);
+}

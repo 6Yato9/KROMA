@@ -21,13 +21,9 @@
 use crate::basic;
 use crate::preview::Scopes;
 use crate::resolve;
+use pe_core::parametric::{LOG_BLACK, LOG_WHITE};
 use pe_core::{Curve, History, ParamValue, RowId};
-use pe_scopes::{BINS, Histogram};
-
-/// Where diffuse white and black sit in the curve's own domain. The same
-/// numbers as the shader's CCT_WHITE and CCT_BLACK.
-const LOG_BLACK: f32 = 0.072_905_53;
-const LOG_WHITE: f32 = 0.554_794_5;
+use pe_scopes::{BINS, Backdrop, Histogram};
 
 /// The seven curves Resolve offers, in the order its icon strip shows them.
 ///
@@ -238,21 +234,61 @@ fn hue_swatch(hue: f32) -> egui::Color32 {
     )
 }
 
+/// The measurement that belongs behind the plot for `key`, drawn.
+///
+/// *Which* measurement that is comes from `pe_scopes::Backdrop` rather than
+/// from this file, because it is the same question in both shells and it is
+/// the question this file used to get wrong: what goes behind a curve has to
+/// be counted in the units its x-axis is indexed by. `lum_vs_sat` is indexed
+/// by luminance despite the saturation it outputs, and was drawn against the
+/// saturation spread — every peak in the wrong place, which is worse than
+/// drawing nothing.
+///
+/// Taking a curve key rather than a [`Mode`] is what keeps Custom honest:
+/// `Mode::key()` is `None` there because Custom edits four curves, and the
+/// widget drawing one of them already knows which. So all four ask the shared
+/// table by name instead of anything here unwrapping a `None`.
+fn backdrop_behind(painter: &egui::Painter, rect: egui::Rect, key: &str, scopes: Option<&Scopes>) {
+    match Backdrop::behind(key) {
+        Backdrop::Tones => histogram_behind(
+            painter,
+            rect,
+            scopes.map(|s| &s.log_histogram),
+            &CHANNEL_PLANES,
+        ),
+        // The luma trace is the tone drawing with one plane, read through the
+        // same SDR window — which is exactly what the shader's `lum_in`
+        // indexes. One function draws both rather than a second one growing
+        // its own copy of the window arithmetic.
+        Backdrop::Luma => {
+            histogram_behind(painter, rect, scopes.map(|s| &s.log_histogram), &LUMA_PLANE)
+        }
+        Backdrop::Hue => spread_behind(painter, rect, scopes.map(|s| &s.colour), |s| &s.hue),
+        Backdrop::Saturation => {
+            spread_behind(painter, rect, scopes.map(|s| &s.colour), |s| &s.saturation)
+        }
+        // Nothing is known to belong there, so nothing is drawn. A plausible
+        // count of the wrong quantity would be the worse of the two.
+        Backdrop::Nothing => {}
+    }
+}
+
 /// The histogram behind a secondary: hues or saturations rather than tones.
+///
+/// Which of the two is not decided here. The caller has already asked
+/// [`Backdrop`] what the plot's x-axis is indexed by, and hands over the plane
+/// that answers it — the whole bug this replaced was this function deciding
+/// for itself, from a test that had no case for luminance.
 fn spread_behind(
     painter: &egui::Painter,
     rect: egui::Rect,
-    mode: Mode,
     spread: Option<&pe_scopes::ColourSpread>,
+    plane: fn(&pe_scopes::ColourSpread) -> &[u32; BINS],
 ) {
     let Some(spread) = spread else {
         return;
     };
-    let bins = if mode.x_is_hue() {
-        &spread.hue
-    } else {
-        &spread.saturation
-    };
+    let bins = plane(spread);
     let peak = spread.peak().max(1) as f32;
     let heights = trace(bins, peak);
     let height = rect.height() * 0.92;
@@ -806,7 +842,7 @@ fn canvas(
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 3.0, crate::theme::colour::WELL);
 
-    histogram_behind(&painter, rect, scopes.map(|s| &s.log_histogram));
+    backdrop_behind(&painter, rect, key, scopes);
 
     end_handles(&painter, rect, black_out, white_out, end);
 
@@ -1114,6 +1150,27 @@ const CHANNEL_COLOURS: [egui::Color32; 3] = [
     crate::theme::colour::CHANNEL[2],
 ];
 
+/// One plane of a tone histogram and the colour its trace is drawn in.
+///
+/// A pair rather than two arguments because they are one decision: the fills
+/// are added rather than blended, so the colour is the only thing saying which
+/// plane an edge belongs to once several of them overlap.
+type Plane = (fn(&Histogram) -> &[u32; BINS], egui::Color32);
+
+/// The three channels, behind a curve indexed by level.
+const CHANNEL_PLANES: [Plane; 3] = [
+    (|h| &h.red, CHANNEL_COLOURS[0]),
+    (|h| &h.green, CHANNEL_COLOURS[1]),
+    (|h| &h.blue, CHANNEL_COLOURS[2]),
+];
+
+/// The luma plane alone, behind a curve indexed by luminance.
+///
+/// Neutral rather than one of the channel colours: Lum Vs Sat reads a single
+/// number off the picture, and three coloured traces would be saying something
+/// about channels its x-axis never asks about.
+const LUMA_PLANE: [Plane; 1] = [(|h| &h.luma, egui::Color32::from_gray(230))];
+
 /// How far either side of a bin the smoothing reaches.
 ///
 /// A histogram of a photograph is spiky — real images have runs of identical
@@ -1264,7 +1321,7 @@ fn secondary(
     if ui.is_rect_visible(rect) {
         let painter = ui.painter_at(rect);
         axis_background(&painter, rect, mode);
-        spread_behind(&painter, rect, mode, scopes.map(|s| &s.colour));
+        backdrop_behind(&painter, rect, key, scopes);
 
         let grid = egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(26));
         for q in 1..8 {
@@ -1346,18 +1403,20 @@ fn secondary(
 /// the lines say which channel each edge belongs to. That is the reading a
 /// colourist wants — the grey mass is the picture, and a coloured edge showing
 /// out of it is a channel that has drifted from the others.
-fn histogram_behind(painter: &egui::Painter, rect: egui::Rect, hist: Option<&Histogram>) {
+fn histogram_behind(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    hist: Option<&Histogram>,
+    planes: &[Plane],
+) {
     let Some(hist) = hist else {
         return;
     };
     let peak = hist.peak().max(1) as f32;
     let height = rect.height() * 0.92;
 
-    for (bins, colour) in [
-        (&hist.red, CHANNEL_COLOURS[0]),
-        (&hist.green, CHANNEL_COLOURS[1]),
-        (&hist.blue, CHANNEL_COLOURS[2]),
-    ] {
+    for &(plane, colour) in planes {
+        let bins = plane(hist);
         // The plot spans black to diffuse white, not the whole log domain, so
         // the bins are read through that range rather than laid out edge to
         // edge. Drawing them straight across would put every tone about a
@@ -1651,6 +1710,31 @@ mod tests {
             (0.6..0.75).contains(&grey),
             "mid grey landed at {grey} of the way across"
         );
+    }
+
+    /// Every plot this file draws has to have something behind it, and the
+    /// keys it asks about are typed out here rather than read from the
+    /// registry — so a typo in one would show up as a plot with an empty
+    /// background, which reads as "this photograph has no colours there".
+    ///
+    /// The pointed case is `LumVsSat`: it reads "Input Lum" and used to be
+    /// drawn against the saturation spread.
+    #[test]
+    fn every_mode_this_file_draws_has_a_backdrop() {
+        for mode in Mode::ALL {
+            match mode.key() {
+                Some(key) => assert_ne!(Backdrop::behind(key), Backdrop::Nothing, "{key}"),
+                // Custom has no single key: it edits the four tone curves,
+                // and each canvas asks about the one it is drawing. Read from
+                // the same list the canvas is given rather than retyped.
+                None => {
+                    for (key, _) in CHANNELS {
+                        assert_eq!(Backdrop::behind(key), Backdrop::Tones, "{key}");
+                    }
+                }
+            }
+        }
+        assert_eq!(Backdrop::behind("lum_vs_sat"), Backdrop::Luma);
     }
 
     fn spike() -> [u32; BINS] {

@@ -80,13 +80,23 @@ pub fn weights(t: f32, splits: [f32; 3]) -> [f32; 4] {
 /// `PARAMETRIC_RANGE` in `shaders/effects/curves.wgsl`.
 pub const RANGE_IN_LOG: f32 = 0.12;
 
-/// How much log signal an SDR image occupies: CCT_WHITE minus CCT_BLACK.
+/// Where diffuse black and diffuse white sit in the curve's own log domain.
 ///
-/// Spelled out rather than imported because this crate deliberately has no
-/// colour-science dependency; `pe_color::tests::acescct_anchors_match_the_shader`
-/// is what keeps these numbers honest.
-// The shader's CCT_WHITE and CCT_BLACK, at the precision an f32 can hold.
-pub const SDR_SPAN_IN_LOG: f32 = 0.554_794_5 - 0.072_905_53;
+/// The same numbers as `CCT_BLACK` and `CCT_WHITE` in `shaders/common.wgsl`, at
+/// the precision an f32 can hold. Spelled out rather than imported because this
+/// crate deliberately has no colour-science dependency;
+/// `pe_color::tests::acescct_anchors_match_the_shader` is what keeps them
+/// honest.
+///
+/// A plot of a tone curve spans exactly this window rather than the whole log
+/// domain, so anything drawn behind one has to be read through it. Laid out
+/// edge to edge instead, a histogram sits about a seventh of the plot to the
+/// left of where the curve acts on it.
+pub const LOG_BLACK: f32 = 0.072_905_53;
+pub const LOG_WHITE: f32 = 0.554_794_5;
+
+/// How much log signal an SDR image occupies.
+pub const SDR_SPAN_IN_LOG: f32 = LOG_WHITE - LOG_BLACK;
 
 /// The shift a set of region amounts produces at tone `t`, in the same units
 /// the sliders use (-1 to 1).
@@ -163,6 +173,18 @@ mod tests {
             assert!((sum - 1.0).abs() < 1e-4, "sum was {sum} at t={t}");
             assert!(w.iter().all(|v| (0.0..=1.0).contains(v)), "{w:?}");
         }
+    }
+
+    /// The span is these two, not a separately-written number. It was written
+    /// out as a subtraction of two literals, which is one place for the pair to
+    /// drift from the shader that also holds them.
+    #[test]
+    fn the_sdr_span_is_the_distance_between_the_two_anchors() {
+        assert_eq!(SDR_SPAN_IN_LOG, LOG_WHITE - LOG_BLACK);
+        // A const block rather than a runtime assertion, at clippy's
+        // suggestion: both sides are constants, so the window being inside
+        // the domain can be a compile error instead of a test failure.
+        const { assert!(LOG_BLACK > 0.0 && LOG_WHITE < 1.0) };
     }
 
     #[test]

@@ -1,0 +1,18 @@
+{
+  "behind": {
+    "blue": "Tones",
+    "green": "Tones",
+    "hue_vs_hue": "Hue",
+    "hue_vs_lum": "Hue",
+    "hue_vs_sat": "Hue",
+    "lum_vs_sat": "Luma",
+    "luma": "Tones",
+    "red": "Tones",
+    "sat_vs_lum": "Saturation",
+    "sat_vs_sat": "Saturation"
+  },
+  "window": {
+    "black": 0.072905533015728,
+    "white": 0.5547944903373718
+  }
+}
