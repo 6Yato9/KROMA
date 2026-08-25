@@ -35,6 +35,10 @@ pub enum SessionError {
     WouldOverwriteSource(String),
     #[error("write failed: {0}")]
     Write(String),
+    #[error("a curve needs at least two points, got {0}")]
+    TooFewPoints(usize),
+    #[error("{effect}.{key} is not a curve")]
+    NotACurve { effect: String, key: String },
     #[error("no layer attached")]
     NoLayer,
     #[error(transparent)]
@@ -380,6 +384,42 @@ impl Session {
         rgb: [f32; 3],
     ) -> Result<(), SessionError> {
         self.set_param(id, key, ParamValue::Wheel(pe_core::Wheel { rgb, master }))
+    }
+
+    /// Replace a curve with a list of control points.
+    ///
+    /// Refused below two points. The evaluator treats a shorter list as the
+    /// identity, so storing one would quietly replace the user's edit with a
+    /// straight line and then show them that line as though they had drawn it.
+    pub fn set_curve(
+        &mut self,
+        id: RowId,
+        key: &str,
+        points: &[[f32; 2]],
+    ) -> Result<(), SessionError> {
+        if points.len() < 2 {
+            return Err(SessionError::TooFewPoints(points.len()));
+        }
+        // `set_param` checks that the key exists, not that it holds a curve.
+        // A curve stored on a float is a value no shader slot reads and no
+        // control draws — the same silence the key check exists to prevent.
+        let effect = self.require_row(id)?;
+        if let Some(p) =
+            pe_effects::by_key(&effect).and_then(|d| d.params.iter().find(|p| p.key == key))
+            && !matches!(p.kind, pe_effects::ParamKind::Curve { .. })
+        {
+            return Err(SessionError::NotACurve {
+                effect,
+                key: key.to_string(),
+            });
+        }
+        self.set_param(
+            id,
+            key,
+            ParamValue::Curve(pe_core::Curve {
+                points: points.to_vec(),
+            }),
+        )
     }
 
     /// The effect key of the row, or an error naming the id that was missing.
@@ -1036,6 +1076,63 @@ mod tests {
         // `amount` is a float; sending it a wheel is a bug in the shell, and
         // silently storing one would give the shader a value no slot reads.
         assert!(s.set_wheel(row, "not_a_parameter", 0.0, [0.0; 3]).is_err());
+    }
+
+    #[test]
+    fn a_curve_can_be_set_from_a_flat_list_of_points() {
+        let mut s = chart_session();
+        let row = s
+            .document()
+            .unwrap()
+            .stack
+            .iter()
+            .find(|r| r.effect == "curves")
+            .map(|r| r.id)
+            .expect("curves is a pinned row");
+
+        s.set_curve(row, "luma", &[[0.0, 0.0], [0.5, 0.7], [1.0, 1.0]])
+            .unwrap();
+
+        let doc = s.document().unwrap();
+        let Some(pe_core::ParamValue::Curve(c)) = doc
+            .stack
+            .get(row)
+            .and_then(|r| r.params.get("luma"))
+            .cloned()
+        else {
+            panic!("luma is not a curve");
+        };
+        assert_eq!(c.points.len(), 3);
+        assert_eq!(c.points[1], [0.5, 0.7]);
+    }
+
+    #[test]
+    fn a_curve_with_fewer_than_two_points_is_refused() {
+        // One point is not a curve, and the evaluator falls back to the
+        // identity for it — so storing one would silently discard whatever the
+        // user had, and show them a straight line as though that were their
+        // edit.
+        let mut s = chart_session();
+        let row = s
+            .document()
+            .unwrap()
+            .stack
+            .iter()
+            .find(|r| r.effect == "curves")
+            .map(|r| r.id)
+            .expect("curves is a pinned row");
+        assert!(s.set_curve(row, "luma", &[[0.5, 0.5]]).is_err());
+        assert!(s.set_curve(row, "luma", &[]).is_err());
+    }
+
+    #[test]
+    fn a_curve_sent_to_a_parameter_that_is_not_one_is_refused() {
+        let mut s = chart_session();
+        let row = s.add_effect("sharpen").unwrap();
+        assert!(
+            s.set_curve(row, "amount", &[[0.0, 0.0], [1.0, 1.0]])
+                .is_err()
+        );
     }
 
     #[test]

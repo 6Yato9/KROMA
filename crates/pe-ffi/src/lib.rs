@@ -549,6 +549,34 @@ pub unsafe extern "C" fn pe_session_set_wheel(
     })
 }
 
+/// Replace a curve with `count` control points, as `2 * count` floats — x, y,
+/// x, y. A flat array rather than JSON because this is a drag path: a curve
+/// being dragged sends its points on every frame, and a parse per frame to
+/// carry twenty numbers is work nobody needs done.
+///
+/// # Safety
+/// `s` and `key` must be valid or null. `xy` must point to at least
+/// `2 * count` readable floats.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_set_curve(
+    s: *mut PeSession,
+    row: u64,
+    key: *const c_char,
+    xy: *const f32,
+    count: u32,
+) -> i32 {
+    let Some(key) = as_str(key) else { return -1 };
+    if xy.is_null() {
+        return -1;
+    }
+    let key = key.to_string();
+    // Copied out before the closure, because `status` may catch a panic and
+    // the borrowed slice must not outlive the call the caller made.
+    let flat = unsafe { std::slice::from_raw_parts(xy, count as usize * 2) };
+    let points: Vec<[f32; 2]> = flat.as_chunks::<2>().0.to_vec();
+    status(s, move |s| s.set_curve(pe_core::RowId(row), &key, &points))
+}
+
 // ---- history --------------------------------------------------------------
 
 /// Bracket a drag so it becomes one undo step rather than three hundred.
@@ -938,6 +966,62 @@ mod tests {
             .unwrap();
         assert_eq!(lift["t"], "wheel");
         assert_eq!(lift["v"]["master"], 0.25);
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn a_curve_crosses_the_boundary_as_a_flat_array() {
+        let s = pe_session_new();
+        unsafe { pe_session_open_test_chart(s, 64, 64) };
+        let json = unsafe { pe_session_snapshot_json(s) };
+        let text = unsafe { CStr::from_ptr(json) }.to_str().unwrap().to_owned();
+        unsafe { pe_string_free(json) };
+        let snap: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let row = snap["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["effect"] == "curves")
+            .and_then(|r| r["id"].as_u64())
+            .expect("curves is a pinned row");
+
+        let key = cstr("luma");
+        let xy: [f32; 6] = [0.0, 0.0, 0.5, 0.7, 1.0, 1.0];
+        assert_eq!(
+            unsafe { pe_session_set_curve(s, row, key.as_ptr(), xy.as_ptr(), 3) },
+            0
+        );
+
+        let json = unsafe { pe_session_snapshot_json(s) };
+        let text = unsafe { CStr::from_ptr(json) }.to_str().unwrap().to_owned();
+        unsafe { pe_string_free(json) };
+        let snap: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let luma = snap["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == row)
+            .map(|r| &r["params"]["luma"])
+            .unwrap();
+        assert_eq!(luma["t"], "curve");
+        // `pe_core::Curve` is `#[serde(transparent)]`, so `v` is the point
+        // list itself rather than an object wrapping it. Read back as f32,
+        // because the point was stored as one and 0.7 widened to f64 is
+        // 0.699999988079071 — a difference in the printing, not in the value.
+        let y = luma["v"][1][1].as_f64().expect("the y of the middle point") as f32;
+        assert_eq!(y, 0.7);
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn a_null_point_list_is_refused_rather_than_dereferenced() {
+        let s = pe_session_new();
+        unsafe { pe_session_open_test_chart(s, 64, 64) };
+        let key = cstr("luma");
+        assert_eq!(
+            unsafe { pe_session_set_curve(s, 0, key.as_ptr(), std::ptr::null(), 3) },
+            -1
+        );
         unsafe { pe_session_free(s) };
     }
 
