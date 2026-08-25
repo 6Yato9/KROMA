@@ -95,8 +95,8 @@ public struct Snapshot: Decodable, Sendable {
 /// One parameter's value, in the document's own representation.
 ///
 /// Adjacently tagged as `{"t": "float", "v": 0.35}`, which is what
-/// `pe-core`'s `ParamValue` writes. Kinds this slice does not draw — warps,
-/// pin lattices — decode as `.opaque` rather than failing, so a photograph
+/// `pe-core`'s `ParamValue` writes. Kinds this slice does not draw — pin
+/// lattices — decode as `.opaque` rather than failing, so a photograph
 /// carrying one still opens.
 public enum ParamValue: Decodable, Sendable, Equatable {
     case float(Float)
@@ -105,6 +105,7 @@ public enum ParamValue: Decodable, Sendable, Equatable {
     case rgb([Float])
     case wheel(WheelValue)
     case curve(CurveValue)
+    case warp(WarpValue)
     /// Structure this build does not draw. Carries its tag so the inspector
     /// can say what it is declining to show.
     case opaque(String)
@@ -131,6 +132,8 @@ public enum ParamValue: Decodable, Sendable, Equatable {
             self = .wheel(try c.decode(WheelValue.self, forKey: .v))
         case "curve":
             self = .curve(try c.decode(CurveValue.self, forKey: .v))
+        case "warp":
+            self = .warp(try c.decode(WarpValue.self, forKey: .v))
         default:
             self = .opaque(tag)
         }
@@ -154,6 +157,12 @@ public enum ParamValue: Decodable, Sendable, Equatable {
         if case let .curve(c) = self { return c }
         return nil
     }
+
+    /// The value as a lattice, for the warper that draws one.
+    public var warpValue: WarpValue? {
+        if case let .warp(w) = self { return w }
+        return nil
+    }
 }
 
 /// A curve's control points.
@@ -174,6 +183,52 @@ public struct CurveValue: Decodable, Sendable, Equatable {
     public init(from decoder: Decoder) throws {
         let pairs = try [[Double]](from: decoder)
         points = pairs.map { CGPoint(x: $0.first ?? 0, y: $0.dropFirst().first ?? 0) }
+    }
+}
+
+/// A lattice of displacements — one of the Colour Warper's grids.
+///
+/// What is stored is the *displacement* at each vertex, not the position.
+/// An untouched lattice is all zeros, so it is obviously identity and costs
+/// nothing to compare.
+public struct WarpValue: Decodable, Sendable, Equatable {
+    public let cols: Int
+    public let rows: Int
+    /// Row-major, `cols * rows` of them.
+    public let offsets: [CGPoint]
+
+    enum CodingKeys: String, CodingKey {
+        case cols, rows, offsets
+    }
+
+    public init(cols: Int, rows: Int, offsets: [CGPoint]) {
+        self.cols = cols
+        self.rows = rows
+        self.offsets = offsets
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        cols = try c.decode(Int.self, forKey: .cols)
+        rows = try c.decode(Int.self, forKey: .rows)
+        let pairs = try c.decode([[Double]].self, forKey: .offsets)
+        offsets = pairs.map { CGPoint(x: $0.first ?? 0, y: $0.dropFirst().first ?? 0) }
+    }
+
+    /// The displacement at a vertex, or none for a vertex the grid does not
+    /// have. Matching `Warp::at`, which returns zero rather than trapping.
+    public func at(col: Int, row: Int) -> CGPoint {
+        guard col >= 0, row >= 0, col < cols, row < rows else { return .zero }
+        let i = row * cols + col
+        return offsets.indices.contains(i) ? offsets[i] : .zero
+    }
+
+    /// Whether this lattice leaves the picture alone. Exactly zero rather than
+    /// nearly: a vertex dragged and put back should read as untouched, and
+    /// drags land on exact values because the widget writes the position it
+    /// computed, not an accumulated delta.
+    public var isIdentity: Bool {
+        offsets.allSatisfy { $0 == .zero }
     }
 }
 

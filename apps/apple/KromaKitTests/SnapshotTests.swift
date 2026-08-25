@@ -59,16 +59,16 @@ final class SnapshotTests: XCTestCase {
         // An int reads as a float, because every consumer of a number here
         // wants one and the document is the only thing that cares which it was.
         XCTAssertEqual(values["e"]?.floatValue, 7)
-        // A warp and a pin lattice are structure the slice does not draw yet.
-        // They must decode as *something* rather than failing the whole
-        // snapshot: the Colour Warper is pinned, so a decoder that refused them
-        // would make every photograph unopenable.
+        // A warp reads as a lattice now. A pin lattice is still structure the
+        // slice does not draw, and must decode as *something* rather than
+        // failing the whole snapshot: the Colour Warper is pinned, so a
+        // decoder that refused pins would make every photograph unopenable.
         let warp = Data(#"""
-        {"k":{"t":"warp","v":{"cols":2,"offsets":[[0.0,0.0],[0.0,0.0]]}},
+        {"k":{"t":"warp","v":{"cols":2,"rows":1,"offsets":[[0.0,0.0],[0.0,0.0]]}},
          "p":{"t":"pins","v":[]}}
         """#.utf8)
         let decoded = try JSONDecoder().decode([String: ParamValue].self, from: warp)
-        XCTAssertEqual(decoded["k"], .opaque("warp"))
+        XCTAssertEqual(decoded["k"], .warp(WarpValue(cols: 2, rows: 1, offsets: [.zero, .zero])))
         XCTAssertEqual(decoded["p"], .opaque("pins"))
     }
 
@@ -118,6 +118,51 @@ final class SnapshotTests: XCTestCase {
         // question, and a different answer.
         XCTAssertEqual(try XCTUnwrap(hue.points.first).y, 0.5, accuracy: 0.0001)
         XCTAssertEqual(try XCTUnwrap(hue.points.last).y, 0.5, accuracy: 0.0001)
+    }
+
+    func testAWarpDecodesItsGridAndOffsets() throws {
+        let json = Data(#"{"k":{"t":"warp","v":{"cols":2,"rows":3,"offsets":[[0,0],[0.1,0.2],[0,0],[0,0],[0,0],[-0.3,0.4]]}}}"#.utf8)
+        let values = try JSONDecoder().decode([String: ParamValue].self, from: json)
+        guard case let .warp(w) = try XCTUnwrap(values["k"]) else {
+            return XCTFail("not a warp")
+        }
+        XCTAssertEqual(w.cols, 2)
+        XCTAssertEqual(w.rows, 3)
+        XCTAssertEqual(w.offsets.count, 6)
+        // Row-major, so index 1 is column 1 of row 0.
+        XCTAssertEqual(w.at(col: 1, row: 0).x, 0.1, accuracy: 0.0001)
+        XCTAssertEqual(w.at(col: 1, row: 2).y, 0.4, accuracy: 0.0001)
+    }
+
+    func testAVertexOutsideTheGridReadsAsNoDisplacement() {
+        // Matching `Warp::at`, which returns [0, 0] rather than trapping. A
+        // view asking for a vertex that is not there is a bug, but blanking
+        // the panel over it would be a worse one.
+        let w = WarpValue(cols: 2, rows: 2, offsets: [
+            CGPoint(x: 0.5, y: 0.5), .zero, .zero, .zero,
+        ])
+        XCTAssertEqual(w.at(col: 9, row: 0), .zero)
+        XCTAssertEqual(w.at(col: 0, row: 9), .zero)
+        XCTAssertEqual(w.at(col: -1, row: 0), .zero)
+    }
+
+    func testTheCommittedSnapshotCarriesReadableLattices() throws {
+        // The Colour Warper is pinned, so every fresh document has three.
+        let snap = try JSONDecoder().decode(Snapshot.self, from: fixture("snapshot"))
+        let warper = try XCTUnwrap(snap.rows.first { $0.effect == "colour_warper" })
+        for key in ["hue_sat", "chroma_luma_1", "chroma_luma_2"] {
+            guard case let .warp(w) = try XCTUnwrap(warper.params[key]) else {
+                return XCTFail("\(key) is not a warp")
+            }
+            XCTAssertEqual(w.cols, 6)
+            XCTAssertEqual(w.rows, 6)
+            XCTAssertEqual(w.offsets.count, 36)
+            XCTAssertTrue(w.isIdentity, "a fresh lattice should leave the picture alone")
+        }
+        // And pins still decodes as opaque — it is the next plan, not this one.
+        guard case .opaque = try XCTUnwrap(warper.params["pins"]) else {
+            return XCTFail("pins should still be opaque")
+        }
     }
 
     func testTheCommittedSnapshotCarriesReadableWheels() throws {
