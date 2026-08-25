@@ -733,6 +733,12 @@ fn blur(grid: &[u32]) -> Vec<f32> {
 /// and the whole complaint about the old drawing was that you could see the
 /// cells. Reading between them is what turns a lattice of counts back into the
 /// cloud it was measured from.
+///
+/// `u` and `v` are fractions *of the plot*, and every grid is binned in those
+/// same terms — the chromaticity one over `PLOT_MIN..PLOT_SPAN`, because that
+/// is the range the plot is drawn over. One binned to a range of its own would
+/// still be read here as though it were this one, which is how the cloud came
+/// to sit eight cells from the colours it was measured from.
 fn sample_grid(grid: &[f32], u: f32, v: f32) -> f32 {
     let n = GRID as f32;
     // The grid stores v downwards; the plot reads it upwards.

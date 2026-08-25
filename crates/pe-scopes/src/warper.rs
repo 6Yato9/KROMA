@@ -13,6 +13,7 @@
 //! this worth optimising.
 
 use crate::srgb_decode;
+use pe_core::pins::plot_fraction;
 
 /// Resolution of each grid.
 ///
@@ -24,7 +25,10 @@ pub const GRID: usize = 128;
 /// The frame's colours, projected three ways.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Distribution {
-    /// CIE xy, over 0..[`XY_SPAN`] on each axis. The Chroma Warp plot.
+    /// CIE xy, binned over the chromaticity plot's own range —
+    /// [`pe_core::pins::PLOT_MIN`]..[`pe_core::pins::PLOT_SPAN`] on each
+    /// axis, as [`pe_core::pins::plot_fraction`] measures it. The Chroma
+    /// Warp plot.
     pub chromaticity: Vec<u32>,
     /// Hue and saturation as a square over −1..1, which is the polar plot the
     /// Hue - Saturation view draws laid out in cartesian storage: a colour at
@@ -36,13 +40,6 @@ pub struct Distribution {
     /// a chromaticity cloud and a luma spread concentrate very differently.
     pub peaks: [u32; 3],
 }
-
-/// How much of the CIE diagram the chromaticity grid covers.
-///
-/// The spectral locus runs to about 0.73 in x and 0.83 in y, and nothing real
-/// sits in the far corner where x + y > 1.0.8 fits the visible region without
-/// spending half the grid on impossible colours.
-pub const XY_SPAN: f32 = 0.8;
 
 /// The published sRGB D65 primaries, as a matrix to XYZ.
 ///
@@ -79,7 +76,15 @@ impl Distribution {
             if sum > 1e-6 {
                 let x = xyz[0] / sum;
                 let y = xyz[1] / sum;
-                bump(&mut chromaticity, x / XY_SPAN as f64, y / XY_SPAN as f64);
+                // Binned in the plot's own coordinates, because the drawing
+                // reads this grid at plot fractions: two ranges read as one
+                // put every colour in the wrong cell, and they agreed only at
+                // x = 0.218.
+                bump(
+                    &mut chromaticity,
+                    plot_fraction(x as f32) as f64,
+                    plot_fraction(y as f32) as f64,
+                );
             }
 
             // ---- hue and saturation ----
@@ -230,11 +235,68 @@ mod tests {
             }
         }
         assert_eq!(total, 10.0);
-        // D65 is x = 0.3127, y = 0.3290, which over a 0..0.8 span is a little
-        // under four tenths of the way along each axis.
-        let x = sx / total / GRID as f64 * XY_SPAN as f64;
-        let y = sy / total / GRID as f64 * XY_SPAN as f64;
+        // D65 is x = 0.3127, y = 0.3290, a little under four tenths of the way
+        // along each axis of a plot running PLOT_MIN..PLOT_SPAN — which is the
+        // range the grid is binned over, so a cell reads back through
+        // `plot_value`.
+        let x = pe_core::pins::plot_value((sx / total / GRID as f64) as f32) as f64;
+        let y = pe_core::pins::plot_value((sy / total / GRID as f64) as f32) as f64;
         assert!((x - 0.3127).abs() < 0.02, "x came out {x}");
         assert!((y - 0.3290).abs() < 0.02, "y came out {y}");
+    }
+
+    /// The chromaticity grid is drawn on a plot spanning `PLOT_MIN` to
+    /// `PLOT_SPAN`, and the drawing reads it at plot fractions. Binning it over
+    /// a different range put every colour in the wrong cell — they agreed only
+    /// at x = 0.218, and at a saturated red the cloud sat about six per cent of
+    /// the plot away from the pin a colourist would put on it.
+    ///
+    /// A cloud that disagrees with the coordinates drawn over it is worse than
+    /// no cloud: it is confidently wrong, and it exists precisely so you are
+    /// aiming at this photograph's colours rather than colours in general.
+    #[test]
+    fn the_chromaticity_grid_is_binned_over_the_plot_it_is_drawn_on() {
+        use pe_core::pins::{PLOT_MIN, PLOT_SPAN, plot_fraction};
+
+        // A pixel of a known chromaticity, and where it lands.
+        // sRGB pure red has xy = (0.64, 0.33).
+        let pixels = [255u8, 0, 0, 255];
+        let d = Distribution::from_display(&pixels);
+
+        let cell = |grid: &[u32]| -> Option<(usize, usize)> {
+            grid.iter()
+                .position(|c| *c > 0)
+                .map(|i| (i % GRID, i / GRID))
+        };
+        let (col, row) = cell(&d.chromaticity).expect("red was not counted at all");
+
+        let want_col = (plot_fraction(0.64) * GRID as f32) as usize;
+        assert!(
+            col.abs_diff(want_col) <= 1,
+            "red binned at column {col}, but the plot draws x = 0.64 at {want_col}"
+        );
+
+        // And the row, which is the half of this most easily got wrong: `bump`
+        // stores v *downwards* — row zero is the top of the plot — and the
+        // drawing's `sample_grid` reads it back upwards. Getting x right and y
+        // upside down would draw the cloud mirrored about the plot's middle
+        // and still pass an assertion about columns alone.
+        let want_row = (GRID - 1) - (plot_fraction(0.33) * GRID as f32) as usize;
+        assert!(
+            row.abs_diff(want_row) <= 1,
+            "red binned at row {row}, but the plot draws y = 0.33 at row \
+             {want_row} — rows count down from the top"
+        );
+
+        // And the two ends of the plot are reachable, which they are not if the
+        // grid covers a narrower range than the plot: reading the cell back
+        // through the plot's own range has to return the chromaticity that was
+        // measured.
+        let back = |i: usize| PLOT_MIN + (i as f32 + 0.5) / GRID as f32 * (PLOT_SPAN - PLOT_MIN);
+        let (got_x, got_y) = (back(col), back((GRID - 1) - row));
+        assert!(
+            (got_x - 0.64).abs() < 0.01 && (got_y - 0.33).abs() < 0.01,
+            "the cell red landed in reads back as ({got_x}, {got_y}), not (0.64, 0.33)"
+        );
     }
 }

@@ -8,3 +8,4 @@ license.workspace = true
 
 [dependencies]
 pe-color = { version = "0.0.1", path = "../pe-color" }
+pe-core = { version = "0.0.1", path = "../pe-core" }
