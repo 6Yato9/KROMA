@@ -1701,6 +1701,7 @@ dependencies = [
  "pe-color",
  "pe-core",
  "pe-effects",
+ "pe-scopes",
  "pe-session",
  "serde_json",
 ]

@@ -885,6 +885,259 @@ pub unsafe extern "C" fn pe_session_export(s: *mut PeSession) -> *mut c_char {
     })
 }
 
+// ---- scopes ---------------------------------------------------------------
+
+/// Which measurement to read. The numbering is part of the ABI: add to the end.
+///
+/// Every scope crosses as `planes * height * width` `u32`, row-major, and the
+/// plane order is part of the contract because the drawing depends on it:
+/// **red, green, blue, luma** for a histogram and a waveform, **hue,
+/// saturation** for a colour spread, and a single plane for the rest.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PeScope {
+    /// Four planes — red, green, blue, luma — of 256 levels, one row each.
+    Histogram = 0,
+    /// The same frame binned in the curve's own domain. Same four planes.
+    LogHistogram = 1,
+    /// Hue and saturation spread, for behind the secondary curves. Two
+    /// planes — hue, then saturation — of 256 bins, one row each.
+    ColourSpread = 2,
+    /// Four planes — red, green, blue, luma — of one row per image column,
+    /// each row 256 levels wide. The columns follow the width passed to
+    /// [`pe_session_measure`], not the size of the photograph.
+    Waveform = 3,
+    /// One plane, 256 by 256, y increasing downwards for drawing.
+    Vectorscope = 4,
+    /// The Colour Warper's chromaticity cloud: one plane, 128 by 128.
+    WarperChromaticity = 5,
+    /// The Colour Warper's hue/saturation cloud: one plane, 128 by 128.
+    WarperHueSat = 6,
+    /// The Colour Warper's chroma/luma cloud: one plane, 128 by 128.
+    WarperChromaLuma = 7,
+}
+
+/// One measurement, in the shape the ABI describes it: `planes` slices of
+/// `height * width` counts, laid end to end.
+///
+/// Borrowed rather than copied, so that asking for the shape of a 2.6 MB
+/// waveform costs nothing until the counts are actually asked for.
+struct ScopeView<'a> {
+    /// In the order [`PeScope`] documents.
+    planes: Vec<&'a [u32]>,
+    /// Row length — the fastest-moving axis.
+    width: u32,
+    /// Rows per plane.
+    height: u32,
+    /// What the counts are read against; see [`pe_session_scope_shape`].
+    total: u32,
+}
+
+impl ScopeView<'_> {
+    fn len(&self) -> usize {
+        self.planes.iter().map(|p| p.len()).sum()
+    }
+
+    /// The largest count anywhere in the data.
+    ///
+    /// Computed here rather than taken from `Histogram::peak`,
+    /// `Vectorscope::peak` or `Distribution::peaks`: all three are plain
+    /// maxima over exactly the planes this hands out, so one uniform rule
+    /// gives the same answer for all eight scopes and cannot drift from what
+    /// [`pe_session_scope_data`] copies. If one of them ever starts excluding
+    /// a bin — a histogram ignoring bin 0 so a black-point spike stops
+    /// flattening everything else — that scope must switch to its own method
+    /// here, and this comment is the place to say so.
+    fn peak(&self) -> u32 {
+        self.planes
+            .iter()
+            .flat_map(|p| p.iter())
+            .copied()
+            .max()
+            .unwrap_or(0)
+    }
+}
+
+fn scope_view(sc: &pe_session::Scopes, kind: PeScope) -> ScopeView<'_> {
+    use pe_scopes::{BINS, Channel, LEVELS, VECTOR_SIZE};
+
+    fn histogram(h: &pe_scopes::Histogram) -> ScopeView<'_> {
+        ScopeView {
+            planes: vec![&h.red[..], &h.green[..], &h.blue[..], &h.luma[..]],
+            width: pe_scopes::BINS as u32,
+            height: 1,
+            total: h.total,
+        }
+    }
+    // A warper grid holds no count of its own — black has no chromaticity and
+    // is never binned — so the pixels measured come from the histogram, which
+    // counts every one of them.
+    fn grid(g: &[u32], total: u32) -> ScopeView<'_> {
+        ScopeView {
+            planes: vec![g],
+            width: pe_scopes::warper::GRID as u32,
+            height: pe_scopes::warper::GRID as u32,
+            total,
+        }
+    }
+
+    match kind {
+        PeScope::Histogram => histogram(&sc.histogram),
+        PeScope::LogHistogram => histogram(&sc.log_histogram),
+        PeScope::ColourSpread => ScopeView {
+            planes: vec![&sc.colour.hue[..], &sc.colour.saturation[..]],
+            width: BINS as u32,
+            height: 1,
+            total: sc.colour.total,
+        },
+        PeScope::Waveform => ScopeView {
+            planes: Channel::ALL
+                .iter()
+                .map(|c| sc.waveform.channel(*c))
+                .collect(),
+            width: LEVELS as u32,
+            height: sc.waveform.columns() as u32,
+            total: sc.waveform.rows() as u32,
+        },
+        PeScope::Vectorscope => ScopeView {
+            planes: vec![sc.vectorscope.bins()],
+            width: VECTOR_SIZE as u32,
+            height: VECTOR_SIZE as u32,
+            total: sc.vectorscope.total(),
+        },
+        PeScope::WarperChromaticity => grid(&sc.warper.chromaticity, sc.histogram.total),
+        PeScope::WarperHueSat => grid(&sc.warper.hue_sat, sc.histogram.total),
+        PeScope::WarperChromaLuma => grid(&sc.warper.chroma_luma, sc.histogram.total),
+    }
+}
+
+/// Render the current grade at `width` by `height` and bin it.
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_measure(s: *mut PeSession, width: u32, height: u32) -> i32 {
+    status(s, move |s| s.measure_scopes(width, height))
+}
+
+/// Which measurement the session is holding: 0 before the first, and strictly
+/// increasing after. An edit throws the measurement away and the number stops
+/// advancing until the next `pe_session_measure`, so a caller that compares
+/// this before copying 2.6 MB of waveform will not copy the same numbers twice.
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_scope_generation(s: *mut PeSession) -> u64 {
+    with(s, 0, |s| s.inner.scope_generation())
+}
+
+/// How big a scope is, and what to divide its counts by.
+///
+/// Every scope is `planes * height * width` `u32`, row-major, in the plane
+/// order [`PeScope`] documents. `peak` is the largest count in that data. Any
+/// out-pointer may be null, and a null `peak` is worth passing when it is not
+/// wanted: it is the only field that costs a walk over the counts.
+///
+/// `total` is the number of pixels measured — except for a **waveform**, where
+/// it is how many image rows fed each column. That is the natural full scale
+/// for a waveform cell, and unlike the peak it does not move as the picture is
+/// graded, so the display does not flicker under the user's hand. The Windows
+/// shell normalises against exactly this; see its `intensity`.
+///
+/// Returns 0, or -1 with nothing measured.
+///
+/// # Safety
+/// `s` must be valid or null; each non-null out-pointer must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_scope_shape(
+    s: *mut PeSession,
+    kind: PeScope,
+    planes: *mut u32,
+    width: *mut u32,
+    height: *mut u32,
+    total: *mut u32,
+    peak: *mut u32,
+) -> i32 {
+    with(s, -1, |s| {
+        let Some(view) = s.inner.scopes().map(|sc| scope_view(sc, kind)) else {
+            return -1;
+        };
+        unsafe {
+            if !planes.is_null() {
+                planes.write(view.planes.len() as u32);
+            }
+            if !width.is_null() {
+                width.write(view.width);
+            }
+            if !height.is_null() {
+                height.write(view.height);
+            }
+            if !total.is_null() {
+                total.write(view.total);
+            }
+            if !peak.is_null() {
+                peak.write(view.peak());
+            }
+        }
+        0
+    })
+}
+
+/// Copy a scope's counts into `out`, returning how many were written, or a
+/// negative number: -1 with nothing measured or a null `out`, -2 if `capacity`
+/// is short of what [`pe_session_scope_shape`] reported.
+///
+/// Short rather than truncating, because a half-copied waveform draws a
+/// plausible picture of a frame that does not exist.
+///
+/// # Safety
+/// `s` must be valid or null. `out` must point to at least `capacity`
+/// writable `u32`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_scope_data(
+    s: *mut PeSession,
+    kind: PeScope,
+    out: *mut u32,
+    capacity: u32,
+) -> i32 {
+    with(s, -1, |s| {
+        if out.is_null() {
+            return -1;
+        }
+        let Some(view) = s.inner.scopes().map(|sc| scope_view(sc, kind)) else {
+            return -1;
+        };
+        let wanted = view.len();
+        if (capacity as usize) < wanted {
+            return -2;
+        }
+        let mut written = 0usize;
+        for plane in &view.planes {
+            // Rule 2 stays trivially satisfied: nothing is allocated here, so
+            // there is nothing for a `pe_*_free` to release. The buffer is the
+            // caller's, before and after.
+            unsafe { ptr::copy_nonoverlapping(plane.as_ptr(), out.add(written), plane.len()) };
+            written += plane.len();
+        }
+        written as i32
+    })
+}
+
+/// The fraction of pixels above diffuse white, which is what a clipping
+/// warning is actually about. Negative with nothing measured.
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_over_white_fraction(s: *mut PeSession) -> f32 {
+    with(s, -1.0, |s| {
+        s.inner
+            .scopes()
+            .map_or(-1.0, |sc| sc.histogram.over_white_fraction() as f32)
+    })
+}
+
 // ---- the registry ---------------------------------------------------------
 
 /// Every effect and every parameter, as JSON. Called once at launch; the whole
@@ -1339,5 +1592,120 @@ mod tests {
             parsed["effects"].as_array().unwrap().len(),
             pe_effects::all().len()
         );
+    }
+
+    #[test]
+    fn a_scope_crosses_as_a_buffer_the_caller_owns() {
+        let s = pe_session_new();
+        unsafe { pe_session_open_test_chart(s, 64, 64) };
+        assert_eq!(unsafe { pe_session_scope_generation(s) }, 0);
+        assert_eq!(unsafe { pe_session_measure(s, 64, 64) }, 0);
+        assert!(unsafe { pe_session_scope_generation(s) } > 0);
+
+        let (mut planes, mut w, mut h, mut total, mut peak) = (0u32, 0u32, 0u32, 0u32, 0u32);
+        assert_eq!(
+            unsafe {
+                pe_session_scope_shape(
+                    s,
+                    PeScope::Histogram,
+                    &mut planes,
+                    &mut w,
+                    &mut h,
+                    &mut total,
+                    &mut peak,
+                )
+            },
+            0
+        );
+        assert_eq!((planes, w, h), (4, 256, 1));
+        assert_eq!(total, 64 * 64, "every pixel counted exactly once");
+        assert!(peak > 0);
+
+        let n = (planes * w * h) as usize;
+        let mut out = vec![0u32; n];
+        assert_eq!(
+            unsafe { pe_session_scope_data(s, PeScope::Histogram, out.as_mut_ptr(), n as u32) },
+            n as i32
+        );
+        assert_eq!(out.iter().take(256).sum::<u32>(), 64 * 64, "the red plane");
+        assert_eq!(out.iter().max().copied(), Some(peak));
+
+        // Short is refused rather than truncated: a half-copied scope draws a
+        // plausible picture of a frame that does not exist.
+        assert_eq!(
+            unsafe { pe_session_scope_data(s, PeScope::Histogram, out.as_mut_ptr(), 10) },
+            -2
+        );
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn every_scope_reports_a_shape_that_matches_what_it_copies() {
+        let s = pe_session_new();
+        unsafe { pe_session_open_test_chart(s, 64, 64) };
+        assert_eq!(unsafe { pe_session_measure(s, 64, 48) }, 0);
+        for kind in [
+            PeScope::Histogram,
+            PeScope::LogHistogram,
+            PeScope::ColourSpread,
+            PeScope::Waveform,
+            PeScope::Vectorscope,
+            PeScope::WarperChromaticity,
+            PeScope::WarperHueSat,
+            PeScope::WarperChromaLuma,
+        ] {
+            let (mut planes, mut w, mut h) = (0u32, 0u32, 0u32);
+            assert_eq!(
+                unsafe {
+                    pe_session_scope_shape(
+                        s,
+                        kind,
+                        &mut planes,
+                        &mut w,
+                        &mut h,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                    )
+                },
+                0
+            );
+            let n = (planes * w * h) as usize;
+            assert!(n > 0);
+            let mut out = vec![0u32; n];
+            assert_eq!(
+                unsafe { pe_session_scope_data(s, kind, out.as_mut_ptr(), n as u32) },
+                n as i32,
+                "{:?} copied a different number than it reported",
+                kind as i32
+            );
+        }
+        // The waveform's columns follow the measured width, not the image.
+        let (mut planes, mut w, mut h) = (0u32, 0u32, 0u32);
+        unsafe {
+            pe_session_scope_shape(
+                s,
+                PeScope::Waveform,
+                &mut planes,
+                &mut w,
+                &mut h,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!((planes, w, h), (4, 256, 64), "planes, levels, columns");
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn reading_a_scope_before_measuring_is_refused() {
+        let s = pe_session_new();
+        unsafe { pe_session_open_test_chart(s, 64, 64) };
+        let mut out = [0u32; 8];
+        assert_eq!(
+            unsafe { pe_session_scope_data(s, PeScope::Histogram, out.as_mut_ptr(), 8) },
+            -1
+        );
+        assert!(unsafe { pe_session_over_white_fraction(s) } < 0.0);
+        unsafe { pe_session_free(s) };
     }
 }
