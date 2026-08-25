@@ -209,6 +209,22 @@ public final class Session {
         })
     }
 
+    /// Replace a curve's control points.
+    ///
+    /// The points cross as a flat array of floats rather than as JSON, because
+    /// this is a drag path — the whole curve is sent on every frame, and a
+    /// parse per frame to carry twenty numbers is work nobody needs done.
+    public func setCurve(row: UInt64, key: String, points: [CGPoint]) throws {
+        let xy = points.flatMap { [Float($0.x), Float($0.y)] }
+        try check(
+            key.withCString { k in
+                xy.withUnsafeBufferPointer { buf in
+                    pe_session_set_curve(handle, row, k, buf.baseAddress, UInt32(points.count))
+                }
+            }
+        )
+    }
+
     // ---- history ------------------------------------------------------------
 
     /// Bracket a drag so it collapses into one undo step rather than three

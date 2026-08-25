@@ -67,4 +67,37 @@ final class EngineTests: XCTestCase {
         try session.openTestChart(width: 64, height: 64)
         XCTAssertThrowsError(try session.addEffect("not_an_effect"))
     }
+
+    func testACurveSurvivesTheRoundTrip() throws {
+        let session = try XCTUnwrap(Session())
+        try session.openTestChart(width: 64, height: 64)
+        let snap = try session.snapshot()
+        let curves = try XCTUnwrap(snap.rows.first { $0.effect == "curves" })
+
+        try session.setCurve(
+            row: curves.id, key: "luma",
+            points: [CGPoint(x: 0, y: 0), CGPoint(x: 0.5, y: 0.7), CGPoint(x: 1, y: 1)]
+        )
+
+        let after = try session.snapshot()
+        let row = try XCTUnwrap(after.rows.first { $0.id == curves.id })
+        guard case let .curve(c) = try XCTUnwrap(row.params["luma"]) else {
+            return XCTFail("luma is not a curve")
+        }
+        XCTAssertEqual(c.points.count, 3)
+        XCTAssertEqual(c.points[1].y, 0.7, accuracy: 0.0001)
+    }
+
+    func testACurveWithOnePointIsRefusedRatherThanStored() throws {
+        // The engine refuses it; this checks Swift surfaces the refusal as an
+        // error rather than swallowing it, because the fallback the engine
+        // would otherwise apply is a straight line the user did not draw.
+        let session = try XCTUnwrap(Session())
+        try session.openTestChart(width: 64, height: 64)
+        let snap = try session.snapshot()
+        let curves = try XCTUnwrap(snap.rows.first { $0.effect == "curves" })
+        XCTAssertThrowsError(
+            try session.setCurve(row: curves.id, key: "luma", points: [CGPoint(x: 0.5, y: 0.5)])
+        )
+    }
 }

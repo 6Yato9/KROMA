@@ -169,6 +169,13 @@ public final class SessionStore {
         if !dragging { refresh() }
     }
 
+    /// A curve's hot path. Like `setFloat`, it does not refresh the snapshot
+    /// mid-drag — the editor holds the in-flight curve and draws from that.
+    public func setCurve(row: UInt64, key: String, points: [CGPoint]) {
+        run { try session.setCurve(row: row, key: key, points: points) }
+        if !dragging { refresh() }
+    }
+
     public func setBool(row: UInt64, key: String, value: Bool) {
         run { try session.setBool(row: row, key: key, value: value) }
         refresh()
