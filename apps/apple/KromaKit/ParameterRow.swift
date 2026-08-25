@@ -15,41 +15,55 @@ enum RowMetrics {
     static let height: CGFloat = 22
 }
 
-/// One float parameter, as a draggable track.
+/// The look of an inspector row — label, track, readout, reset arrow — without
+/// any opinion about where the number lives.
 ///
-/// The drag is bracketed so it becomes one undo step: `beginInteraction` on
-/// the way down, one engine call per frame, `endInteraction` on the way up.
-/// The in-flight value is held here rather than read back from the snapshot,
-/// so the document is not diffed sixty times a second while a finger is down.
-public struct FloatRow: View {
-    let effectName: String
-    let param: Param
-    let bounds: Bounds
-    let row: UInt64
+/// `FloatRow` drives a registry parameter through the store. A pin's five
+/// controls are floats *inside* a parameter and cannot use that path, but they
+/// have to look identical: a panel where one row is drawn differently from the
+/// thirty above it reads as a bug.
+///
+/// The in-flight value is held here rather than read back from wherever the
+/// number lives, so the document is not diffed sixty times a second while a
+/// finger is down. Bracketing the drag into one undo step is the *caller's*
+/// business, because only it knows what the drag is of — hence `onBegin` and
+/// `onEnd` rather than a store reference.
+public struct ScalarRow: View {
+    let name: String
+    let unit: String
     let value: Float
+    let bounds: Bounds
     let isActive: Bool
-    let store: SessionStore
+    /// Called on every frame of a drag, and once for the reset arrow — which
+    /// is a discrete change and its own undo step, so it arrives outside any
+    /// `onBegin`/`onEnd` pair.
+    let onChange: (Float) -> Void
+    let onBegin: () -> Void
+    let onEnd: () -> Void
 
     @State private var dragging: Float?
 
-    private var shown: Float { dragging ?? value }
-
     public init(
-        effectName: String, param: Param, bounds: Bounds, row: UInt64,
-        value: Float, isActive: Bool, store: SessionStore
+        name: String, unit: String, value: Float, bounds: Bounds, isActive: Bool,
+        onChange: @escaping (Float) -> Void,
+        onBegin: @escaping () -> Void,
+        onEnd: @escaping () -> Void
     ) {
-        self.effectName = effectName
-        self.param = param
-        self.bounds = bounds
-        self.row = row
+        self.name = name
+        self.unit = unit
         self.value = value
+        self.bounds = bounds
         self.isActive = isActive
-        self.store = store
+        self.onChange = onChange
+        self.onBegin = onBegin
+        self.onEnd = onEnd
     }
+
+    private var shown: Float { dragging ?? value }
 
     public var body: some View {
         HStack(spacing: RowMetrics.gap) {
-            Text(param.name)
+            Text(name)
                 .frame(width: RowMetrics.label, alignment: .trailing)
                 .lineLimit(1)
                 .foregroundStyle(isActive ? .primary : .tertiary)
@@ -62,7 +76,7 @@ public struct FloatRow: View {
                 .foregroundStyle(isActive ? .primary : .tertiary)
 
             Button {
-                commit(bounds.neutral)
+                onChange(bounds.neutral)
             } label: {
                 Image(systemName: "arrow.uturn.backward")
                     .imageScale(.small)
@@ -76,7 +90,7 @@ public struct FloatRow: View {
     }
 
     private var readout: String {
-        param.unit.isEmpty ? format(shown) : "\(format(shown)) \(param.unit)"
+        unit.isEmpty ? format(shown) : "\(format(shown)) \(unit)"
     }
 
     private func format(_ v: Float) -> String {
@@ -110,23 +124,57 @@ public struct FloatRow: View {
                 DragGesture(minimumDistance: 0)
                     .onChanged { drag in
                         if dragging == nil {
-                            store.beginInteraction(param.name)
+                            onBegin()
                         }
                         let v = g.value(at: drag.location.x)
                         dragging = v
-                        store.setFloat(row: row, key: param.key, value: v)
+                        onChange(v)
                     }
                     .onEnded { _ in
-                        store.endInteraction()
+                        onEnd()
                         dragging = nil
                     }
             )
         }
     }
+}
 
-    /// A discrete change — the reset arrow — which is its own undo step rather
-    /// than part of whatever drag came before it.
-    private func commit(_ v: Float) {
-        store.setFloat(row: row, key: param.key, value: v)
+/// One float parameter, as a draggable track.
+///
+/// The drag is bracketed so it becomes one undo step: `beginInteraction` on
+/// the way down, one engine call per frame, `endInteraction` on the way up.
+///
+/// Nothing but the wiring: the drawing is `ScalarRow`'s, so a pin's controls
+/// and a registry parameter's cannot drift apart.
+public struct FloatRow: View {
+    let effectName: String
+    let param: Param
+    let bounds: Bounds
+    let row: UInt64
+    let value: Float
+    let isActive: Bool
+    let store: SessionStore
+
+    public init(
+        effectName: String, param: Param, bounds: Bounds, row: UInt64,
+        value: Float, isActive: Bool, store: SessionStore
+    ) {
+        self.effectName = effectName
+        self.param = param
+        self.bounds = bounds
+        self.row = row
+        self.value = value
+        self.isActive = isActive
+        self.store = store
+    }
+
+    public var body: some View {
+        ScalarRow(
+            name: param.name, unit: param.unit, value: value, bounds: bounds,
+            isActive: isActive,
+            onChange: { store.setFloat(row: row, key: param.key, value: $0) },
+            onBegin: { store.beginInteraction(param.name) },
+            onEnd: { store.endInteraction() }
+        )
     }
 }

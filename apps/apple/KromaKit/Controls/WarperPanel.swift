@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The sections of an effect that contain a lattice, behind a switcher.
+/// The sections of an effect that contain a lattice or a set of pins, behind a
+/// switcher.
 ///
 /// Resolve puts each grid's divisions controls under the view they belong to
 /// rather than in a flat list beside every other one, and the registry already
@@ -9,9 +10,15 @@ import SwiftUI
 /// — and the switcher runs over sections rather than over a hard-coded list of
 /// views. Any later effect that declares a `Warp` gets the same treatment with
 /// no Swift changes.
+///
+/// Chroma Warp is such a section without a lattice in it: its view is a
+/// chromaticity plot with pins on it. It belongs to the same switcher because
+/// it is the same object seen a third way, and Resolve puts it in the same row
+/// of tabs.
 public struct WarperPanel: View {
     let effect: Effect
-    /// Section names, in registry order, each containing at least one lattice.
+    /// Section names, in registry order, each containing at least one lattice
+    /// or one set of pins.
     let sections: [String]
     let row: Snapshot.Row
     let store: SessionStore
@@ -40,8 +47,20 @@ public struct WarperPanel: View {
         return false
     }
 
+    private func isPins(_ param: Param) -> Bool {
+        if case .pins = param.kind { return true }
+        return false
+    }
+
     private func lattices(in section: String) -> [Param] {
         params(in: section).filter(isLattice)
+    }
+
+    /// The pin set this section shows, if it is that kind of section. A section
+    /// holds one or the other, never both — they are two views of one effect,
+    /// not two halves of one view.
+    private var pins: Param? {
+        params(in: section).first(where: isPins)
     }
 
     /// Hue wraps; chroma does not. Read from the section's own lattice keys
@@ -60,14 +79,20 @@ public struct WarperPanel: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             sectionPicker
-            latticePicker
-            if let param = current {
-                editor(param)
+            if let param = pins {
+                // A plot of pins has no Grid 1 / Grid 2 to choose between, and
+                // its own five controls rather than the section's rows.
+                pinsEditor(param)
+            } else {
+                latticePicker
+                if let param = current {
+                    editor(param)
+                }
             }
 
             // The section's own rows — its divisions, and Axis Angle — under
             // the grid they govern, which is where Resolve puts them.
-            ForEach(params(in: section).filter { !isLattice($0) }) { param in
+            ForEach(params(in: section).filter { !isLattice($0) && !isPins($0) }) { param in
                 InspectorPanel.control(for: param, effect: effect, row: row, store: store)
             }
         }
@@ -102,6 +127,17 @@ public struct WarperPanel: View {
             .pickerStyle(.segmented)
             .controlSize(.small)
         }
+    }
+
+    @ViewBuilder
+    private func pinsEditor(_ param: Param) -> some View {
+        PinsEditor(
+            param: param,
+            row: row.id,
+            value: row.params[param.key]?.pinsValue ?? [],
+            isActive: effect.isActive(param.key, values: row.params),
+            store: store
+        )
     }
 
     @ViewBuilder

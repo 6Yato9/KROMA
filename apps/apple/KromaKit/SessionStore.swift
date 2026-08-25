@@ -194,6 +194,50 @@ public final class SessionStore {
         refresh()
     }
 
+    /// Place a pin, answering with its index so the panel can select what it
+    /// just made.
+    ///
+    /// Nil means no pin was added — `run` keeps the refusal for the status bar
+    /// rather than throwing, so the index simply never arrives, and selecting
+    /// on the strength of an index that is not there would select a pin that
+    /// does not exist.
+    @discardableResult
+    public func addPin(row: UInt64, key: String, at: CGPoint) -> Int? {
+        var index: Int?
+        run { index = try session.addPin(row: row, key: key, at: at) }
+        refresh()
+        return index
+    }
+
+    /// A pin's hot path. Like `setFloat`, it does not refresh the snapshot
+    /// mid-drag — the editor holds the in-flight pin and draws from that.
+    public func movePin(row: UInt64, key: String, index: Int, to: CGPoint) {
+        run { try session.movePin(row: row, key: key, index: index, to: to) }
+        if !dragging { refresh() }
+    }
+
+    /// The other hot path: the five shape controls, carried together so a
+    /// slider drag is one call and one undo step.
+    public func setPinShape(
+        row: UInt64, key: String, index: Int,
+        chromaRange: Double, tonalLow: Double, tonalHigh: Double,
+        tonalPivot: Double, exposure: Double
+    ) {
+        run {
+            try session.setPinShape(
+                row: row, key: key, index: index, chromaRange: chromaRange,
+                tonalLow: tonalLow, tonalHigh: tonalHigh, tonalPivot: tonalPivot,
+                exposure: exposure
+            )
+        }
+        if !dragging { refresh() }
+    }
+
+    public func removePin(row: UInt64, key: String, index: Int) {
+        run { try session.removePin(row: row, key: key, index: index) }
+        refresh()
+    }
+
     public func setBool(row: UInt64, key: String, value: Bool) {
         run { try session.setBool(row: row, key: key, value: value) }
         refresh()

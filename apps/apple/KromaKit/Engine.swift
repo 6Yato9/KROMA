@@ -245,6 +245,53 @@ public final class Session {
         try check(key.withCString { pe_session_clear_warp(handle, row, $0) })
     }
 
+    /// Place a pin at a chromaticity, returning its index.
+    ///
+    /// The odd one out: it answers with an index, so failure arrives in the
+    /// same integer as the answer rather than through `check`. `-1` is a bad
+    /// argument, which the engine records nothing about because it never got
+    /// far enough to have a reason; `-2` is a refusal, whose reason is where
+    /// every other refusal's is.
+    public func addPin(row: UInt64, key: String, at: CGPoint) throws -> Int {
+        let i = key.withCString {
+            pe_session_add_pin(handle, row, $0, Float(at.x), Float(at.y))
+        }
+        guard i >= 0 else {
+            throw EngineError(code: i, message: lastError ?? "no reason given")
+        }
+        return Int(i)
+    }
+
+    /// Drag a pin. Only `to` moves — `at` is where the colour is.
+    public func movePin(row: UInt64, key: String, index: Int, to: CGPoint) throws {
+        try check(key.withCString {
+            pe_session_move_pin(handle, row, $0, UInt32(index), Float(to.x), Float(to.y))
+        })
+    }
+
+    /// The five controls that shape a pin, set together.
+    ///
+    /// One call rather than five, so a slider drag is one undo step rather
+    /// than five parameters racing each other into the history.
+    public func setPinShape(
+        row: UInt64, key: String, index: Int,
+        chromaRange: Double, tonalLow: Double, tonalHigh: Double,
+        tonalPivot: Double, exposure: Double
+    ) throws {
+        try check(key.withCString {
+            pe_session_set_pin_shape(
+                handle, row, $0, UInt32(index), Float(chromaRange), Float(tonalLow),
+                Float(tonalHigh), Float(tonalPivot), Float(exposure)
+            )
+        })
+    }
+
+    public func removePin(row: UInt64, key: String, index: Int) throws {
+        try check(key.withCString {
+            pe_session_remove_pin(handle, row, $0, UInt32(index))
+        })
+    }
+
     // ---- history ------------------------------------------------------------
 
     /// Bracket a drag so it collapses into one undo step rather than three

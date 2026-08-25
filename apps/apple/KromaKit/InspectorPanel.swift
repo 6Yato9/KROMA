@@ -2,10 +2,10 @@ import SwiftUI
 
 /// One effect's controls, generated from its registry entry.
 ///
-/// Nothing here knows what an exposure is. Every effect that declares only
-/// float parameters is already fully rendered by this; the remaining seven
-/// parameter kinds each need one view, after which the whole registry is
-/// covered — including effects added later, with no Swift changes at all.
+/// Nothing here knows what an exposure is. All eight parameter kinds have a
+/// control, so the whole registry is covered — including effects added later,
+/// with no Swift changes at all. What remains is the `.opaque` fallback, for a
+/// kind a future version adds and this build has never heard of.
 public struct InspectorPanel: View {
     let effect: Effect
     let row: Snapshot.Row
@@ -73,7 +73,18 @@ public struct InspectorPanel: View {
         return false
     }
 
-    /// Sections that contain a lattice, in registry order and without repeats.
+    private func isPins(_ param: Param) -> Bool {
+        if case .pins = param.kind { return true }
+        return false
+    }
+
+    /// Sections that contain a lattice or a set of pins, in registry order and
+    /// without repeats.
+    ///
+    /// Pins belong here rather than in the flat list because Chroma Warp is a
+    /// third view of the Colour Warper, not a control sitting beside it — and
+    /// registry order is what puts the tabs in Resolve's order, so this must
+    /// not sort.
     ///
     /// A lattice with an *empty* section is claimed by no tab and would fall
     /// through to the flat list. No registered effect has one; if one appears
@@ -81,7 +92,7 @@ public struct InspectorPanel: View {
     private var warpSections: [String] {
         var seen = Set<String>()
         return effect.params
-            .filter { isWarp($0) && !$0.section.isEmpty }
+            .filter { (isWarp($0) || isPins($0)) && !$0.section.isEmpty }
             .map(\.section)
             .filter { seen.insert($0).inserted }
     }
@@ -167,9 +178,11 @@ public struct InspectorPanel: View {
                 store: store
             )
         default:
-            // A kind this slice does not draw yet. Named rather than skipped:
-            // a control that silently is not there is a parameter the user
-            // cannot reach and is not told about.
+            // A kind this build does not draw. Nothing the current registry
+            // declares reaches this arm — every kind now has a control — but a
+            // document written by a later version can carry one this build has
+            // never heard of, and a control that silently is not there is a
+            // parameter the user cannot reach and is not told about.
             HStack(spacing: RowMetrics.gap) {
                 Text(param.name)
                     .frame(width: RowMetrics.label, alignment: .trailing)

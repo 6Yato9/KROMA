@@ -131,4 +131,60 @@ final class EngineTests: XCTestCase {
                                       offset: CGPoint(x: 0.1, y: 0.1))
         )
     }
+
+    func testAPinCanBePlacedDraggedShapedAndRemoved() throws {
+        let session = try XCTUnwrap(Session())
+        try session.openTestChart(width: 64, height: 64)
+        let warper = try XCTUnwrap(try session.snapshot().rows.first { $0.effect == "colour_warper" })
+
+        let i = try session.addPin(row: warper.id, key: "pins", at: CGPoint(x: 0.33, y: 0.35))
+        XCTAssertEqual(i, 0)
+
+        try session.movePin(row: warper.id, key: "pins", index: 0, to: CGPoint(x: 0.40, y: 0.30))
+        try session.setPinShape(
+            row: warper.id, key: "pins", index: 0,
+            chromaRange: 0.12, tonalLow: 0.2, tonalHigh: 0.9, tonalPivot: 0.6, exposure: 0.75
+        )
+
+        let pins = try XCTUnwrap(
+            try session.snapshot().rows.first { $0.id == warper.id }?.params["pins"]?.pinsValue
+        )
+        XCTAssertEqual(pins.count, 1)
+        XCTAssertEqual(pins[0].at.x, 0.33, accuracy: 0.0001, "the origin stays put")
+        XCTAssertEqual(pins[0].to.x, 0.40, accuracy: 0.0001)
+        XCTAssertEqual(pins[0].exposure, 0.75, accuracy: 0.0001)
+        XCTAssertFalse(pins[0].isNeutral)
+
+        try session.removePin(row: warper.id, key: "pins", index: 0)
+        XCTAssertTrue(
+            try XCTUnwrap(
+                try session.snapshot().rows.first { $0.id == warper.id }?.params["pins"]?.pinsValue
+            ).isEmpty
+        )
+    }
+
+    func testAPinThatIsNotThereIsRefused() throws {
+        let session = try XCTUnwrap(Session())
+        try session.openTestChart(width: 64, height: 64)
+        let warper = try XCTUnwrap(try session.snapshot().rows.first { $0.effect == "colour_warper" })
+        XCTAssertThrowsError(
+            try session.movePin(row: warper.id, key: "pins", index: 0, to: CGPoint(x: 0.4, y: 0.4))
+        )
+    }
+
+    func testANinthPinIsRefused() throws {
+        let session = try XCTUnwrap(Session())
+        try session.openTestChart(width: 64, height: 64)
+        let warper = try XCTUnwrap(try session.snapshot().rows.first { $0.effect == "colour_warper" })
+        for i in 0..<PinValue.maxPins {
+            XCTAssertEqual(
+                try session.addPin(row: warper.id, key: "pins",
+                                   at: CGPoint(x: 0.1 * Double(i), y: 0.3)),
+                i
+            )
+        }
+        XCTAssertThrowsError(
+            try session.addPin(row: warper.id, key: "pins", at: CGPoint(x: 0.5, y: 0.5))
+        )
+    }
 }
