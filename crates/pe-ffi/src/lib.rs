@@ -1020,10 +1020,13 @@ pub unsafe extern "C" fn pe_session_measure(s: *mut PeSession, width: u32, heigh
     status(s, move |s| s.measure_scopes(width, height))
 }
 
-/// Which measurement the session is holding: 0 before the first, and strictly
-/// increasing after. An edit throws the measurement away and the number stops
-/// advancing until the next `pe_session_measure`, so a caller that compares
-/// this before copying 2.6 MB of waveform will not copy the same numbers twice.
+/// Which measurement the session is holding, or 0 for none.
+///
+/// Zero before the first measurement and again after an edit throws one away,
+/// so this one call answers both questions a caller has: is there anything to
+/// read, and is it the same as last time. Compare it before copying 2.6 MB of
+/// waveform and you will copy neither the same numbers twice nor stale ones
+/// once.
 ///
 /// # Safety
 /// `s` must be valid or null.

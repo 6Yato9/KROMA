@@ -286,21 +286,23 @@ public final class SessionStore {
     /// Bring the copy into step with the engine, doing nothing when it already
     /// is.
     ///
-    /// Two cheap questions before any copy. `hasScopes` first, because an edit
-    /// throws the measurement away without advancing the generation — counts
-    /// kept across an edit would draw a scope of a picture that is not on
-    /// screen. Then the generation, which is one integer against 2.6 MB.
+    /// One integer against 2.6 MB.
+    ///
+    /// The generation answers both questions on its own: zero means there is
+    /// nothing to read — either nothing has been measured yet, or an edit threw
+    /// the last measurement away — and any other value is the identity of the
+    /// counts being held. Counts kept across an edit would draw a scope of a
+    /// picture that is not on screen.
     private func syncScopes() {
-        guard session.hasScopes else {
-            scopeGeneration = 0
+        let generation = session.scopeGeneration()
+        guard generation != scopeGeneration else { return }
+        scopeGeneration = generation
+        guard generation != 0 else {
             // Only written when it is actually changing: assigning nil over nil
             // would tell every observing view to run its body again for nothing.
             if scopes != nil { scopes = nil }
             return
         }
-        let generation = session.scopeGeneration()
-        guard generation != scopeGeneration else { return }
-        scopeGeneration = generation
         run { scopes = try session.scopes() }
     }
 

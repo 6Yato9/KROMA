@@ -346,20 +346,6 @@ public final class Session {
         pe_session_scope_generation(handle)
     }
 
-    /// Whether the engine is holding a measurement at all.
-    ///
-    /// The generation does not answer this. An edit throws the measurement
-    /// away *without* advancing the number — it stops advancing until the next
-    /// `measureScopes` — so a holder that watched only the generation would go
-    /// on drawing a scope of a photograph that is no longer on screen.
-    ///
-    /// Asking for a shape with every out-pointer null is the cheapest question
-    /// the ABI has: nothing is written, and a null `peak` is the one field that
-    /// would otherwise cost a walk over the counts.
-    public var hasScopes: Bool {
-        pe_session_scope_shape(handle, Histogram, nil, nil, nil, nil, nil) == 0
-    }
-
     /// The fraction of pixels above diffuse white, which is what a clipping
     /// warning is actually about. Nil with nothing measured.
     public func overWhiteFraction() -> Double? {

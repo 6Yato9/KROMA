@@ -924,11 +924,23 @@ impl Session {
         self.scopes.as_ref()
     }
 
-    /// Which measurement this is. Zero before the first, and strictly
-    /// increasing after — a shell holding a copy compares this to know whether
-    /// to copy again, which for a 2.6 MB waveform is worth doing.
+    /// Which measurement the session is holding, or zero for none.
+    ///
+    /// Zero before the first measurement *and* after an edit has thrown one
+    /// away, so this one number answers both questions a shell has: is there
+    /// anything to read, and is it the same as last time. Reporting the old
+    /// number after an edit would answer only the second, and a shell that
+    /// compared it and skipped the copy would keep drawing counts for a grade
+    /// that is no longer on screen.
+    ///
+    /// Non-zero values are strictly increasing, which is what makes the
+    /// comparison worth doing at all: a waveform is 2.6 MB.
     pub fn scope_generation(&self) -> u64 {
-        self.scope_generation
+        if self.scopes.is_some() {
+            self.scope_generation
+        } else {
+            0
+        }
     }
 
     // ---- the screen -----------------------------------------------------
@@ -1880,6 +1892,30 @@ mod tests {
             s.scope_generation() > first,
             "a second measurement should be tellable from the first"
         );
+    }
+
+    /// The generation is how a shell decides whether to copy 2.6 MB again. If
+    /// it kept reporting the old number after an edit dropped the measurement,
+    /// a shell would compare it, see no change, skip the copy, and go on
+    /// drawing a scope of a photograph that is no longer on screen.
+    #[test]
+    fn the_generation_goes_back_to_nothing_when_an_edit_drops_the_measurement() {
+        let mut s = chart_session();
+        s.measure_scopes(64, 64).unwrap();
+        assert!(s.scope_generation() > 0);
+
+        let row = s.add_effect("exposure").unwrap();
+        s.set_float(row, "ev", 1.5).unwrap();
+        assert_eq!(
+            s.scope_generation(),
+            0,
+            "a stale generation would let a shell skip the copy it needed"
+        );
+
+        // And measuring again is tellable from the first, rather than starting
+        // over at one and colliding with a number a shell already holds.
+        s.measure_scopes(64, 64).unwrap();
+        assert!(s.scope_generation() > 1);
     }
 
     #[test]
