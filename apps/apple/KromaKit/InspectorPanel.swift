@@ -33,7 +33,11 @@ public struct InspectorPanel: View {
                 .padding(.bottom, 4)
             }
 
-            ForEach(effect.params.filter { !isWheel($0) }) { param in
+            if !curves.isEmpty {
+                CurvePanel(effect: effect, params: curves, row: row, store: store)
+            }
+
+            ForEach(effect.params.filter { !isWheel($0) && !isCurve($0) }) { param in
                 control(for: param)
             }
         }
@@ -47,6 +51,15 @@ public struct InspectorPanel: View {
 
     private var wheels: [Param] {
         effect.params.filter(isWheel)
+    }
+
+    private func isCurve(_ param: Param) -> Bool {
+        if case .curve = param.kind { return true }
+        return false
+    }
+
+    private var curves: [Param] {
+        effect.params.filter(isCurve)
     }
 
     @ViewBuilder

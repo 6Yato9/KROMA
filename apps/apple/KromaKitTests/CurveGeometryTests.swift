@@ -124,4 +124,42 @@ final class CurveGeometryTests: XCTestCase {
         XCTAssertEqual(moved.points[0].x, 0, accuracy: 0.0001)
         XCTAssertEqual(moved.points[0].y, 0.6, accuracy: 0.0001)
     }
+
+    func testTheCanvasPutsTheOriginAtTheBottomLeft() {
+        // A curve's y grows upward; a view's grows downward. Getting this
+        // backwards draws every curve inverted, and an inverted curve still
+        // looks like a curve — which is why it is tested rather than eyeballed.
+        let canvas = CurveCanvas(size: CGSize(width: 200, height: 100), inset: 0)
+        XCTAssertEqual(canvas.view(CGPoint(x: 0, y: 0)).x, 0, accuracy: 0.001)
+        XCTAssertEqual(canvas.view(CGPoint(x: 0, y: 0)).y, 100, accuracy: 0.001)
+        XCTAssertEqual(canvas.view(CGPoint(x: 1, y: 1)).x, 200, accuracy: 0.001)
+        XCTAssertEqual(canvas.view(CGPoint(x: 1, y: 1)).y, 0, accuracy: 0.001)
+    }
+
+    func testTheCanvasRoundTrips() {
+        let canvas = CurveCanvas(size: CGSize(width: 240, height: 180), inset: 8)
+        for p in [CGPoint(x: 0, y: 0), CGPoint(x: 0.3, y: 0.7), CGPoint(x: 1, y: 1)] {
+            let back = canvas.curve(canvas.view(p))
+            XCTAssertEqual(back.x, p.x, accuracy: 0.001)
+            XCTAssertEqual(back.y, p.y, accuracy: 0.001)
+        }
+    }
+
+    func testTheCanvasInsetsSoAPointOnTheEdgeIsStillGrabbable() {
+        // Without the inset, the endpoints sit exactly on the border and half
+        // of each handle is outside the view — which makes the two points a
+        // user most often drags the two hardest to hit.
+        let canvas = CurveCanvas(size: CGSize(width: 200, height: 200), inset: 10)
+        XCTAssertEqual(canvas.view(CGPoint(x: 0, y: 0)), CGPoint(x: 10, y: 190))
+        XCTAssertEqual(canvas.view(CGPoint(x: 1, y: 1)), CGPoint(x: 190, y: 10))
+    }
+
+    func testAZeroSizedCanvasDoesNotDivideByZero() {
+        // SwiftUI lays out at zero size on the first pass, and a NaN there
+        // propagates into the path and blanks the whole panel.
+        let canvas = CurveCanvas(size: .zero, inset: 6)
+        let p = canvas.curve(CGPoint(x: 5, y: 5))
+        XCTAssertFalse(p.x.isNaN)
+        XCTAssertFalse(p.y.isNaN)
+    }
 }

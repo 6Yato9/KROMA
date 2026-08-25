@@ -21,15 +21,20 @@ public struct CurveGeometry: Equatable {
     /// and sorting late is how a point dragged past its neighbour swaps places
     /// with it mid-gesture.
     public let points: [CGPoint]
+    /// Solved once. A curve is immutable, so its tangents are too — and
+    /// `sample` is called 128 times per frame by the editor's draw loop.
+    private let tangents: [Double]
 
     public init(points: [CGPoint]) {
-        self.points = points.sorted { $0.x < $1.x }
+        let sorted = points.sorted { $0.x < $1.x }
+        self.points = sorted
+        self.tangents = Self.monotoneTangents(sorted)
     }
 
     // ---- evaluation ------------------------------------------------------
 
     /// Secant slopes, limited so no segment can overshoot.
-    private var tangents: [Double] {
+    private static func monotoneTangents(_ points: [CGPoint]) -> [Double] {
         let n = points.count
         guard n >= 2 else { return [] }
 
