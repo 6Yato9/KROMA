@@ -314,7 +314,7 @@ Add to `SnapshotTests`:
 
 ```swift
     func testACurveDecodesItsPoints() throws {
-        let json = Data(#"{"k":{"t":"curve","v":{"points":[[0.0,0.0],[0.5,0.7],[1.0,1.0]]}}}"#.utf8)
+        let json = Data(#"{"k":{"t":"curve","v":[[0.0,0.0],[0.5,0.7],[1.0,1.0]]}}"#.utf8)
         let values = try JSONDecoder().decode([String: ParamValue].self, from: json)
         guard case let .curve(c) = try XCTUnwrap(values["k"]) else {
             return XCTFail("not a curve")
@@ -356,29 +356,31 @@ Expected: `type 'ParamValue' has no member 'curve'`.
 
 - [ ] **Step 3: Write the implementation**
 
-In `apps/apple/KromaKit/Snapshot.swift`, add the payload type. Note the wire
-shape: an *object* with a `points` key holding an array of two-element arrays,
-not a bare array — so it needs `CodingKeys` rather than an unkeyed container.
+In `apps/apple/KromaKit/Snapshot.swift`, add the payload type.
+
+**The wire shape is a bare array of `[x, y]` pairs** — `{"t":"curve","v":[[0,0],[1,1]]}`
+— because `pe_core::Curve` is `#[serde(transparent)]`. It is *not* an object
+with a `points` key, so this decodes from the decoder directly rather than
+through `CodingKeys`. Confirmed against `apps/apple/Fixtures/snapshot.json`.
 
 ```swift
 /// A curve's control points.
 ///
 /// `CGPoint` rather than pairs of `Float`, because everything that draws one
 /// wants points and the conversion would otherwise happen at every call site.
+///
+/// The wire shape is a bare array of pairs, not an object — `pe_core::Curve`
+/// is `#[serde(transparent)]`, so the struct's field name never reaches the
+/// JSON.
 public struct CurveValue: Decodable, Sendable, Equatable {
     public let points: [CGPoint]
-
-    enum CodingKeys: String, CodingKey {
-        case points
-    }
 
     public init(points: [CGPoint]) {
         self.points = points
     }
 
     public init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        let pairs = try c.decode([[Double]].self, forKey: .points)
+        let pairs = try [[Double]](from: decoder)
         points = pairs.map { CGPoint(x: $0.first ?? 0, y: $0.dropFirst().first ?? 0) }
     }
 }
