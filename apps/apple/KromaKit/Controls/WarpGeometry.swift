@@ -33,7 +33,12 @@ public struct WarpGeometry {
 
     /// How much of the plot's half-width full saturation reaches. Short of the
     /// edge so an outer vertex dragged further still has somewhere to go.
-    private static let radiusFraction: CGFloat = 0.45
+    ///
+    /// Public because the haze drawn under the lattice has to land on the same
+    /// disc the lattice sits on: a second copy of this number is a second copy
+    /// that can drift, and a cloud on a disc of its own size is the exact
+    /// failure the backdrops plan exists to prevent.
+    public static let radiusFraction: CGFloat = 0.45
 
     public init(warp: WarpValue, axes: WarpAxes, rect: CGRect) {
         self.warp = warp

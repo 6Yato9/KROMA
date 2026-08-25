@@ -10,11 +10,12 @@ import SwiftUI
 /// a sibling of `WarpEditor` rather than a third pair of axes inside it.
 ///
 /// Resolve draws the spectral locus and the photograph's own colour cloud over
-/// this plot. Both need measurements that have no C ABI on this side yet, so
-/// what is drawn here is the coordinate space and not the picture. A decorative
-/// approximation of the locus would be worse than none: it would be a boundary
-/// that looks authoritative and is not, and pins are placed *against* that
-/// boundary.
+/// this plot. The cloud is here, binned over this plot's own range so it and
+/// the pins agree about where a colour is. The locus is not: a decorative
+/// approximation of it would be worse than none, because it would be a
+/// boundary that looks authoritative and is not, and pins are placed *against*
+/// that boundary. The cloud is a measurement and answers the same question
+/// honestly — these are the colours the photograph actually has.
 ///
 /// The in-flight pin is held here and the snapshot is not refreshed mid-drag,
 /// for the reason `ScalarRow`, `CurveEditor` and `WarpEditor` do the same.
@@ -105,6 +106,7 @@ public struct PinsEditor: View {
         let g = PinGeometry(pins: pins, rect: rect)
         return ZStack {
             background(rect)
+            cloud(rect)
             grid(rect)
             neutral(g)
             marks(g)
@@ -122,6 +124,27 @@ public struct PinsEditor: View {
             )
             .frame(width: rect.width, height: rect.height)
             .position(x: rect.midX, y: rect.midY)
+    }
+
+    /// Where this photograph's own colours are, over the space they sit in.
+    ///
+    /// The chromaticity grid is binned with `pe_core::pins::plot_fraction` —
+    /// the same mapping `PinGeometry` uses — so a plot fraction reads the grid
+    /// directly and the cloud sits under the pin a colourist would place on it.
+    ///
+    /// Nil scopes draw nothing and ask for nothing: the editor is not what
+    /// decides when to measure. The same rule `CurveBackdropView` follows.
+    @ViewBuilder
+    private func cloud(_ rect: CGRect) -> some View {
+        if let scopes = store.scopes {
+            WarperCloudView(
+                clouds: scopes.warper,
+                plot: .chromaticity,
+                generation: scopes.generation
+            )
+            .frame(width: rect.width, height: rect.height)
+            .position(x: rect.midX, y: rect.midY)
+        }
     }
 
     /// A faint grid, so a position can be read rather than only seen.
