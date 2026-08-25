@@ -95,9 +95,9 @@ public struct Snapshot: Decodable, Sendable {
 /// One parameter's value, in the document's own representation.
 ///
 /// Adjacently tagged as `{"t": "float", "v": 0.35}`, which is what
-/// `pe-core`'s `ParamValue` writes. Kinds this slice does not draw — pin
-/// lattices — decode as `.opaque` rather than failing, so a photograph
-/// carrying one still opens.
+/// `pe-core`'s `ParamValue` writes. Every kind the engine writes today decodes
+/// as itself; a kind this build has never heard of decodes as `.opaque` rather
+/// than failing, so a photograph written by a later version still opens.
 public enum ParamValue: Decodable, Sendable, Equatable {
     case float(Float)
     case bool(Bool)
@@ -106,8 +106,9 @@ public enum ParamValue: Decodable, Sendable, Equatable {
     case wheel(WheelValue)
     case curve(CurveValue)
     case warp(WarpValue)
-    /// Structure this build does not draw. Carries its tag so the inspector
-    /// can say what it is declining to show.
+    case pins([PinValue])
+    /// A kind this build does not know. Carries its tag so the inspector can
+    /// say what it is declining to show.
     case opaque(String)
 
     enum CodingKeys: String, CodingKey {
@@ -134,6 +135,10 @@ public enum ParamValue: Decodable, Sendable, Equatable {
             self = .curve(try c.decode(CurveValue.self, forKey: .v))
         case "warp":
             self = .warp(try c.decode(WarpValue.self, forKey: .v))
+        case "pins":
+            // A bare array, like a curve's: `Pins` is transparent over its
+            // `Vec`, so there is no object around it.
+            self = .pins(try c.decode([PinValue].self, forKey: .v))
         default:
             self = .opaque(tag)
         }
@@ -161,6 +166,12 @@ public enum ParamValue: Decodable, Sendable, Equatable {
     /// The value as a lattice, for the warper that draws one.
     public var warpValue: WarpValue? {
         if case let .warp(w) = self { return w }
+        return nil
+    }
+
+    /// The value as a set of pins, for the diagram that draws them.
+    public var pinsValue: [PinValue]? {
+        if case let .pins(p) = self { return p }
         return nil
     }
 }
@@ -239,6 +250,85 @@ public struct WarpValue: Decodable, Sendable, Equatable {
     /// computed, not an accumulated delta.
     public var isIdentity: Bool {
         offsets.allSatisfy { $0 == .zero }
+    }
+}
+
+/// One pin on the chromaticity diagram.
+///
+/// `at` is where the colour is and `to` is where it should go — both **CIE xy
+/// chromaticities**, not fractions of the plot. `PinGeometry` is what turns one
+/// into a position.
+///
+/// The wire shape is an object with snake_case keys, inside a bare array —
+/// `pe_core::Pins` is `#[serde(transparent)]` over its `Vec`, so only the pin
+/// itself has field names.
+public struct PinValue: Decodable, Sendable, Equatable {
+    public let at: CGPoint
+    public let to: CGPoint
+    /// How far around `at` the pull reaches, in the same units.
+    public let chromaRange: Double
+    /// How much of the pull the shadows and highlights take, and where the
+    /// boundary sits. Both at one is every tone equally, which is why both
+    /// default to one.
+    public let tonalLow: Double
+    public let tonalHigh: Double
+    public let tonalPivot: Double
+    /// Stops of light, applied within the pin's reach.
+    public let exposure: Double
+
+    /// How many pins one warper may carry, matching `pe_core::pins::MAX_PINS`.
+    /// Bounded because they travel to the GPU inside the curve LUT, and because
+    /// the honest number is small.
+    public static let maxPins = 8
+
+    enum CodingKeys: String, CodingKey {
+        case at, to, exposure
+        case chromaRange = "chroma_range"
+        case tonalLow = "tonal_low"
+        case tonalHigh = "tonal_high"
+        case tonalPivot = "tonal_pivot"
+    }
+
+    public init(
+        at: CGPoint, to: CGPoint, chromaRange: Double,
+        tonalLow: Double, tonalHigh: Double, tonalPivot: Double, exposure: Double
+    ) {
+        self.at = at
+        self.to = to
+        self.chromaRange = chromaRange
+        self.tonalLow = tonalLow
+        self.tonalHigh = tonalHigh
+        self.tonalPivot = tonalPivot
+        self.exposure = exposure
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let a = try c.decode([Double].self, forKey: .at)
+        let t = try c.decode([Double].self, forKey: .to)
+        at = CGPoint(x: a.first ?? 0, y: a.dropFirst().first ?? 0)
+        to = CGPoint(x: t.first ?? 0, y: t.dropFirst().first ?? 0)
+        chromaRange = try c.decode(Double.self, forKey: .chromaRange)
+        tonalLow = try c.decode(Double.self, forKey: .tonalLow)
+        tonalHigh = try c.decode(Double.self, forKey: .tonalHigh)
+        tonalPivot = try c.decode(Double.self, forKey: .tonalPivot)
+        exposure = try c.decode(Double.self, forKey: .exposure)
+    }
+
+    /// A pin placed at a point and not yet moved. Matching `Pin::placed`.
+    public static func placed(at: CGPoint) -> PinValue {
+        PinValue(at: at, to: at, chromaRange: 0.04,
+                 tonalLow: 1, tonalHigh: 1, tonalPivot: 0.5, exposure: 0)
+    }
+
+    /// Whether this pin leaves the picture alone.
+    ///
+    /// A pin placed but not dragged is not a no-op waiting to happen — it is
+    /// one the user put somewhere deliberately and is about to move. Exposure
+    /// counts too: a pin can be dead centre and still be brightening the
+    /// picture.
+    public var isNeutral: Bool {
+        at == to && exposure == 0
     }
 }
 

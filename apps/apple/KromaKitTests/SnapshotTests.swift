@@ -59,17 +59,20 @@ final class SnapshotTests: XCTestCase {
         // An int reads as a float, because every consumer of a number here
         // wants one and the document is the only thing that cares which it was.
         XCTAssertEqual(values["e"]?.floatValue, 7)
-        // A warp reads as a lattice now. A pin lattice is still structure the
-        // slice does not draw, and must decode as *something* rather than
-        // failing the whole snapshot: the Colour Warper is pinned, so a
-        // decoder that refused pins would make every photograph unopenable.
+        // Every kind the engine writes today reads as itself — a warp as a
+        // lattice, a pin set as pins. The `.opaque` fallback stays for a kind
+        // this build has never heard of, because a document written by a later
+        // version must still open: the Colour Warper is pinned, so a decoder
+        // that refused an unknown kind would make that photograph unopenable.
         let warp = Data(#"""
         {"k":{"t":"warp","v":{"cols":2,"rows":1,"offsets":[[0.0,0.0],[0.0,0.0]]}},
-         "p":{"t":"pins","v":[]}}
+         "p":{"t":"pins","v":[]},
+         "z":{"t":"nebula","v":{"anything":true}}}
         """#.utf8)
         let decoded = try JSONDecoder().decode([String: ParamValue].self, from: warp)
         XCTAssertEqual(decoded["k"], .warp(WarpValue(cols: 2, rows: 1, offsets: [.zero, .zero])))
-        XCTAssertEqual(decoded["p"], .opaque("pins"))
+        XCTAssertEqual(decoded["p"], .pins([]))
+        XCTAssertEqual(decoded["z"], .opaque("nebula"))
     }
 
     func testAWheelDecodesItsFourComponents() throws {
@@ -159,9 +162,9 @@ final class SnapshotTests: XCTestCase {
             XCTAssertEqual(w.offsets.count, 36)
             XCTAssertTrue(w.isIdentity, "a fresh lattice should leave the picture alone")
         }
-        // And pins still decodes as opaque — it is the next plan, not this one.
-        guard case .opaque = try XCTUnwrap(warper.params["pins"]) else {
-            return XCTFail("pins should still be opaque")
+        // And pins reads as a pin set now, not as opaque structure.
+        guard case .pins = try XCTUnwrap(warper.params["pins"]) else {
+            return XCTFail("pins is not a pin set")
         }
     }
 
@@ -185,5 +188,78 @@ final class SnapshotTests: XCTestCase {
         // And a vertex the grid does not have changes nothing rather than
         // growing the array.
         XCTAssertEqual(w.replacing(col: 9, row: 0, with: CGPoint(x: 1, y: 1)).offsets.count, 4)
+    }
+
+    func testPinsDecodeTheirFields() throws {
+        let json = Data(#"""
+        {"k":{"t":"pins","v":[{"at":[0.33,0.35],"to":[0.40,0.30],"chroma_range":0.12,
+        "tonal_low":0.2,"tonal_high":0.9,"tonal_pivot":0.6,"exposure":0.75}]}}
+        """#.utf8)
+        let values = try JSONDecoder().decode([String: ParamValue].self, from: json)
+        guard case let .pins(pins) = try XCTUnwrap(values["k"]) else {
+            return XCTFail("not a pin set")
+        }
+        XCTAssertEqual(pins.count, 1)
+        let p = try XCTUnwrap(pins.first)
+        XCTAssertEqual(p.at.x, 0.33, accuracy: 0.0001)
+        XCTAssertEqual(p.to.y, 0.30, accuracy: 0.0001)
+        XCTAssertEqual(p.chromaRange, 0.12, accuracy: 0.0001)
+        XCTAssertEqual(p.tonalLow, 0.2, accuracy: 0.0001)
+        XCTAssertEqual(p.tonalHigh, 0.9, accuracy: 0.0001)
+        XCTAssertEqual(p.tonalPivot, 0.6, accuracy: 0.0001)
+        XCTAssertEqual(p.exposure, 0.75, accuracy: 0.0001)
+    }
+
+    func testAnEmptyPinSetDecodes() throws {
+        // Every fresh document has one, and it is the shape the committed
+        // snapshot carries.
+        let json = Data(#"{"k":{"t":"pins","v":[]}}"#.utf8)
+        let values = try JSONDecoder().decode([String: ParamValue].self, from: json)
+        guard case let .pins(pins) = try XCTUnwrap(values["k"]) else {
+            return XCTFail("not a pin set")
+        }
+        XCTAssertTrue(pins.isEmpty)
+    }
+
+    func testAPlacedPinIsNeutralAndADraggedOneIsNot() {
+        // A pin placed and not yet moved is not a no-op waiting to happen — it
+        // is one the user has put somewhere deliberately and is about to move.
+        // It reads as neutral so the row costs nothing until it does something.
+        let placed = PinValue(at: CGPoint(x: 0.33, y: 0.35), to: CGPoint(x: 0.33, y: 0.35),
+                              chromaRange: 0.04, tonalLow: 1, tonalHigh: 1,
+                              tonalPivot: 0.5, exposure: 0)
+        XCTAssertTrue(placed.isNeutral)
+
+        let dragged = PinValue(at: placed.at, to: CGPoint(x: 0.4, y: 0.3),
+                               chromaRange: placed.chromaRange, tonalLow: placed.tonalLow,
+                               tonalHigh: placed.tonalHigh, tonalPivot: placed.tonalPivot,
+                               exposure: placed.exposure)
+        XCTAssertFalse(dragged.isNeutral)
+
+        // Exposure counts too. A pin can be dead centre and still be
+        // brightening the picture, and a neutrality check that only looked at
+        // the drag would let the renderer skip a row that is doing something.
+        let lifted = PinValue(at: placed.at, to: placed.at, chromaRange: placed.chromaRange,
+                              tonalLow: placed.tonalLow, tonalHigh: placed.tonalHigh,
+                              tonalPivot: placed.tonalPivot, exposure: 0.5)
+        XCTAssertFalse(lifted.isNeutral)
+    }
+
+    func testTheCommittedSnapshotCarriesAReadableEmptyPinSet() throws {
+        let snap = try JSONDecoder().decode(Snapshot.self, from: fixture("snapshot"))
+        let warper = try XCTUnwrap(snap.rows.first { $0.effect == "colour_warper" })
+        guard case let .pins(pins) = try XCTUnwrap(warper.params["pins"]) else {
+            return XCTFail("pins is not a pin set")
+        }
+        XCTAssertTrue(pins.isEmpty, "a fresh warper has no pins")
+    }
+
+    func testThePinLimitMatchesTheEngine() throws {
+        // Two numbers that have to be one: the Add button stops at Swift's,
+        // the session refuses past the engine's. The fixture carries the
+        // engine's, so a change on that side fails here rather than offering a
+        // ninth pin nothing will accept.
+        let raw = try JSONSerialization.jsonObject(with: fixture("pin_samples")) as? [String: Any]
+        XCTAssertEqual(try XCTUnwrap(raw)["max_pins"] as? Int, PinValue.maxPins)
     }
 }
