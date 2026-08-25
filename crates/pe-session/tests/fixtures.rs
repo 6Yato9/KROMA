@@ -392,7 +392,7 @@ fn the_backdrop_fixture_is_current() {
 /// so the numbers cross here and the Swift side asserts against them.
 #[test]
 fn the_theme_fixture_is_current() {
-    use pe_theme::{Ramp, Rgb8, colour, ramp_for};
+    use pe_theme::{CHANNEL_AXES, Ramp, Rgb8, colour, ramp_for};
 
     let hex = |c: Rgb8| format!("{:02X}{:02X}{:02X}", c.r, c.g, c.b);
 
@@ -403,6 +403,11 @@ fn the_theme_fixture_is_current() {
 
     // Which ramp each parameter of each registered effect gets, so a key
     // renamed on one side and not the other is caught.
+    //
+    // Spelled by `Ramp::tag`, not by `{:?}`. The derived `Debug` wrote a
+    // saturation ramp as `Sat(Rgb8 { r: 35, g: 228, b: 235 })` — a private
+    // field layout, leaking into a string two languages are held to, and one
+    // that would change if anyone added a field to `Rgb8`.
     let mut ramps = serde_json::Map::new();
     for effect in pe_effects::all() {
         for p in effect.params {
@@ -410,7 +415,7 @@ fn the_theme_fixture_is_current() {
             if !r.is_plain() {
                 ramps.insert(
                     format!("{}.{}", effect.key, p.key),
-                    serde_json::json!(format!("{r:?}")),
+                    serde_json::json!(r.tag()),
                 );
             }
         }
@@ -419,22 +424,28 @@ fn the_theme_fixture_is_current() {
     // And what each ramp actually paints, sampled — a table that agrees on
     // *which* ramp and disagrees on its colours is no use.
     let mut sampled = serde_json::Map::new();
-    for (name, ramp) in [
-        ("Temp", Ramp::Temp),
-        ("Tint", Ramp::Tint),
-        ("Hue", Ramp::Hue),
-        ("Chroma", Ramp::Chroma),
-        ("Luma", Ramp::Luma),
-        ("HueAround(28)", Ramp::HueAround(28.0)),
+    for ramp in [
+        Ramp::Temp,
+        Ramp::Tint,
+        Ramp::Hue,
+        Ramp::Chroma,
+        Ramp::Luma,
+        Ramp::HueAround(28.0),
     ] {
         let steps: Vec<String> = (0..=16).map(|i| hex(ramp.at(i as f32 / 16.0))).collect();
-        sampled.insert(name.to_string(), serde_json::json!(steps));
+        sampled.insert(ramp.tag(), serde_json::json!(steps));
     }
+
+    // The three wheel sliders' axes. They are reached as a constant rather
+    // than through `ramp_for`, so nothing above would notice if the Mac's copy
+    // of them said something else.
+    let axes: Vec<String> = CHANNEL_AXES.iter().map(Ramp::tag).collect();
 
     let json = serde_json::to_string_pretty(&serde_json::json!({
         "palette": palette,
         "ramps": ramps,
         "sampled": sampled,
+        "axes": axes,
     }))
     .unwrap();
     check("theme.json", json);

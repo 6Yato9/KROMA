@@ -1,4 +1,9 @@
 {
+  "axes": [
+    "axis(72,200,208,226,78,72)",
+    "axis(210,76,190,94,202,96)",
+    "axis(226,206,84,86,122,226)"
+  ],
   "palette": {
     "ACCENT": "E06A5A",
     "ACCENT_DIM": "461A18",
@@ -29,45 +34,45 @@
     "WELL": "161616"
   },
   "ramps": {
-    "colour.hue": "Hue",
-    "colour.saturation": "Chroma",
-    "colour.vibrance": "Chroma",
-    "colour_mixer.aqua_hue": "HueAround(182.0)",
-    "colour_mixer.aqua_luminance": "Luma",
-    "colour_mixer.aqua_saturation": "Sat(Rgb8 { r: 35, g: 228, b: 235 })",
-    "colour_mixer.blue_hue": "HueAround(222.0)",
-    "colour_mixer.blue_luminance": "Luma",
-    "colour_mixer.blue_saturation": "Sat(Rgb8 { r: 35, g: 95, b: 235 })",
-    "colour_mixer.green_hue": "HueAround(110.0)",
-    "colour_mixer.green_luminance": "Luma",
-    "colour_mixer.green_saturation": "Sat(Rgb8 { r: 68, g: 235, b: 35 })",
-    "colour_mixer.magenta_hue": "HueAround(312.0)",
-    "colour_mixer.magenta_luminance": "Luma",
-    "colour_mixer.magenta_saturation": "Sat(Rgb8 { r: 235, g: 35, b: 195 })",
-    "colour_mixer.orange_hue": "HueAround(28.0)",
-    "colour_mixer.orange_luminance": "Luma",
-    "colour_mixer.orange_saturation": "Sat(Rgb8 { r: 235, g: 128, b: 35 })",
-    "colour_mixer.purple_hue": "HueAround(272.0)",
-    "colour_mixer.purple_luminance": "Luma",
-    "colour_mixer.purple_saturation": "Sat(Rgb8 { r: 142, g: 35, b: 235 })",
-    "colour_mixer.red_hue": "HueAround(0.0)",
-    "colour_mixer.red_luminance": "Luma",
-    "colour_mixer.red_saturation": "Sat(Rgb8 { r: 235, g: 35, b: 35 })",
-    "colour_mixer.yellow_hue": "HueAround(52.0)",
-    "colour_mixer.yellow_luminance": "Luma",
-    "colour_mixer.yellow_saturation": "Sat(Rgb8 { r: 235, g: 208, b: 35 })",
-    "film_damage.temp_shift": "Temp",
-    "film_damage.tint_shift": "Tint",
-    "film_look.tint": "Tint",
-    "grain.saturation": "Chroma",
-    "halation.saturation": "Chroma",
-    "hsl.hue": "Hue",
-    "hsl.saturation": "Chroma",
-    "white_balance.temperature": "Temp",
-    "white_balance.tint": "Tint"
+    "colour.hue": "hue",
+    "colour.saturation": "chroma",
+    "colour.vibrance": "chroma",
+    "colour_mixer.aqua_hue": "hueAround(182)",
+    "colour_mixer.aqua_luminance": "luma",
+    "colour_mixer.aqua_saturation": "sat(35,228,235)",
+    "colour_mixer.blue_hue": "hueAround(222)",
+    "colour_mixer.blue_luminance": "luma",
+    "colour_mixer.blue_saturation": "sat(35,95,235)",
+    "colour_mixer.green_hue": "hueAround(110)",
+    "colour_mixer.green_luminance": "luma",
+    "colour_mixer.green_saturation": "sat(68,235,35)",
+    "colour_mixer.magenta_hue": "hueAround(312)",
+    "colour_mixer.magenta_luminance": "luma",
+    "colour_mixer.magenta_saturation": "sat(235,35,195)",
+    "colour_mixer.orange_hue": "hueAround(28)",
+    "colour_mixer.orange_luminance": "luma",
+    "colour_mixer.orange_saturation": "sat(235,128,35)",
+    "colour_mixer.purple_hue": "hueAround(272)",
+    "colour_mixer.purple_luminance": "luma",
+    "colour_mixer.purple_saturation": "sat(142,35,235)",
+    "colour_mixer.red_hue": "hueAround(0)",
+    "colour_mixer.red_luminance": "luma",
+    "colour_mixer.red_saturation": "sat(235,35,35)",
+    "colour_mixer.yellow_hue": "hueAround(52)",
+    "colour_mixer.yellow_luminance": "luma",
+    "colour_mixer.yellow_saturation": "sat(235,208,35)",
+    "film_damage.temp_shift": "temp",
+    "film_damage.tint_shift": "tint",
+    "film_look.tint": "tint",
+    "grain.saturation": "chroma",
+    "halation.saturation": "chroma",
+    "hsl.hue": "hue",
+    "hsl.saturation": "chroma",
+    "white_balance.temperature": "temp",
+    "white_balance.tint": "tint"
   },
   "sampled": {
-    "Chroma": [
+    "chroma": [
       "757575",
       "7C7775",
       "827E73",
@@ -86,7 +91,7 @@
       "D52165",
       "DB1616"
     ],
-    "Hue": [
+    "hue": [
       "DB2C2C",
       "DB6E2C",
       "DBAF2C",
@@ -105,7 +110,7 @@
       "DB2C6E",
       "DB2C2C"
     ],
-    "HueAround(28)": [
+    "hueAround(28)": [
       "DB2C4E",
       "DB2C3F",
       "DB2C31",
@@ -124,7 +129,7 @@
       "D4DB2C",
       "C5DB2C"
     ],
-    "Luma": [
+    "luma": [
       "0E0E0E",
       "1C1C1C",
       "2A2A2A",
@@ -143,7 +148,7 @@
       "DEDEDE",
       "ECECEC"
     ],
-    "Temp": [
+    "temp": [
       "306CD6",
       "3A6ECB",
       "4471C0",
@@ -162,7 +167,7 @@
       "DBBB5D",
       "E8C458"
     ],
-    "Tint": [
+    "tint": [
       "3EBE68",
       "46B66B",
       "4EAE6E",

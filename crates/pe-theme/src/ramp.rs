@@ -72,6 +72,49 @@ impl Ramp {
     pub fn is_plain(self) -> bool {
         self == Self::Plain
     }
+
+    /// How a ramp is spelled where something outside Rust has to read it.
+    ///
+    /// Deliberately not `{:?}`. The derived `Debug` spells a saturation ramp
+    /// `Sat(Rgb8 { r: 35, g: 228, b: 235 })`, and that is a formatting
+    /// accident rather than a contract: it names [`Rgb8`]'s field layout, so
+    /// adding a field there would silently rewrite a string the Swift suite is
+    /// asserted against. Written out here, changing it is a decision someone
+    /// takes on purpose and both sides feel.
+    ///
+    /// Spelled in lower camel case because the mirror of this lives in Swift,
+    /// where that is what a case is called.
+    pub fn tag(&self) -> String {
+        match *self {
+            Self::Plain => "plain".to_string(),
+            Self::Temp => "temp".to_string(),
+            Self::Tint => "tint".to_string(),
+            Self::Hue => "hue".to_string(),
+            Self::HueAround(deg) => format!("hueAround({})", degrees(deg)),
+            Self::Sat(vivid) => format!("sat({})", bytes(vivid)),
+            Self::Chroma => "chroma".to_string(),
+            Self::Luma => "luma".to_string(),
+            Self::Axis(neg, pos) => format!("axis({},{})", bytes(neg), bytes(pos)),
+        }
+    }
+}
+
+fn bytes(c: Rgb8) -> String {
+    format!("{},{},{}", c.r, c.g, c.b)
+}
+
+/// A hue, in degrees, spelled the way it was written down.
+///
+/// Every band's hue is a whole number of degrees, so `28` rather than `28.0`
+/// or `2.8e1` — the two things Rust and Swift would otherwise each choose for
+/// themselves. Anything that is not whole gets three places, which is finer
+/// than the hue circle can show and is the same string on both sides.
+fn degrees(deg: f32) -> String {
+    if deg.is_finite() && deg.fract() == 0.0 && deg.abs() < 1e9 {
+        format!("{}", deg as i64)
+    } else {
+        format!("{deg:.3}")
+    }
 }
 
 /// HSV to a display colour.
@@ -313,6 +356,51 @@ mod tests {
             "the chroma ramp changes lightness across its span: {:?}",
             ends
         );
+    }
+
+    /// The spelling the fixture carries, written out.
+    ///
+    /// Asserted literally, because the whole point of `tag` is that it does
+    /// not come from anywhere that could change on its own. A test that built
+    /// the expected string from the same code would agree with any spelling at
+    /// all, including the derived one this replaced.
+    #[test]
+    fn a_ramp_is_spelled_the_same_way_on_both_sides() {
+        assert_eq!(Ramp::Plain.tag(), "plain");
+        assert_eq!(Ramp::Temp.tag(), "temp");
+        assert_eq!(Ramp::Tint.tag(), "tint");
+        assert_eq!(Ramp::Hue.tag(), "hue");
+        assert_eq!(Ramp::Chroma.tag(), "chroma");
+        assert_eq!(Ramp::Luma.tag(), "luma");
+        assert_eq!(Ramp::HueAround(28.0).tag(), "hueAround(28)");
+        assert_eq!(Ramp::HueAround(0.0).tag(), "hueAround(0)");
+        assert_eq!(Ramp::HueAround(182.5).tag(), "hueAround(182.500)");
+        assert_eq!(Ramp::Sat(Rgb8::new(35, 228, 235)).tag(), "sat(35,228,235)");
+        assert_eq!(
+            Ramp::Axis(Rgb8::new(72, 200, 208), Rgb8::new(226, 78, 72)).tag(),
+            "axis(72,200,208,226,78,72)"
+        );
+    }
+
+    /// And no two ramps share a spelling, or the Swift side would draw one of
+    /// them wherever the fixture named the other.
+    #[test]
+    fn no_two_ramps_are_spelled_alike() {
+        let all = [
+            Ramp::Plain,
+            Ramp::Temp,
+            Ramp::Tint,
+            Ramp::Hue,
+            Ramp::HueAround(28.0),
+            Ramp::HueAround(52.0),
+            Ramp::Sat(Rgb8::new(235, 35, 35)),
+            Ramp::Sat(Rgb8::new(35, 235, 35)),
+            Ramp::Chroma,
+            Ramp::Luma,
+            Ramp::Axis(Rgb8::new(72, 200, 208), Rgb8::new(226, 78, 72)),
+        ];
+        let tags: std::collections::BTreeSet<String> = all.iter().map(Ramp::tag).collect();
+        assert_eq!(tags.len(), all.len(), "two ramps spell the same: {tags:?}");
     }
 
     #[test]
