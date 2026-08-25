@@ -99,7 +99,7 @@ in `pe-scopes` and reaches Windows regardless.
 - Create: `crates/pe-session/src/scopes.rs`
 - Modify: `crates/pe-session/src/lib.rs`, `crates/pe-session/src/session.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `crates/pe-session/src/session.rs`'s test module. These need a GPU;
 check how the existing render tests guard for one — there is a
@@ -171,7 +171,7 @@ the "are these numbers still true" question in every caller, and the shell that
 forgets to ask draws a lie. Dropping it means `scopes()` returning `None` is
 the shell's cue to re-measure.
 
-- [ ] **Step 2: Run and watch them fail**
+- [x] **Step 2: Run and watch them fail**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo test -p pe-session scope 2>&1 | LC_ALL=C grep -aE "^error|^test result:"
@@ -179,7 +179,7 @@ cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && 
 
 Expected: `no method named 'measure_scopes'`.
 
-- [ ] **Step 3: Write the module**
+- [x] **Step 3: Write the module**
 
 Create `crates/pe-session/src/scopes.rs`:
 
@@ -279,7 +279,7 @@ sprinkle `self.scopes = None` through the setters**; find the choke point, and
 if there genuinely is not one, say so in your report rather than adding twenty
 lines that will be forgotten by the twenty-first setter.
 
-- [ ] **Step 4: Run the tests, then everything**
+- [x] **Step 4: Run the tests, then everything**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo fmt --all && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings 2>&1 | LC_ALL=C grep -aE "^error|^warning"; cargo test --workspace --no-fail-fast 2>&1 | LC_ALL=C grep -aE "^test result:|FAILED"
@@ -287,7 +287,7 @@ cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && 
 
 Baseline **645 passed, 0 failed**. Four new tests; report the real total.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && git add crates && git commit -m "The session measures what it renders, and forgets it when the grade moves"
@@ -301,7 +301,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add crates && git commit 
 - Modify: `crates/pe-scopes/src/warper.rs`
 - Modify: `apps/windows/src/warper.rs`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to the test module in `crates/pe-scopes/src/warper.rs`:
 
@@ -348,7 +348,7 @@ store it downwards while the plot reads upwards, and the existing
 `sample_grid` comment says it does. **Assert on it too**; getting x right and y
 upside down is exactly the kind of half-fix this test exists to prevent.
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo test -p pe-scopes chromaticity 2>&1 | LC_ALL=C grep -aE "^error|panicked|^test result:"
@@ -358,7 +358,7 @@ Expected: it fails, naming a column about eight cells off. If `pe-scopes` does
 not yet depend on `pe-core`, add it — `pe-core` is the crate everything else
 already depends on, and the plot range has lived there since the pins work.
 
-- [ ] **Step 3: Fix the binning**
+- [x] **Step 3: Fix the binning**
 
 Replace `x / XY_SPAN as f64` and its y counterpart with
 `pe_core::pins::plot_fraction`, so the grid is binned in exactly the
@@ -373,7 +373,7 @@ without spending half the grid on impossible colours" but "the plot's own
 range, because the drawing reads this grid at plot fractions and two ranges
 read as one put every colour in the wrong cell".
 
-- [ ] **Step 4: Check the Windows drawing still lines up**
+- [x] **Step 4: Check the Windows drawing still lines up**
 
 `apps/windows/src/warper.rs` has an ignored test that writes the plots to PNGs
 — `write_the_plots_out`, `#[ignore]`. Run it and **look at the chromaticity
@@ -388,7 +388,7 @@ Report where it wrote them. If you cannot view an image, say so plainly rather
 than claiming it looks right — the test above is the assertion that matters and
 the PNG is a courtesy.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings 2>&1 | LC_ALL=C grep -aE "^error|^warning"; cargo test --workspace --no-fail-fast 2>&1 | LC_ALL=C grep -aE "^test result:|FAILED"
@@ -415,7 +415,7 @@ and `width = LEVELS`.
 **Files:**
 - Modify: `crates/pe-ffi/src/lib.rs`
 
-- [ ] **Step 1: Write the kind enum and the five functions**
+- [x] **Step 1: Write the kind enum and the five functions**
 
 ```rust
 /// Which measurement to read. The numbering is part of the ABI: add to the end.
@@ -536,7 +536,7 @@ point spike otherwise flattens everything else to nothing), then use the type's
 own method and say so in the doc comment; if they are a plain maximum, compute
 it uniformly. Report which you found.
 
-- [ ] **Step 2: Write the tests**
+- [x] **Step 2: Write the tests**
 
 Add to `mod tests` in `crates/pe-ffi/src/lib.rs`:
 
@@ -638,7 +638,7 @@ Add to `mod tests` in `crates/pe-ffi/src/lib.rs`:
 
 `PeScope` needs `Debug` for that message, or use `kind as i32` as written.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo fmt --all && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings 2>&1 | LC_ALL=C grep -aE "^error|^warning"; cargo test --workspace --no-fail-fast 2>&1 | LC_ALL=C grep -aE "^test result:|FAILED"
@@ -663,7 +663,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add crates && git commit 
 - Modify: `apps/apple/KromaKit/Engine.swift`, `SessionStore.swift`
 - Create: `apps/apple/KromaKitTests/ScopesTests.swift`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```swift
 import XCTest
@@ -736,7 +736,7 @@ final class ScopesTests: XCTestCase {
 Adjust `addEffect` / `setFloat` spellings to whatever `Session` actually has —
 read `EngineTests.swift` first.
 
-- [ ] **Step 2: Write the implementation**
+- [x] **Step 2: Write the implementation**
 
 Create `apps/apple/KromaKit/Scopes.swift`. The shape:
 
@@ -788,7 +788,7 @@ SwiftUI body evaluation** — the generation exists precisely to prevent that,
 and a store that copies unconditionally will make the app stutter while a
 slider is dragged.
 
-- [ ] **Step 3: Run and commit**
+- [x] **Step 3: Run and commit**
 
 Baseline **97 Swift tests**. Six new; report the real number, and build the app
 target too.
@@ -810,7 +810,7 @@ becomes a brightness, what the graticule says, where the reference lines sit.
 None of that is arithmetic anyone can check without looking at it, which is why
 `pe-scopes` keeps it out of the measuring and why it lives here.
 
-- [ ] **Step 1: The three rules that are not obvious**
+- [x] **Step 1: The three rules that are not obvious**
 
 **Draw an image, not shapes.** A waveform is 640 columns by 256 levels. As
 SwiftUI geometry that is a hundred and sixty thousand rectangles a frame; as a
@@ -841,7 +841,7 @@ with tests: zero is zero, full scale is one, and **a count of one per cent of
 full scale is brighter than one per cent** — that last is the whole point of
 the curve, and a linear implementation passes the first two.
 
-- [ ] **Step 2: The four views**
+- [x] **Step 2: The four views**
 
 | view | from | drawn |
 |---|---|---|
@@ -865,7 +865,7 @@ which, and do not eyeball six box positions.
 
 Channel tints are additive, so where all three overlap the result is white.
 
-- [ ] **Step 3: Put them on screen**
+- [x] **Step 3: Put them on screen**
 
 Add a scopes panel to the macOS window, showing several at once — the whole
 point is reading one against another. Follow how the existing panels are laid
@@ -876,7 +876,7 @@ measurement is stale, and **not** when it is hidden: it is a full extra render
 plus a 1.2 MB readback, and paying for it behind a closed panel is the kind of
 cost nobody attributes correctly later.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Report the test count and build the app target. `** BUILD SUCCEEDED **`, no new
 Swift warnings — two are pre-existing: cargo's `block v0.1.6` note and the
@@ -893,7 +893,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add apps/apple && git com
 
 ## Task 6: Say what the scopes are
 
-- [ ] **Step 1: Update the docs**
+- [x] **Step 1: Update the docs**
 
 `README.md`'s M6 row and `apps/apple/README.md` both need the scopes added to
 what the macOS app does. In "What is deliberately absent", the histogram behind
@@ -907,14 +907,14 @@ returning nothing means "measure first" rather than "no scopes". That is the
 rule that stops a shell drawing a scope of a photograph that is no longer on
 screen.
 
-- [ ] **Step 2: Record the chromaticity fix**
+- [x] **Step 2: Record the chromaticity fix**
 
 `docs/resolve-parameters.md`'s Colour Warper section already explains the plot
 range. Add that the colour cloud is binned in those same coordinates, and why
 it has to be: it was binned over a different range until this plan, and the two
 agreed at exactly one chromaticity.
 
-- [ ] **Step 3: Verify the whole tree and commit**
+- [x] **Step 3: Verify the whole tree and commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings 2>&1 | LC_ALL=C grep -aE "^error|^warning"; cargo test --workspace --no-fail-fast 2>&1 | LC_ALL=C grep -aE "^test result: FAILED|^error"; echo "rust done"

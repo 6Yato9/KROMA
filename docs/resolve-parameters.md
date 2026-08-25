@@ -566,6 +566,15 @@ views switch on an icon rather than being three tools, and why there is one
 two rows per grid from row 10. A 16 by 16 grid is 256 vertices, which is
 exactly one LUT row per component, and that is where the 16 comes from.
 
+**The colour cloud is binned in the plot's own coordinates.** It was binned
+over a different range for a long time — 0 to 0.8, while the plot runs −0.03 to
+0.88 — and the drawing read it at plot fractions regardless. The two agreed at
+exactly one chromaticity, x ≈ 0.218; at a saturated red the cloud sat about six
+per cent of the plot from the pin a colourist would put on it. A cloud exists so
+you are aiming at *this photograph's* colours rather than colours in general,
+and one that disagrees with the coordinates drawn over it is worse than none,
+because it is confidently wrong.
+
 **A pin is a chromaticity, not a fraction.** `Pin::at` and `Pin::to` are CIE xy
 coordinates, and the plot they are drawn on runs from `PLOT_MIN` to
 `PLOT_SPAN` — −0.03 to 0.88, chosen so the spectral locus, which reaches 0.8338

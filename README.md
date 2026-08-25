@@ -174,7 +174,7 @@ A golden test blindly regenerated is a golden test deleted.
 | M3 | Isolation — qualifier, power windows, masks | |
 | M4 | Grading workflow — stills gallery, versions, compare | |
 | M5 | RAW | |
-| M6 | macOS | in progress — all eight control kinds, every effect reachable |
+| M6 | macOS | in progress — all eight control kinds, scopes, every effect reachable |
 
 ## Known constraints
 

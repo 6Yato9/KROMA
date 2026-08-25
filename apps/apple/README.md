@@ -27,7 +27,7 @@ regenerates `pe_ffi.h`.
 | | |
 |---|---|
 | `Spike` | The smallest thing that proves the layer path: a `CAMetalLayer` made in Swift, filled by wgpu in Rust. Kept because it is the fastest way to tell whether a graphics problem is in the engine or in the shell. |
-| `PhotoEditor` | The macOS application. Opens a photograph, adds and reorders effects, grades through the pinned panels and anything added to the stack, zooms, undoes, autosaves and exports. Draws all eight parameter kinds, including curves and all three of the Colour Warper's views. The fallback for an unknown kind stays, and still says so rather than going quietly missing — a document written by a later version can carry a kind this build has never heard of, and refusing it would stop a photograph opening. |
+| `PhotoEditor` | The macOS application. Opens a photograph, adds and reorders effects, grades through the pinned panels and anything added to the stack, zooms, undoes, autosaves and exports. Reads the graded frame on waveform, parade, vectorscope and histogram. Draws all eight parameter kinds, including curves and all three of the Colour Warper's views. The fallback for an unknown kind stays, and still says so rather than going quietly missing — a document written by a later version can carry a kind this build has never heard of, and refusing it would stop a photograph opening. |
 | `KromaKitTests` | The Swift tests. Compiles `KromaKit/` in as well, under the module name `KromaKit`, so the tests are inside the module they exercise. |
 
 ## Why `KromaKit` is a directory and not a Swift package
@@ -87,6 +87,19 @@ is not a fixture that has gone stale — it is the drawn control and the rendere
 one having parted company, and one of them is wrong. Find out which before
 regenerating.
 
+## Measuring
+
+The scopes are counts, not pictures. `pe-scopes` bins a frame and the views
+read the numbers, which is what keeps the measuring testable without a display
+and what lets it cross a C ABI as plain buffers — a waveform is a `[u32]`.
+
+The session measures on demand, and **any edit throws the measurement away**.
+`pe_session_scope_generation` is zero both before the first measurement and
+after an edit drops one, so a single number answers both questions a shell has:
+is there anything to read, and is it the same as last time. That matters
+because a waveform is 2.6 MB and a shell that compared only "has it advanced"
+would go on drawing a scope of a photograph that is no longer on screen.
+
 Regenerate deliberately, having looked at the diff:
 
 ```bash
@@ -96,14 +109,19 @@ PE_UPDATE_FIXTURES=1 cargo test -p pe-session --test fixtures
 ## What is deliberately absent
 
 No histogram behind the curve editor, no colour distribution behind a warper
-lattice, and no spectral locus on the chromaticity plot — that last draws its
-frame, its gridlines and the white point, which is enough to place a pin
-against. Resolve draws both, and the Windows shell composites the second
+lattice or its chromaticity plot, and no spectral locus on that plot — it draws
+its frame, its gridlines and the white point, which is enough to place a pin
+against. Resolve draws all of them, and the Windows shell composites the cloud
 over the space itself as a haze showing where this photograph's colours
-actually fall. Both need scope data, which has no C ABI yet — so they ship
-without rather than with a decorative version that does not mean anything. The
-lattice does draw the space it sits over, because a grid on a black square says
-nothing at all about which colours it is moving.
+actually fall.
+
+Those were blocked on scope data having no C ABI. It has one now, and the
+counts each of them needs — `log_histogram` for the tone curves, `colour` for
+the secondaries, and the warper's three grids — already cross. What is left is
+the drawing, and that is the next plan rather than an absence in the engine.
+
+The lattice does draw the space it sits over, because a grid on a black square
+says nothing at all about which colours it is moving.
 
 No image processing, no colour maths, no shaders — and no workflow rules
 either. Where a file may be written, what an export is called and when work in
