@@ -545,6 +545,19 @@ It is deliberately **not** a visible-default effect even though it opens at 0.9
 
 ---
 
+**What goes behind a curve has to be counted in the units its axis reads.** A
+tone curve gets the three channel histograms, read through the window from
+diffuse black to diffuse white rather than laid out edge to edge — laid out
+flat, every tone sits about a seventh of the plot from where the curve acts on
+it. A hue curve gets hue counts and a saturation curve gets saturation counts.
+
+`lum_vs_sat` is the one that catches people, this project included: its name
+leads with luminance and it *outputs* a saturation, so it reads an **input
+luminance** and takes the luma histogram. It was given the saturation spread
+until `pe_scopes::backdrop` was written, which put every peak behind it on a
+quantity its axis was not measuring — the failure `ColourSpread`'s own doc warns
+about, in the one mode nobody checked.
+
 ## Colour Warper
 
 Three windows onto one object. Resolve draws hue against saturation as a

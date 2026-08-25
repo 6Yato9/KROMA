@@ -98,7 +98,7 @@ equivalent yet.
 - Modify: `crates/pe-scopes/src/lib.rs`, `apps/windows/src/curve.rs`
 - Modify: `crates/pe-session/tests/fixtures.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `crates/pe-core/src/parametric.rs`:
 
@@ -164,13 +164,13 @@ parameters of `curves` are `ParamKind::Curve`. If `pe-scopes` cannot depend on
 test suite reaches both) and say where you put it. A list that has to be edited
 by hand when a curve is added is a list that will not be.
 
-- [ ] **Step 2: Run and watch them fail**
+- [x] **Step 2: Run and watch them fail**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo test -p pe-core parametric 2>&1 | LC_ALL=C grep -aE "^error|^test result:"
 ```
 
-- [ ] **Step 3: Write the constants**
+- [x] **Step 3: Write the constants**
 
 In `crates/pe-core/src/parametric.rs`, replace the subtraction:
 
@@ -194,7 +194,7 @@ pub const LOG_WHITE: f32 = 0.554_794_5;
 pub const SDR_SPAN_IN_LOG: f32 = LOG_WHITE - LOG_BLACK;
 ```
 
-- [ ] **Step 4: Write the backdrop**
+- [x] **Step 4: Write the backdrop**
 
 Create `crates/pe-scopes/src/backdrop.rs`:
 
@@ -249,7 +249,7 @@ impl Backdrop {
 Add `pub mod backdrop;` to `crates/pe-scopes/src/lib.rs`, following how
 `waveform` and `warper` are exposed.
 
-- [ ] **Step 5: Fix the Windows shell**
+- [x] **Step 5: Fix the Windows shell**
 
 In `apps/windows/src/curve.rs`:
 
@@ -267,7 +267,7 @@ access to. Pass what it needs, or route `LumVsSat` through the same path
 `Custom` uses with only the luma channel drawn — **pick whichever leaves one
 function doing the drawing rather than two**, and say which you chose.
 
-- [ ] **Step 6: Write the fixture**
+- [x] **Step 6: Write the fixture**
 
 Swift needs the same mapping and the same window. Add to
 `crates/pe-session/tests/fixtures.rs`:
@@ -309,7 +309,7 @@ fn the_backdrop_fixture_is_current() {
 Build `curves` from the registry rather than the literal list if you moved the
 "every registered curve" test there — one source for both.
 
-- [ ] **Step 7: Generate, verify, commit**
+- [x] **Step 7: Generate, verify, commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && PE_UPDATE_FIXTURES=1 cargo test -p pe-session --test fixtures 2>&1 | LC_ALL=C grep -aE "^test result:" && cat apps/apple/Fixtures/backdrop_samples.json
@@ -347,7 +347,7 @@ to stop two copies drifting is to generate one from the other.
 - Create: `apps/apple/KromaKit/Controls/CurveBackdrop.swift`
 - Create: `apps/apple/KromaKitTests/CurveBackdropTests.swift`
 
-- [ ] **Step 1: Move `trace` into `pe-scopes`**
+- [x] **Step 1: Move `trace` into `pe-scopes`**
 
 Read `trace` and `SMOOTH` in `apps/windows/src/curve.rs` and move them
 verbatim into `crates/pe-scopes/src/backdrop.rs`, keeping the comment that
@@ -387,7 +387,7 @@ Add tests for the properties, not the numbers:
     }
 ```
 
-- [ ] **Step 2: Add the trace to the fixture**
+- [x] **Step 2: Add the trace to the fixture**
 
 Extend `the_backdrop_fixture_is_current` with a traced histogram Swift can
 check itself against. Use an input with the features that separate a correct
@@ -410,7 +410,7 @@ ends are the part worth including**: a smoothing that reads off the end of the
 array either clamps, wraps or shortens its window, and all three look right in
 the middle.
 
-- [ ] **Step 3: Write the failing Swift tests**
+- [x] **Step 3: Write the failing Swift tests**
 
 Create `apps/apple/KromaKitTests/CurveBackdropTests.swift`. Follow
 `CurveGeometryTests` / `WarpGeometryTests` for the fixture-loading idiom.
@@ -474,14 +474,14 @@ fixture writes Rust's `Debug` spelling (`Tones`, `Luma`, `Hue`, `Saturation`,
 `Nothing`), so map it to the Swift enum explicitly rather than by string
 munging.
 
-- [ ] **Step 4: Write `CurveBackdrop`**
+- [x] **Step 4: Write `CurveBackdrop`**
 
 Create `apps/apple/KromaKit/Controls/CurveBackdrop.swift`: the `Backdrop` enum
 mirrored, `behind(_:)`, `logBlack`/`logWhite`, `trace(_:peak:)`, and the two bin
 lookups. Doc comments carry the *why* — the window, the smoothing, and that
 `lum_vs_sat` is indexed by luminance despite its name leading with it.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Baselines: **655 Rust** (plus whatever Task 1 added) and **127 Swift**. Report
 the real numbers.
@@ -497,7 +497,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add crates apps && git co
 **Files:**
 - Modify: `apps/apple/KromaKit/Controls/CurveEditor.swift`
 
-- [ ] **Step 1: Draw it**
+- [x] **Step 1: Draw it**
 
 `CurveEditor` already draws a grid, an identity line, the curve and its
 handles, in that order. The backdrop goes **first**, under all of them.
@@ -527,7 +527,7 @@ do not ask for a measurement here**: the editor is not the thing that decides
 when to measure, and a view that triggered a full render plus readback from its
 own body would do it on every layout pass.
 
-- [ ] **Step 2: Test what can be tested**
+- [x] **Step 2: Test what can be tested**
 
 The drawing cannot be checked by eye on this machine. Assert what can be:
 
@@ -546,7 +546,7 @@ Use the `ImageRenderer` approach `ScopeViewsTests` established — render the vi
 to a bitmap and assert on bands of it. Write whatever assertions that supports;
 the two above are the shape, not the whole list.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 Build the app target too. `** BUILD SUCCEEDED **`, no new Swift warnings — two
 are pre-existing: cargo's `block v0.1.6` note and the AppIntents metadata note.
@@ -562,7 +562,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add apps/apple && git com
 **Files:**
 - Modify: `apps/apple/KromaKit/Controls/WarpEditor.swift`, `PinsEditor.swift`
 
-- [ ] **Step 1: Draw the haze**
+- [x] **Step 1: Draw the haze**
 
 `Scopes.WarperClouds` carries three 128 × 128 planes — `chromaticity`,
 `hueSat`, `chromaLuma` — one per view, because the three views are three
@@ -596,14 +596,14 @@ containing the unit disc, `−1…1` mapped to `0…1` on each axis, which is *n
 puts the cloud on the right plot in the wrong place, which is the failure this
 whole plan is about.
 
-- [ ] **Step 2: Test the mapping, not the look**
+- [x] **Step 2: Test the mapping, not the look**
 
 The square-to-disc conversion for the hue-sat cloud is the piece that will be
 wrong if anything is. Test it directly: a count at the square's centre must
 land at the disc's centre, and a count at the square's mid-right edge must land
 at full saturation on the red axis.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && git add apps/apple && git commit -m "Where this photograph's colours actually are, under the grid that moves them"
@@ -613,7 +613,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add apps/apple && git com
 
 ## Task 5: Say what is behind things now
 
-- [ ] **Step 1: Update the docs**
+- [x] **Step 1: Update the docs**
 
 `apps/apple/README.md`'s "What is deliberately absent" currently says the
 backdrops are "the next plan rather than an absence in the engine". They are
@@ -624,7 +624,7 @@ measurement and has no Mac equivalent of the Windows `locus` module.
 Add `backdrop_samples.json` to the Fixtures list with the same warning as the
 others.
 
-- [ ] **Step 2: Record the `LumVsSat` fix**
+- [x] **Step 2: Record the `LumVsSat` fix**
 
 In `docs/resolve-parameters.md`'s Custom Curves section, say what goes behind
 each curve and why it must match the axis: `lum_vs_sat` reads an input
@@ -632,7 +632,7 @@ each curve and why it must match the axis: `lum_vs_sat` reads an input
 until this plan — a background whose every peak counted a quantity the x-axis
 was not measuring.
 
-- [ ] **Step 3: Verify the whole tree and commit**
+- [x] **Step 3: Verify the whole tree and commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings 2>&1 | LC_ALL=C grep -aE "^error|^warning"; cargo test --workspace --no-fail-fast 2>&1 | LC_ALL=C grep -aE "^test result: FAILED|^error"; echo "rust done"

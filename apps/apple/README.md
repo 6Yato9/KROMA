@@ -48,7 +48,8 @@ A `project.pbxproj` is unmergeable — every branch that adds a file conflicts.
 ## Fixtures
 
 `Fixtures/` holds `registry.json`, `snapshot.json`, `curve_samples.json`,
-`warp_samples.json`, `pin_samples.json` and `scope_graticule.json`, written by `cargo test -p pe-session --test fixtures` and decoded by
+`warp_samples.json`, `pin_samples.json`, `scope_graticule.json` and
+`backdrop_samples.json`, written by `cargo test -p pe-session --test fixtures` and decoded by
 `KromaKitTests`. They are how the two halves of one application are stopped
 from drifting apart: add a field in Rust without adding it in Swift, and one of
 the two suites fails.
@@ -75,6 +76,14 @@ conversion. `pins.rs` documented them as "0..1" until this was written, and
 chromaticity: plausible, and completely wrong.
 
 `scope_graticule.json` does it for the vectorscope's boxes.
+
+`backdrop_samples.json` carries two things at once: which measurement belongs
+behind which curve, and the smoothing that turns spiky counts into the curve
+they were measured from. The mapping is there because getting it wrong is not
+cosmetic — a background counted in the wrong units aims the user at colours the
+photograph does not have. `lum_vs_sat` reads an *input luminance* despite its
+name leading with saturation, and drew a saturation spread until this was
+written down.
 `pe_scopes::waveform::position`, `TARGETS` and `SKIN` are `pub` Rust with no C
 ABI, so the Swift panel projects the six colour bar targets itself. The fixture
 carries each target's position *and* the bin one pixel of that colour actually
@@ -108,20 +117,15 @@ PE_UPDATE_FIXTURES=1 cargo test -p pe-session --test fixtures
 
 ## What is deliberately absent
 
-No histogram behind the curve editor, no colour distribution behind a warper
-lattice or its chromaticity plot, and no spectral locus on that plot — it draws
-its frame, its gridlines and the white point, which is enough to place a pin
-against. Resolve draws all of them, and the Windows shell composites the cloud
-over the space itself as a haze showing where this photograph's colours
-actually fall.
+No spectral locus on the chromaticity plot. That is a drawing of the visible
+gamut rather than a measurement of the photograph — the Windows shell has a
+`locus` module for it and there is no Mac equivalent yet. The plot draws its
+frame, its gridlines and the white point, which is enough to place a pin
+against.
 
-Those were blocked on scope data having no C ABI. It has one now, and the
-counts each of them needs — `log_histogram` for the tone curves, `colour` for
-the secondaries, and the warper's three grids — already cross. What is left is
-the drawing, and that is the next plan rather than an absence in the engine.
-
-The lattice does draw the space it sits over, because a grid on a black square
-says nothing at all about which colours it is moving.
+Everything else that used to be listed here is now drawn: the tone histogram
+behind the curve editor, the hue and saturation spreads behind the secondaries,
+and the colour cloud on all three of the warper's plots.
 
 No image processing, no colour maths, no shaders — and no workflow rules
 either. Where a file may be written, what an export is called and when work in
