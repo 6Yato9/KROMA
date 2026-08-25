@@ -329,6 +329,163 @@ public final class Session {
         return moved == 1
     }
 
+    // ---- scopes -------------------------------------------------------------
+
+    /// Render the current grade at this size and bin it.
+    ///
+    /// The size is the scope's, not the photograph's: a waveform has one column
+    /// per pixel of width, so this is how wide the panel that will draw it is.
+    public func measureScopes(width: UInt32, height: UInt32) throws {
+        try check(pe_session_measure(handle, width, height))
+    }
+
+    /// Which measurement the engine is holding: 0 before the first, and
+    /// strictly increasing after. Comparing this before copying is what makes
+    /// a 2.6 MB waveform affordable.
+    public func scopeGeneration() -> UInt64 {
+        pe_session_scope_generation(handle)
+    }
+
+    /// Whether the engine is holding a measurement at all.
+    ///
+    /// The generation does not answer this. An edit throws the measurement
+    /// away *without* advancing the number — it stops advancing until the next
+    /// `measureScopes` — so a holder that watched only the generation would go
+    /// on drawing a scope of a photograph that is no longer on screen.
+    ///
+    /// Asking for a shape with every out-pointer null is the cheapest question
+    /// the ABI has: nothing is written, and a null `peak` is the one field that
+    /// would otherwise cost a walk over the counts.
+    public var hasScopes: Bool {
+        pe_session_scope_shape(handle, Histogram, nil, nil, nil, nil, nil) == 0
+    }
+
+    /// The fraction of pixels above diffuse white, which is what a clipping
+    /// warning is actually about. Nil with nothing measured.
+    public func overWhiteFraction() -> Double? {
+        let f = pe_session_over_white_fraction(handle)
+        return f < 0 ? nil : Double(f)
+    }
+
+    /// Everything measured from the last frame, or nil when there is nothing
+    /// to draw.
+    ///
+    /// Nil is the engine saying "measure before you draw", not "this frame has
+    /// no scopes": it is the answer both before the first measurement and after
+    /// an edit has thrown one away.
+    public func scopes() throws -> Scopes? {
+        let generation = scopeGeneration()
+        guard generation != 0 else { return nil }
+
+        // The waveform asks for no peak: it is drawn against its row count, and
+        // the peak is the only field the engine has to walk 655,360 counts for.
+        guard let histogram = try scopeBuffer(Histogram, planes: 4),
+            let logHistogram = try scopeBuffer(LogHistogram, planes: 4),
+            let colour = try scopeBuffer(ColourSpread, planes: 2),
+            let waveform = try scopeBuffer(Waveform, planes: 4, wantsPeak: false),
+            let vectorscope = try scopeBuffer(Vectorscope, planes: 1),
+            let chromaticity = try scopeBuffer(WarperChromaticity, planes: 1),
+            let hueSat = try scopeBuffer(WarperHueSat, planes: 1),
+            let chromaLuma = try scopeBuffer(WarperChromaLuma, planes: 1)
+        else { return nil }
+
+        return Scopes(
+            histogram: histogram.levels,
+            logHistogram: logHistogram.levels,
+            colour: Scopes.Spread(
+                hue: colour.planes[0], saturation: colour.planes[1],
+                total: colour.total, peak: colour.peak),
+            waveform: Scopes.WaveformCounts(
+                // A waveform crosses as one row per column, each row 256 levels
+                // wide, so the ABI's height is the column count.
+                columns: waveform.height, levels: waveform.width, total: waveform.total,
+                red: waveform.planes[0], green: waveform.planes[1],
+                blue: waveform.planes[2], luma: waveform.planes[3]),
+            vectorscope: vectorscope.plane,
+            warper: Scopes.WarperClouds(
+                chromaticity: chromaticity.plane, hueSat: hueSat.plane,
+                chromaLuma: chromaLuma.plane),
+            generation: generation
+        )
+    }
+
+    /// One scope as the ABI hands it over: `planes` buffers of `height * width`
+    /// counts, in the plane order `PeScope` documents.
+    private struct ScopeBuffer {
+        let width: Int
+        let height: Int
+        let total: UInt32
+        let peak: UInt32
+        let planes: [[UInt32]]
+
+        var levels: Scopes.Levels {
+            Scopes.Levels(
+                red: planes[0], green: planes[1], blue: planes[2], luma: planes[3],
+                total: total, peak: peak)
+        }
+
+        var plane: Scopes.Plane {
+            Scopes.Plane(
+                counts: planes[0], width: width, height: height, total: total, peak: peak)
+        }
+    }
+
+    /// Copy one scope out of the engine.
+    ///
+    /// Two calls: ask the shape, then fill a buffer of exactly that size. The
+    /// engine refuses a short buffer rather than truncating, so a mismatch is
+    /// an error here rather than a plausible picture of a frame that does not
+    /// exist. The plane count is checked against what the caller expects for
+    /// the same reason — a scope with the wrong number of planes would be read
+    /// as a scope of something else.
+    ///
+    /// Nil means nothing is measured, which is not a failure; that is the
+    /// distinction `scopes()` turns into its own nil.
+    private func scopeBuffer(
+        _ kind: PeScope, planes expected: Int, wantsPeak: Bool = true
+    ) throws -> ScopeBuffer? {
+        var planes: UInt32 = 0
+        var width: UInt32 = 0
+        var height: UInt32 = 0
+        var total: UInt32 = 0
+        var peak: UInt32 = 0
+        let shaped: Int32
+        if wantsPeak {
+            shaped = pe_session_scope_shape(
+                handle, kind, &planes, &width, &height, &total, &peak)
+        } else {
+            shaped = pe_session_scope_shape(
+                handle, kind, &planes, &width, &height, &total, nil)
+        }
+        guard shaped == 0 else { return nil }
+        guard Int(planes) == expected else {
+            throw EngineError(
+                code: -1,
+                message: "the engine gave \(planes) planes for a scope that has \(expected)")
+        }
+
+        let stride = Int(width) * Int(height)
+        let count = expected * stride
+        // A raw buffer rather than an `[UInt32]`, so the counts are copied once
+        // — out of the engine and straight into the per-plane arrays — instead
+        // of twice through a flat Swift array nobody keeps.
+        let raw = UnsafeMutablePointer<UInt32>.allocate(capacity: max(count, 1))
+        defer { raw.deallocate() }
+        let written = pe_session_scope_data(handle, kind, raw, UInt32(count))
+        guard written == Int32(count) else {
+            throw EngineError(
+                code: written,
+                message: "the engine gave \(written) counts for a scope shaped "
+                    + "\(planes)x\(height)x\(width)")
+        }
+
+        return ScopeBuffer(
+            width: Int(width), height: Int(height), total: total, peak: peak,
+            planes: (0..<expected).map {
+                Array(UnsafeBufferPointer(start: raw + $0 * stride, count: stride))
+            })
+    }
+
     // ---- persistence and export ---------------------------------------------
 
     @discardableResult

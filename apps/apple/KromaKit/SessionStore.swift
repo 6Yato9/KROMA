@@ -258,6 +258,52 @@ public final class SessionStore {
         refresh()
     }
 
+    // ---- the scopes ------------------------------------------------------
+
+    /// The last measurement, or nil when there is nothing to draw.
+    ///
+    /// A stored property, not a call. A waveform at 640 columns is 2.6 MB and a
+    /// scope panel's body runs whenever anything it observes moves, so a
+    /// `scopes()` that copied on every read would stutter the window exactly
+    /// while a slider is being dragged — which is when a colourist is watching
+    /// the scopes. The copy happens once per measurement, in `syncScopes`, and
+    /// every body after that reads the same arrays.
+    public private(set) var scopes: Scopes?
+
+    /// Which measurement `scopes` holds. Compared before copying; that
+    /// comparison is the whole mechanism.
+    @ObservationIgnored private var scopeGeneration: UInt64 = 0
+
+    /// Measure the graded frame at this size.
+    ///
+    /// The size is the scope's, not the photograph's: a waveform has one column
+    /// per pixel of width, so this is how wide the panel that will draw it is.
+    public func measureScopes(width: UInt32, height: UInt32) {
+        run { try session.measureScopes(width: width, height: height) }
+        syncScopes()
+    }
+
+    /// Bring the copy into step with the engine, doing nothing when it already
+    /// is.
+    ///
+    /// Two cheap questions before any copy. `hasScopes` first, because an edit
+    /// throws the measurement away without advancing the generation — counts
+    /// kept across an edit would draw a scope of a picture that is not on
+    /// screen. Then the generation, which is one integer against 2.6 MB.
+    private func syncScopes() {
+        guard session.hasScopes else {
+            scopeGeneration = 0
+            // Only written when it is actually changing: assigning nil over nil
+            // would tell every observing view to run its body again for nothing.
+            if scopes != nil { scopes = nil }
+            return
+        }
+        let generation = session.scopeGeneration()
+        guard generation != scopeGeneration else { return }
+        scopeGeneration = generation
+        run { scopes = try session.scopes() }
+    }
+
     // ---- history ---------------------------------------------------------
 
     public var canUndo: Bool { snapshot.canUndo }
@@ -307,6 +353,9 @@ public final class SessionStore {
     /// former before decoding the latter is what makes mirroring cheap enough
     /// to do after every structural edit.
     private func refresh() {
+        // Any edit throws the measurement away, and this is where the store
+        // hears about an edit. Two integers and a pointer test, not a copy.
+        syncScopes()
         guard session.snapshotVersion != snapshot.version else { return }
         do {
             snapshot = try session.snapshot()
