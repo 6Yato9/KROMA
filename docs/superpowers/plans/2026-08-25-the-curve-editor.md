@@ -1024,7 +1024,40 @@ buttons, and this follows it.
 - Modify: `apps/apple/KromaKit/InspectorPanel.swift`
 - Modify: `apps/apple/KromaKitTests/CurveGeometryTests.swift`
 
-- [ ] **Step 1: Write the failing tests for the coordinate mapping**
+- [ ] **Step 1: Hoist the tangent solve out of `sample`**
+
+`CurveGeometry.tangents` is a computed property, so every `sample(at:)` re-solves
+the secants and allocates three arrays. That cost nothing while there was no draw
+loop; this task adds one that samples 128 times per frame, during a drag — 128
+tangent solves and several hundred allocations per frame. It is the same waste
+the engine removed on its own side in `a225242`, "Baking a curve stops solving
+the same curve two hundred and fifty-six times".
+
+Solve once, in `init`:
+
+```swift
+    public let points: [CGPoint]
+    /// Solved once. A curve is immutable, so its tangents are too — and
+    /// `sample` is called 128 times per frame by the editor's draw loop.
+    private let tangents: [Double]
+
+    public init(points: [CGPoint]) {
+        let sorted = points.sorted { $0.x < $1.x }
+        self.points = sorted
+        self.tangents = Self.monotoneTangents(sorted)
+    }
+```
+
+Change the computed `private var tangents: [Double]` into
+`private static func monotoneTangents(_ points: [CGPoint]) -> [Double]` with the
+body unchanged but reading its `points` argument, and drop the `let m = tangents`
+line in `sample(at:)` so it uses the stored property directly.
+
+The nine tests from the previous task must still pass unchanged — this is a
+performance change with identical semantics, and the fixture check is what
+proves that.
+
+- [ ] **Step 2: Write the failing tests for the coordinate mapping**
 
 The y-flip is the part worth testing rather than eyeballing: a curve's y grows
 upward and a view's grows downward, and a sign error there draws every curve
@@ -1072,7 +1105,7 @@ Add to `CurveGeometryTests`:
     }
 ```
 
-- [ ] **Step 2: Run and watch them fail**
+- [ ] **Step 3: Run and watch them fail**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && xcodegen generate && xcodebuild test -project PhotoEditor.xcodeproj -scheme KromaKitTests -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO 2>&1 | tail -12
@@ -1080,7 +1113,7 @@ cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.car
 
 Expected: `cannot find 'CurveCanvas' in scope`.
 
-- [ ] **Step 3: Write the editor**
+- [ ] **Step 4: Write the editor**
 
 Create `apps/apple/KromaKit/Controls/CurveEditor.swift`:
 
@@ -1370,7 +1403,7 @@ public struct CurvePanel: View {
 }
 ```
 
-- [ ] **Step 4: Wire it into the panel**
+- [ ] **Step 5: Wire it into the panel**
 
 In `apps/apple/KromaKit/InspectorPanel.swift`, add the predicate and the group
 beside the existing wheel handling:
@@ -1405,7 +1438,7 @@ and change the `ForEach` filter so curves are not also drawn as rows:
 The `default` arm of `control(for:)` stays — `warp` and `pins` still land
 there, and still say so rather than silently going missing.
 
-- [ ] **Step 5: Run the tests**
+- [ ] **Step 6: Run the tests**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && xcodegen generate && xcodebuild test -project PhotoEditor.xcodeproj -scheme KromaKitTests -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO 2>&1 | LC_ALL=C grep -aE "error:|warning: |\*\* TEST|Executed [0-9]+ test"
@@ -1413,7 +1446,7 @@ cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.car
 
 Expected: `** TEST SUCCEEDED **`, 63 tests.
 
-- [ ] **Step 6: Build the app itself**
+- [ ] **Step 7: Build the app itself**
 
 The tests exercise `KromaKit`; this is what proves the app target still links
 and that the new view compiles into it.
@@ -1424,7 +1457,7 @@ cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.car
 
 Expected: `** BUILD SUCCEEDED **` with no warnings.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && git add apps/apple && git commit -m "Ten curves, one at a time, drawn the way they will render"
