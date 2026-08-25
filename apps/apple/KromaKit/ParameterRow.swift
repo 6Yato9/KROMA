@@ -13,6 +13,30 @@ enum RowMetrics {
     static let reset: CGFloat = 18
     static let gap: CGFloat = 6
     static let height: CGFloat = 22
+
+    /// The narrowest a track may be drawn.
+    ///
+    /// Not a look but a floor on usefulness: a slider this short gives a
+    /// hundredth of its range to about half a point of travel, which is not a
+    /// control anybody can aim. Below this the panel should get wider, not the
+    /// track shorter.
+    static let track: CGFloat = 72
+
+    /// What one row costs, side to side.
+    ///
+    /// Spelled out because the label, the readout and the reset arrow are all
+    /// fixed widths, and a panel narrower than their sum plus a usable track
+    /// cannot draw a row — the fixed parts overflow and clip at *both* ends,
+    /// which reads as "Temperature" losing its first six letters rather than
+    /// as a layout that did not fit.
+    static let minimumRow: CGFloat = label + gap + track + gap + value + gap + reset
+
+    /// The inspector's own inset, either side.
+    static let inset: CGFloat = 8
+
+    /// The narrowest the inspector may be. `ContentView` reads this rather
+    /// than carrying its own number, so the two cannot disagree.
+    static let minimumPanel: CGFloat = minimumRow + inset * 2
 }
 
 /// The look of an inspector row — label, track, readout, reset arrow — without
@@ -136,6 +160,13 @@ public struct ScalarRow: View {
                     }
             )
         }
+        // A `GeometryReader` takes the width it is offered rather than
+        // negotiating down, so without a floor here it keeps its share and the
+        // fixed label and readout are pushed outside the panel and clipped at
+        // both ends. Saying the minimum out loud makes the row overflow
+        // visibly — which is a layout that needs a wider panel, not a label
+        // that has quietly lost its first six letters.
+        .frame(minWidth: RowMetrics.track)
     }
 }
 

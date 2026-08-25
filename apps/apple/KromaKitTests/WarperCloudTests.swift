@@ -414,7 +414,11 @@ final class WarperCloudTests: XCTestCase {
     func testThePinsPlotDrawsTheGridMeasuredForIt() throws {
         let store = try XCTUnwrap(SessionStore())
         store.openTestChart(width: 64, height: 64)
-        let side = 200
+        // The width the inspector actually gives it. Rendered narrower, the
+        // five `ScalarRow`s below the plot cannot fit their own label, readout
+        // and reset arrow, and the plot is squeezed to nothing — which is a
+        // fact about the test's chosen width rather than about the cloud.
+        let side = Int(RowMetrics.minimumPanel - RowMetrics.inset * 2)
         let view = PinsEditor(
             param: try Self.pinsParam(), row: 0, value: [], isActive: true, store: store)
 

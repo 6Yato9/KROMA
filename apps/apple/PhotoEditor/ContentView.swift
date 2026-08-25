@@ -15,7 +15,15 @@ struct ContentView: View {
                 statusBar
             }
             inspector
-                .frame(width: 260)
+                // Wide enough for a row, and resizable. It was pinned at 260,
+                // which is less than the label, readout and reset arrow cost
+                // between them — every control in the application was drawing
+                // its label with the front clipped off.
+                .frame(
+                    minWidth: RowMetrics.minimumPanel,
+                    idealWidth: 330,
+                    maxWidth: 520
+                )
         }
         .frame(minWidth: 900, minHeight: 560)
         .onAppear {
@@ -70,7 +78,7 @@ struct ContentView: View {
                 EffectBrowser(registry: store.registry, store: store)
                     .padding(.vertical, 8)
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, RowMetrics.inset)
         }
     }
 
