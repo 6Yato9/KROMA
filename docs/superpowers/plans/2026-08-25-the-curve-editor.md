@@ -87,7 +87,7 @@ one back, which is the same gap `set_wheel` had.
 - Modify: `crates/pe-session/src/session.rs`
 - Modify: `crates/pe-ffi/src/lib.rs`
 
-- [ ] **Step 1: Write the failing Rust tests**
+- [x] **Step 1: Write the failing Rust tests**
 
 Add to the test module in `crates/pe-session/src/session.rs`:
 
@@ -147,7 +147,7 @@ Add to the test module in `crates/pe-session/src/session.rs`:
     }
 ```
 
-- [ ] **Step 2: Run and watch them fail**
+- [x] **Step 2: Run and watch them fail**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo test -p pe-session 2>&1 | LC_ALL=C grep -aE "^error|^test result:"
@@ -155,7 +155,7 @@ cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && 
 
 Expected: `no method named 'set_curve'`.
 
-- [ ] **Step 3: Write the session method**
+- [x] **Step 3: Write the session method**
 
 First the error. `SessionError::Write` exists but renders as `write failed: …`,
 which is about files — reusing it here would report a malformed curve as a disc
@@ -193,7 +193,7 @@ Then, beside `set_wheel`:
     }
 ```
 
-- [ ] **Step 4: Write the C entry point**
+- [x] **Step 4: Write the C entry point**
 
 In `crates/pe-ffi/src/lib.rs`, after `pe_session_set_wheel`:
 
@@ -229,7 +229,7 @@ pub unsafe extern "C" fn pe_session_set_curve(
 }
 ```
 
-- [ ] **Step 5: Write the failing FFI test**
+- [x] **Step 5: Write the failing FFI test**
 
 Add to `mod tests` in `crates/pe-ffi/src/lib.rs`:
 
@@ -286,7 +286,7 @@ Add to `mod tests` in `crates/pe-ffi/src/lib.rs`:
     }
 ```
 
-- [ ] **Step 6: Run everything**
+- [x] **Step 6: Run everything**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo fmt --all && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings 2>&1 | LC_ALL=C grep -aE "^error|^warning: unused"; cargo test --workspace --no-fail-fast 2>&1 | LC_ALL=C grep -aE "^test result:"
@@ -294,7 +294,7 @@ cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && 
 
 Expected: fmt and clippy silent, **619 passed / 0 failed** (614 plus five new).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && git add crates && git commit -m "A curve can be sent back, as the flat array a drag wants"
@@ -308,7 +308,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add crates && git commit 
 - Modify: `apps/apple/KromaKit/Snapshot.swift`
 - Modify: `apps/apple/KromaKitTests/SnapshotTests.swift`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `SnapshotTests`:
 
@@ -346,7 +346,7 @@ Add to `SnapshotTests`:
     }
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && xcodegen generate && xcodebuild test -project PhotoEditor.xcodeproj -scheme KromaKitTests -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO 2>&1 | tail -15
@@ -354,7 +354,7 @@ cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.car
 
 Expected: `type 'ParamValue' has no member 'curve'`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `apps/apple/KromaKit/Snapshot.swift`, add the payload type.
 
@@ -404,7 +404,7 @@ before the `default`, and an accessor:
 
 Add `import CoreGraphics` if it is not already imported.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && xcodegen generate && xcodebuild test -project PhotoEditor.xcodeproj -scheme KromaKitTests -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO 2>&1 | LC_ALL=C grep -aE "error:|\*\* TEST|Executed [0-9]+ test"
@@ -417,7 +417,7 @@ pinned too, and a decoder that refuses them would stop any photograph opening.
 The existing `testEveryParameterValueKindDecodes` covers it; check it still
 passes rather than assuming.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && git add apps/apple && git commit -m "A curve arrives as points rather than as something unreadable"
@@ -439,7 +439,7 @@ regenerate deliberately, having looked at the diff.
 - Modify: `crates/pe-session/tests/fixtures.rs`
 - Create: `apps/apple/Fixtures/curve_samples.json`
 
-- [ ] **Step 1: Write the generator**
+- [x] **Step 1: Write the generator**
 
 Add to `crates/pe-session/tests/fixtures.rs`:
 
@@ -503,7 +503,7 @@ fn the_curve_sample_fixture_is_current() {
 }
 ```
 
-- [ ] **Step 2: Generate it and read it**
+- [x] **Step 2: Generate it and read it**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && PE_UPDATE_FIXTURES=1 cargo test -p pe-session --test fixtures 2>&1 | LC_ALL=C grep -aE "^test result:"
@@ -528,7 +528,7 @@ and **`pulled_highlight` has a maximum no greater than its highest control point
 would exceed it. If the maximum is above 0.97, the evaluator is not doing what
 its own module comment claims and that is a finding worth more than this plan.
 
-- [ ] **Step 3: Verify the check works**
+- [x] **Step 3: Verify the check works**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo test -p pe-session --test fixtures 2>&1 | LC_ALL=C grep -aE "^test result:"
@@ -536,13 +536,13 @@ cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && 
 
 Expected: PASS without `PE_UPDATE_FIXTURES`.
 
-- [ ] **Step 4: Make the fixture reachable from the Swift tests**
+- [x] **Step 4: Make the fixture reachable from the Swift tests**
 
 `apps/apple/Fixtures` is already a resource of the `KromaKitTests` target, so a
 new file in it is picked up with no `project.yml` change. Confirm rather than
 assume, after Task 4 adds a test that reads it.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && git add crates apps/apple/Fixtures && git commit -m "Eight curves and what the engine makes of them, written down"
@@ -556,7 +556,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add crates apps/apple/Fix
 - Create: `apps/apple/KromaKit/Controls/CurveGeometry.swift`
 - Create: `apps/apple/KromaKitTests/CurveGeometryTests.swift`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `apps/apple/KromaKitTests/CurveGeometryTests.swift`:
 
@@ -691,7 +691,7 @@ final class CurveGeometryTests: XCTestCase {
 }
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && xcodegen generate && xcodebuild test -project PhotoEditor.xcodeproj -scheme KromaKitTests -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO 2>&1 | tail -15
@@ -699,7 +699,7 @@ cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.car
 
 Expected: `cannot find 'CurveGeometry' in scope`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `apps/apple/KromaKit/Controls/CurveGeometry.swift`:
 
@@ -881,7 +881,7 @@ public struct CurveGeometry: Equatable {
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && xcodegen generate && xcodebuild test -project PhotoEditor.xcodeproj -scheme KromaKitTests -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO 2>&1 | LC_ALL=C grep -aE "error:|diverged|\*\* TEST|Executed [0-9]+ test"
@@ -895,7 +895,7 @@ the x where the two parted company, which is enough to tell a tangent-limiter
 bug from an endpoint-handling one. A curve editor that draws a different line
 from the one being rendered is worse than no curve editor.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && git add apps/apple && git commit -m "Swift evaluates a curve the way the engine does, and is checked against it"
@@ -913,7 +913,7 @@ it and owns the refresh. Both need one method, following `setWheel` exactly.
 - Modify: `apps/apple/KromaKit/SessionStore.swift`
 - Modify: `apps/apple/KromaKitTests/EngineTests.swift`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `EngineTests`:
 
@@ -952,7 +952,7 @@ Add to `EngineTests`:
     }
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && xcodegen generate && xcodebuild test -project PhotoEditor.xcodeproj -scheme KromaKitTests -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO 2>&1 | tail -12
@@ -960,7 +960,7 @@ cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.car
 
 Expected: `value of type 'Engine' has no member 'setCurve'`.
 
-- [ ] **Step 3: Write the engine method**
+- [x] **Step 3: Write the engine method**
 
 In `apps/apple/KromaKit/Engine.swift`, after `setWheel`:
 
@@ -984,7 +984,7 @@ In `apps/apple/KromaKit/Engine.swift`, after `setWheel`:
 
 Add `import CoreGraphics` to `Engine.swift` if it is not already there.
 
-- [ ] **Step 4: Write the store method**
+- [x] **Step 4: Write the store method**
 
 In `apps/apple/KromaKit/SessionStore.swift`, after `setWheel`:
 
@@ -997,7 +997,7 @@ In `apps/apple/KromaKit/SessionStore.swift`, after `setWheel`:
     }
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && xcodegen generate && xcodebuild test -project PhotoEditor.xcodeproj -scheme KromaKitTests -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO 2>&1 | LC_ALL=C grep -aE "error:|\*\* TEST|Executed [0-9]+ test"
@@ -1005,7 +1005,7 @@ cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.car
 
 Expected: `** TEST SUCCEEDED **`, 59 tests.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && git add apps/apple && git commit -m "The curve a gesture is drawing reaches the engine"
@@ -1024,7 +1024,7 @@ buttons, and this follows it.
 - Modify: `apps/apple/KromaKit/InspectorPanel.swift`
 - Modify: `apps/apple/KromaKitTests/CurveGeometryTests.swift`
 
-- [ ] **Step 1: Hoist the tangent solve out of `sample`**
+- [x] **Step 1: Hoist the tangent solve out of `sample`**
 
 `CurveGeometry.tangents` is a computed property, so every `sample(at:)` re-solves
 the secants and allocates three arrays. That cost nothing while there was no draw
@@ -1057,7 +1057,7 @@ The nine tests from the previous task must still pass unchanged — this is a
 performance change with identical semantics, and the fixture check is what
 proves that.
 
-- [ ] **Step 2: Write the failing tests for the coordinate mapping**
+- [x] **Step 2: Write the failing tests for the coordinate mapping**
 
 The y-flip is the part worth testing rather than eyeballing: a curve's y grows
 upward and a view's grows downward, and a sign error there draws every curve
@@ -1105,7 +1105,7 @@ Add to `CurveGeometryTests`:
     }
 ```
 
-- [ ] **Step 3: Run and watch them fail**
+- [x] **Step 3: Run and watch them fail**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && xcodegen generate && xcodebuild test -project PhotoEditor.xcodeproj -scheme KromaKitTests -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO 2>&1 | tail -12
@@ -1113,7 +1113,7 @@ cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.car
 
 Expected: `cannot find 'CurveCanvas' in scope`.
 
-- [ ] **Step 4: Write the editor**
+- [x] **Step 4: Write the editor**
 
 Create `apps/apple/KromaKit/Controls/CurveEditor.swift`:
 
@@ -1403,7 +1403,7 @@ public struct CurvePanel: View {
 }
 ```
 
-- [ ] **Step 5: Wire it into the panel**
+- [x] **Step 5: Wire it into the panel**
 
 In `apps/apple/KromaKit/InspectorPanel.swift`, add the predicate and the group
 beside the existing wheel handling:
@@ -1438,7 +1438,7 @@ and change the `ForEach` filter so curves are not also drawn as rows:
 The `default` arm of `control(for:)` stays — `warp` and `pins` still land
 there, and still say so rather than silently going missing.
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && xcodegen generate && xcodebuild test -project PhotoEditor.xcodeproj -scheme KromaKitTests -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO 2>&1 | LC_ALL=C grep -aE "error:|warning: |\*\* TEST|Executed [0-9]+ test"
@@ -1446,7 +1446,7 @@ cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.car
 
 Expected: `** TEST SUCCEEDED **`, 63 tests.
 
-- [ ] **Step 7: Build the app itself**
+- [x] **Step 7: Build the app itself**
 
 The tests exercise `KromaKit`; this is what proves the app target still links
 and that the new view compiles into it.
@@ -1457,7 +1457,7 @@ cd "/Volumes/Projects/Programming/photo editor/apps/apple" && source "$HOME/.car
 
 Expected: `** BUILD SUCCEEDED **` with no warnings.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && git add apps/apple && git commit -m "Ten curves, one at a time, drawn the way they will render"
@@ -1470,13 +1470,13 @@ cd "/Volumes/Projects/Programming/photo editor" && git add apps/apple && git com
 **Files:**
 - Modify: `docs/apple-shells.md`
 
-- [ ] **Step 1: Find the claim that is now stale**
+- [x] **Step 1: Find the claim that is now stale**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && LC_ALL=C grep -an "curve\|five of\|three.*undrawn\|not yet" docs/apple-shells.md
 ```
 
-- [ ] **Step 2: Update it**
+- [x] **Step 2: Update it**
 
 The counts change from five of eight control kinds to six, and from three
 undrawn kinds to two — `warp` and `pins`, both on the Colour Warper. Say plainly
@@ -1488,7 +1488,7 @@ one of them is wrong.
 Also record what is deliberately absent: the histogram behind the curve, which
 needs scope data that has no C ABI yet.
 
-- [ ] **Step 3: Verify the whole tree**
+- [x] **Step 3: Verify the whole tree**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && source "$HOME/.cargo/env" && export CARGO_TARGET_DIR="/Users/abdellah/Desktop/Programming/Kroma build" && export CARGO_INCREMENTAL=0 && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings 2>&1 | LC_ALL=C grep -aE "^error|^warning"; cargo test --workspace --no-fail-fast 2>&1 | LC_ALL=C grep -aE "^test result: FAILED|^error"; echo "rust done"
@@ -1498,7 +1498,7 @@ Expected: silent but for `rust done`. **`--no-fail-fast` is not optional** —
 without it cargo stops at the first failing test binary and reports a fraction
 of the failures as though it were all of them.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && git add docs && git commit -m "The curve editor, written down"
