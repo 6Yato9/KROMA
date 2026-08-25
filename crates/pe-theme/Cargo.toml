@@ -1,0 +1,11 @@
+[package]
+name = "pe-theme"
+description = "The palette and the track ramps, in a crate both shells can read"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Deliberately none. A palette that pulled in a toolkit could only be read by
+# that toolkit's shell, which is the whole problem this crate exists to undo.
+[dependencies]

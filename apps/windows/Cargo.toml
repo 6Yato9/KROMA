@@ -19,5 +19,6 @@ pe-effects = { version = "0.0.1", path = "../../crates/pe-effects" }
 rfd = "0.17.2"
 pe-scopes = { version = "0.0.1", path = "../../crates/pe-scopes" }
 pe-session = { version = "0.0.1", path = "../../crates/pe-session" }
+pe-theme = { version = "0.0.1", path = "../../crates/pe-theme" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

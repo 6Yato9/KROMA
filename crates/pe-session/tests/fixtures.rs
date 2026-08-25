@@ -382,3 +382,60 @@ fn the_backdrop_fixture_is_current() {
     .unwrap();
     check("backdrop_samples.json", json);
 }
+
+/// The palette and the track ramps.
+///
+/// Both shells draw from one set of numbers. Before this crate existed the
+/// Windows greys were written at each call site and had already drifted — the
+/// viewer surround, the filmstrip and the status bar were three shades of what
+/// was meant to be one colour. A second copy in Swift is that mistake again,
+/// so the numbers cross here and the Swift side asserts against them.
+#[test]
+fn the_theme_fixture_is_current() {
+    use pe_theme::{Ramp, Rgb8, colour, ramp_for};
+
+    let hex = |c: Rgb8| format!("{:02X}{:02X}{:02X}", c.r, c.g, c.b);
+
+    let mut palette = serde_json::Map::new();
+    for &(name, c) in colour::ALL {
+        palette.insert(name.to_string(), serde_json::json!(hex(*c)));
+    }
+
+    // Which ramp each parameter of each registered effect gets, so a key
+    // renamed on one side and not the other is caught.
+    let mut ramps = serde_json::Map::new();
+    for effect in pe_effects::all() {
+        for p in effect.params {
+            let r = ramp_for(effect.key, p.key);
+            if !r.is_plain() {
+                ramps.insert(
+                    format!("{}.{}", effect.key, p.key),
+                    serde_json::json!(format!("{r:?}")),
+                );
+            }
+        }
+    }
+
+    // And what each ramp actually paints, sampled — a table that agrees on
+    // *which* ramp and disagrees on its colours is no use.
+    let mut sampled = serde_json::Map::new();
+    for (name, ramp) in [
+        ("Temp", Ramp::Temp),
+        ("Tint", Ramp::Tint),
+        ("Hue", Ramp::Hue),
+        ("Chroma", Ramp::Chroma),
+        ("Luma", Ramp::Luma),
+        ("HueAround(28)", Ramp::HueAround(28.0)),
+    ] {
+        let steps: Vec<String> = (0..=16).map(|i| hex(ramp.at(i as f32 / 16.0))).collect();
+        sampled.insert(name.to_string(), serde_json::json!(steps));
+    }
+
+    let json = serde_json::to_string_pretty(&serde_json::json!({
+        "palette": palette,
+        "ramps": ramps,
+        "sampled": sampled,
+    }))
+    .unwrap();
+    check("theme.json", json);
+}

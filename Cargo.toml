@@ -8,6 +8,7 @@ members = [
     "crates/pe-scopes",
     "crates/pe-io",
     "crates/pe-session",
+    "crates/pe-theme",
     "crates/pe-ffi",
     "apps/windows",
     "tests/golden",

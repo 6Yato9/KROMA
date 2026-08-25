@@ -20,4 +20,5 @@ wgpu = "27"
 pollster = "0.4"
 
 [dev-dependencies]
+pe-theme = { version = "0.0.1", path = "../pe-theme" }
 tempfile = "3"

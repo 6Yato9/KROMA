@@ -1761,6 +1761,7 @@ dependencies = [
  "pe-io",
  "pe-render",
  "pe-scopes",
+ "pe-theme",
  "pollster 0.4.0",
  "serde",
  "serde_json",
@@ -1768,6 +1769,10 @@ dependencies = [
  "thiserror 2.0.20",
  "wgpu",
 ]
+
+[[package]]
+name = "pe-theme"
+version = "0.0.1"
 
 [[package]]
 name = "pe-windows"
@@ -1783,6 +1788,7 @@ dependencies = [
  "pe-render",
  "pe-scopes",
  "pe-session",
+ "pe-theme",
  "rfd",
  "serde",
  "serde_json",

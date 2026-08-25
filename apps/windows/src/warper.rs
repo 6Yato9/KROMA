@@ -630,7 +630,7 @@ fn plot_image(plot: Plot, seen: Option<&Distribution>) -> egui::ColorImage {
                     let r = (x * x + y * y).sqrt();
                     (r <= 1.0).then(|| {
                         let hue = y.atan2(x) / std::f32::consts::TAU;
-                        let c = crate::theme::Ramp::Hue.at(hue.rem_euclid(1.0));
+                        let c = crate::theme::c(crate::theme::Ramp::Hue.at(hue.rem_euclid(1.0)));
                         let grey = 0.28;
                         [
                             grey + (c.r() as f32 / 255.0 - grey) * r,
@@ -641,7 +641,7 @@ fn plot_image(plot: Plot, seen: Option<&Distribution>) -> egui::ColorImage {
                 }
                 Plot::ChromaLuma => {
                     // Grey to colourful across, dark to light up.
-                    let c = crate::theme::Ramp::Chroma.at(u);
+                    let c = crate::theme::c(crate::theme::Ramp::Chroma.at(u));
                     let shade = 0.18 + v * 0.78;
                     Some([
                         c.r() as f32 / 255.0 * shade,

@@ -298,7 +298,7 @@ fn gradient(painter: &egui::Painter, rect: egui::Rect, ramp: Ramp, faded: bool) 
     for i in 0..=STEPS {
         let t = i as f32 / STEPS as f32;
         let x = rect.min.x + t * rect.width();
-        let mut c = ramp.at(t);
+        let mut c = crate::theme::c(ramp.at(t));
         if faded {
             c = c.gamma_multiply(0.42);
         }
