@@ -18,6 +18,15 @@ struct ContentView: View {
 
     private var tool: Tool { Tool(rawValue: toolName) ?? .basic }
 
+    /// Whether the crop overlay is over the photograph.
+    ///
+    /// Temporary quarters. Crop becomes a tool in the strip, alongside the
+    /// other six, and this toggle goes when it does — it is here so the overlay
+    /// is reachable rather than written and unreachable. Not remembered between
+    /// launches, because a tool that puts a rectangle over the picture is one
+    /// you are *in*, not a preference.
+    @State private var cropping = false
+
     private var chosenTool: Binding<Tool> {
         Binding(get: { tool }, set: { toolName = $0.rawValue })
     }
@@ -76,9 +85,19 @@ struct ContentView: View {
     /// `VIEWER` and not `PANEL`, and the difference is not taste: a surround
     /// lighter than the picture's own shadows makes the shadows look lifted,
     /// which is a lie told to the one person in the room grading them.
+    ///
+    /// The crop overlay goes over it rather than inside `MetalViewer`: the
+    /// viewer hands a layer to the engine and every pixel in it is drawn by
+    /// Rust, so a SwiftUI rectangle cannot live there. Over the top it is an
+    /// ordinary view with an ordinary gesture, and it takes the drag before the
+    /// viewer's own pan sees it — which is what stops dragging a crop from also
+    /// scrolling the picture out from under it.
     private var viewer: some View {
         MetalViewer(store: store)
             .background(Palette.viewer.color)
+            .overlay {
+                if cropping { CropOverlay(store: store) }
+            }
     }
 
     /// The strip, and under it the one tool it has chosen.
@@ -187,6 +206,9 @@ struct ContentView: View {
                     .foregroundStyle(Palette.dim.color)
             }
             Spacer()
+            Toggle("Crop", isOn: $cropping)
+                .toggleStyle(KromaToggleButtonStyle())
+                .help("Crop, straighten and flip")
             Toggle("Scopes", isOn: $showScopes)
                 .toggleStyle(KromaToggleButtonStyle())
                 .help("Waveform, parade, vectorscope and histogram")
