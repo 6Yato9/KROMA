@@ -172,6 +172,144 @@ final class EngineTests: XCTestCase {
         )
     }
 
+    // ---- crop, straighten, flips --------------------------------------------
+
+    func testACropThatHangsOffTheEdgeComesBackInside() throws {
+        let session = try XCTUnwrap(Session())
+        try session.openTestChart(width: 64, height: 64)
+
+        // Half the frame, dragged almost entirely off the top corner, and five
+        // quarter-turns — which is one.
+        let stored = try session.setGeometry(
+            GeometryValue(
+                centre: CGPoint(x: 0.9, y: 0.9), size: CGSize(width: 0.5, height: 0.5),
+                angle: 0, turns: 5, flipH: true, flipV: false, aspect: .free
+            )
+        )
+
+        // The engine corrected. Not "the call did not throw" — the numbers that
+        // came back are different ones.
+        XCTAssertEqual(stored.turns, 1, "five quarter-turns is one")
+        XCTAssertNotEqual(stored.centre, CGPoint(x: 0.9, y: 0.9),
+                          "the crop was left hanging off the edge")
+
+        // And it is inside the source: the crop spans `centre ± size / 2` about
+        // the middle, so every edge of it has photograph behind it. The
+        // tolerance is the hair `fits` allows, not slack in the assertion.
+        XCTAssertLessThanOrEqual(abs(stored.centre.x) + stored.size.width / 2, 0.5 + 1e-4)
+        XCTAssertLessThanOrEqual(abs(stored.centre.y) + stored.size.height / 2, 0.5 + 1e-4)
+
+        // The flips have no out-parameter because nothing corrects them, but
+        // they still have to arrive.
+        XCTAssertTrue(stored.flipH)
+        XCTAssertFalse(stored.flipV)
+    }
+
+    func testTheReturnedGeometryIsWhatTheDocumentHolds() throws {
+        // The whole architecture in one assertion: a call site may draw from
+        // what `setGeometry` returned without reading the snapshot, because the
+        // two are the same value. If they ever part company, an overlay drawn
+        // mid-drag jumps the moment the drag ends.
+        let session = try XCTUnwrap(Session())
+        try session.openTestChart(width: 64, height: 64)
+
+        let stored = try session.setGeometry(
+            GeometryValue(
+                centre: .zero, size: CGSize(width: 0.8, height: 0.8),
+                angle: 12, turns: 2, flipH: false, flipV: true, aspect: .ratio(w: 2, h: 1)
+            )
+        )
+        let held = try session.snapshot().geometry
+
+        // Within a tolerance rather than to the bit: the engine stores these as
+        // `f32` and the snapshot widens them to `Double` on the way through
+        // JSON, so the two spellings of one number are not the same `Double`.
+        XCTAssertEqual(stored.centre.x, held.centre.x, accuracy: 1e-6)
+        XCTAssertEqual(stored.centre.y, held.centre.y, accuracy: 1e-6)
+        XCTAssertEqual(stored.size.width, held.size.width, accuracy: 1e-6)
+        XCTAssertEqual(stored.size.height, held.size.height, accuracy: 1e-6)
+        XCTAssertEqual(stored.angle, held.angle, accuracy: 1e-6)
+        XCTAssertEqual(stored.turns, held.turns)
+        XCTAssertEqual(stored.flipH, held.flipH)
+        XCTAssertEqual(stored.flipV, held.flipV)
+        XCTAssertEqual(
+            try XCTUnwrap(stored.aspect.widthOverHeight),
+            try XCTUnwrap(held.aspect.widthOverHeight), accuracy: 1e-6)
+
+        // And the lock really did re-shape the crop: 2:1 against a square crop
+        // of a square source takes the height, because `apply_aspect` never
+        // grows one. A 0.8 by 0.4 crop straightened by 12 degrees still fits a
+        // square source, so nothing after the lock touched it either.
+        XCTAssertEqual(stored.size.width, 0.8, accuracy: 1e-6)
+        XCTAssertEqual(stored.size.height, 0.4, accuracy: 1e-6)
+        XCTAssertEqual(stored.angle, 12, accuracy: 1e-6)
+    }
+
+    func testResettingRestoresTheWholeFrame() throws {
+        let session = try XCTUnwrap(Session())
+        try session.openTestChart(width: 64, height: 64)
+
+        let cropped = try session.setGeometry(
+            GeometryValue(
+                centre: CGPoint(x: 0.1, y: -0.05), size: CGSize(width: 0.3, height: 0.3),
+                angle: 20, turns: 2, flipH: true, flipV: true, aspect: .original
+            )
+        )
+        XCTAssertFalse(cropped.isIdentity, "nothing was set to reset")
+
+        try session.resetGeometry()
+
+        let back = try session.snapshot().geometry
+        XCTAssertTrue(back.isIdentity)
+        XCTAssertEqual(back.size, CGSize(width: 1, height: 1))
+        XCTAssertEqual(back.aspect, .free, "the lock is part of the whole frame")
+    }
+
+    func testEveryAspectLockSurvivesTheCrossing() throws {
+        // The lock crosses as one float, so this is the round trip that matters:
+        // out as a number, back as an arm. Original is the dangerous one — if
+        // it came back as the ratio the source happens to work out to, the next
+        // frame of a drag would hand that number in as a *fixed* ratio and the
+        // lock would quietly stop being Original behind the user's back.
+        let session = try XCTUnwrap(Session())
+        try session.openTestChart(width: 64, height: 64)
+
+        func settle(_ lock: AspectLock) throws -> AspectLock {
+            try session.setGeometry(
+                GeometryValue(
+                    centre: .zero, size: CGSize(width: 0.8, height: 0.8), angle: 0, turns: 0,
+                    flipH: false, flipV: false, aspect: lock
+                )
+            ).aspect
+        }
+
+        XCTAssertEqual(try settle(.free), .free)
+        XCTAssertEqual(try settle(.original), .original)
+        // Twice, the way a drag does it: what came back goes straight back in.
+        XCTAssertEqual(try settle(try settle(.original)), .original)
+
+        // A ratio keeps its proportion but not its spelling: 16:9 crosses as
+        // 1.777… and comes back as that over one. Same lock, and the snapshot
+        // is where a panel reads two numbers to print.
+        let ratio = try settle(.ratio(w: 16, h: 9))
+        XCTAssertEqual(try XCTUnwrap(ratio.widthOverHeight), 16.0 / 9.0, accuracy: 1e-5)
+        XCTAssertEqual(try XCTUnwrap(try settle(ratio).widthOverHeight),
+                       16.0 / 9.0, accuracy: 1e-5, "a second frame of the drag lost the lock")
+        // And the document holds a ratio, not a free crop that happens to be
+        // the right shape — the snapshot spells the arm out.
+        XCTAssertEqual(
+            try XCTUnwrap(try session.snapshot().geometry.aspect.widthOverHeight),
+            16.0 / 9.0, accuracy: 1e-5)
+    }
+
+    func testAGeometryWithNothingOpenIsRefused() throws {
+        // No photograph, no frame to fit a crop inside. The refusal carries a
+        // message, like every other one.
+        let session = try XCTUnwrap(Session())
+        XCTAssertThrowsError(try session.setGeometry(.identity))
+        XCTAssertThrowsError(try session.resetGeometry())
+    }
+
     func testANinthPinIsRefused() throws {
         let session = try XCTUnwrap(Session())
         try session.openTestChart(width: 64, height: 64)

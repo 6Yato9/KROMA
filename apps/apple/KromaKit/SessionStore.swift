@@ -242,6 +242,39 @@ public final class SessionStore {
         refresh()
     }
 
+    // ---- crop, straighten, flips ------------------------------------------
+
+    /// The geometry to draw the crop overlay and the crop panel from.
+    ///
+    /// Mid-drag the snapshot is deliberately stale, so this is the engine's
+    /// corrected answer to the last proposal rather than the snapshot's copy of
+    /// it. Between drags the two are the same value, which is why this reads
+    /// through to the snapshot rather than keeping a copy of its own.
+    public var geometry: GeometryValue { corrected ?? snapshot.geometry }
+
+    /// What the engine last accepted, held only while the snapshot is behind.
+    private var corrected: GeometryValue?
+
+    /// Propose a crop, straighten and flips.
+    ///
+    /// The overlay then draws `geometry`, which is what the engine **stored** —
+    /// not what was proposed. Drawing the proposal would put a rectangle on
+    /// screen that the renderer does not produce, and it would jump to the real
+    /// one the moment the drag ended.
+    ///
+    /// Like `setFloat`, this does not refresh the snapshot mid-drag: the
+    /// corrected value above is what the overlay reads until the gesture ends.
+    public func setGeometry(_ want: GeometryValue) {
+        run { corrected = try session.setGeometry(want) }
+        if !dragging { refresh() }
+    }
+
+    /// Put the crop, straighten and flips back to the whole frame.
+    public func resetGeometry() {
+        run { try session.resetGeometry() }
+        refresh()
+    }
+
     public func setBool(row: UInt64, key: String, value: Bool) {
         run { try session.setBool(row: row, key: key, value: value) }
         refresh()
@@ -402,6 +435,11 @@ public final class SessionStore {
         // Any edit throws the measurement away, and this is where the store
         // hears about an edit. Two integers and a pointer test, not a copy.
         syncScopes()
+        // The snapshot is the truth again, so the corrected geometry held
+        // through the drag is not needed. Only written when it is actually
+        // changing: assigning nil over nil would tell every observing view to
+        // run its body again for nothing.
+        if corrected != nil { corrected = nil }
         guard session.snapshotVersion != snapshot.version else { return }
         do {
             snapshot = try session.snapshot()

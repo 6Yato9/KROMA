@@ -292,6 +292,71 @@ public final class Session {
         })
     }
 
+    // ---- crop, straighten, flips --------------------------------------------
+
+    /// Propose a geometry, and take back the one the engine actually stored.
+    ///
+    /// **What comes back is frequently not what was passed in, and that is the
+    /// point of this call.** The engine corrects: quarter-turns are taken
+    /// modulo four, a locked aspect re-shapes the crop, and the crop is then
+    /// slid — and, if it still will not fit anywhere, shrunk — back inside the
+    /// straightened source. The returned value is what the document now holds,
+    /// which is why nothing on this side has a second copy of `apply_aspect`,
+    /// `slide_to_fit` and `shrink_to_fit` to keep honest.
+    ///
+    /// A call site that discards the answer and goes on drawing what it asked
+    /// for is drawing a rectangle the engine did not accept, and that rectangle
+    /// will jump to the real one the moment the drag ends and the snapshot is
+    /// read again. Deliberately not `@discardableResult`, so throwing the
+    /// correction away has to be written down.
+    ///
+    /// One C call per frame of a drag: nine primitives in, seven out, and no
+    /// snapshot decoded.
+    public func setGeometry(_ want: GeometryValue) throws -> GeometryValue {
+        var cx: Float = 0
+        var cy: Float = 0
+        var w: Float = 0
+        var h: Float = 0
+        var angle: Float = 0
+        var turns: UInt32 = 0
+        var aspect: Float = 0
+        try check(
+            pe_session_set_geometry(
+                handle,
+                Float(want.centre.x), Float(want.centre.y),
+                Float(want.size.width), Float(want.size.height),
+                Float(want.angle),
+                // 2³² is a multiple of four, so a turn count that has gone
+                // below zero — a panel's anticlockwise button on an unturned
+                // crop — truncates into the unsigned parameter and comes out of
+                // the engine's `% 4` as the turn it meant. `UInt32(_:)` would
+                // trap on it instead.
+                UInt32(truncatingIfNeeded: want.turns),
+                want.flipH, want.flipV, want.aspect.parameter,
+                &cx, &cy, &w, &h, &angle, &turns, &aspect
+            )
+        )
+        return GeometryValue(
+            centre: CGPoint(x: Double(cx), y: Double(cy)),
+            size: CGSize(width: Double(w), height: Double(h)),
+            angle: Double(angle),
+            turns: Int(turns),
+            // The flips have no out-parameter because nothing corrects them:
+            // they are stored exactly as given, so they come back from the
+            // proposal.
+            flipH: want.flipH, flipV: want.flipV,
+            aspect: AspectLock(parameter: aspect)
+        )
+    }
+
+    /// Put the crop, straighten and flips back to the whole frame.
+    ///
+    /// Nothing comes back because there is nothing to correct: the answer is
+    /// always `GeometryValue.identity`.
+    public func resetGeometry() throws {
+        try check(pe_session_reset_geometry(handle))
+    }
+
     // ---- history ------------------------------------------------------------
 
     /// Bracket a drag so it collapses into one undo step rather than three
@@ -520,6 +585,49 @@ public final class Session {
         }
         defer { pe_string_free(raw) }
         return URL(fileURLWithPath: String(cString: raw))
+    }
+}
+
+extension AspectLock {
+    /// The lock as the ABI's single `aspect` float.
+    ///
+    /// `AspectLock` has three arms and this is one number, because the
+    /// alternative on a drag path is an enum across the ABI plus a second
+    /// parameter to carry its payload. A positive number is a width-to-height
+    /// ratio, `PE_ASPECT_ORIGINAL` is the source's own proportions, and zero —
+    /// like anything else at or below it — is free.
+    ///
+    /// A ratio loses its spelling on the way across: 16:9 goes out as 1.777…
+    /// and comes back as `.ratio(w: 1.777…, h: 1)`. Same lock, and all the crop
+    /// arithmetic ever wanted; the snapshot is where a panel reads the two
+    /// numbers it needs to *print* one.
+    ///
+    /// The divisor's guard is `aspect_value`'s in `pe-ffi`, so a malformed lock
+    /// crosses as a finite number rather than an infinity — which would be read
+    /// back as free, quietly dropping the lock.
+    var parameter: Float {
+        switch self {
+        case .free: return 0
+        case .original: return Float(PE_ASPECT_ORIGINAL)
+        case let .ratio(w, h): return Float(w / max(h, 1e-6))
+        }
+    }
+
+    /// Read the ABI's `aspect` back — the mirror of `aspect_lock` in `pe-ffi`,
+    /// including what it does with infinity and NaN: neither is a ratio a crop
+    /// can hold, so both are free rather than a lock nothing can satisfy.
+    ///
+    /// `PE_ASPECT_ORIGINAL` crosses the bridging header as a `Double`, so it is
+    /// narrowed here. It is exactly representable, which is what makes the
+    /// comparison an equality and not a tolerance.
+    init(parameter: Float) {
+        if parameter == Float(PE_ASPECT_ORIGINAL) {
+            self = .original
+        } else if parameter > 0, parameter.isFinite {
+            self = .ratio(w: Double(parameter), h: 1)
+        } else {
+            self = .free
+        }
     }
 }
 

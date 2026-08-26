@@ -152,6 +152,44 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertTrue(store.canRemove(row))
     }
 
+    func testACropDragDrawsWhatTheEngineAcceptedAndNotWhatWasAsked() throws {
+        // The crop's version of `testADragDoesNotRefreshUntilItEnds`, with the
+        // extra thing that makes this path different: the value the overlay
+        // reads mid-drag is the engine's corrected one, because the snapshot it
+        // would otherwise read is deliberately behind.
+        let store = try XCTUnwrap(SessionStore())
+        store.openTestChart(width: 64, height: 64)
+        XCTAssertTrue(store.geometry.isIdentity)
+        let atRest = store.snapshot.version
+
+        store.beginInteraction("Crop")
+        store.setGeometry(
+            GeometryValue(
+                centre: CGPoint(x: 0.9, y: 0.9), size: CGSize(width: 0.5, height: 0.5),
+                angle: 0, turns: 0, flipH: false, flipV: false, aspect: .free
+            )
+        )
+        XCTAssertEqual(store.snapshot.version, atRest, "refreshed during a drag")
+        XCTAssertNil(store.problem)
+
+        // Mid-drag, and already corrected: a store that handed back the
+        // proposal would draw a rectangle hanging off the corner and then jump
+        // when the gesture ended.
+        let drawn = store.geometry
+        XCTAssertNotEqual(drawn.centre, CGPoint(x: 0.9, y: 0.9))
+        XCTAssertLessThanOrEqual(abs(drawn.centre.x) + drawn.size.width / 2, 0.5 + 1e-4)
+
+        store.endInteraction()
+        XCTAssertGreaterThan(store.snapshot.version, atRest)
+        // And nothing jumped: what was drawn mid-drag is what the document
+        // holds now.
+        XCTAssertEqual(store.geometry.centre.x, drawn.centre.x, accuracy: 1e-6)
+        XCTAssertEqual(store.geometry.size.width, drawn.size.width, accuracy: 1e-6)
+
+        store.resetGeometry()
+        XCTAssertTrue(store.geometry.isIdentity)
+    }
+
     /// A 1x1 white PNG, so the test needs no fixture file on disk.
     static let onePixelPNG = """
     iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==

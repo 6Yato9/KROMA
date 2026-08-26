@@ -39,11 +39,116 @@ final class SnapshotTests: XCTestCase {
 
     func testAnEmptySnapshotIsStillASnapshot() throws {
         // The viewer draws its empty state from this rather than from a null.
-        let json = Data(#"{"version":0,"is_open":false,"width":0,"height":0,"rows":[],"color":{"input":"","output":""},"passes":0,"can_undo":false,"can_redo":false,"export_format":"jpeg","export_quality":95}"#.utf8)
+        //
+        // The geometry block is here because the engine always writes one: it
+        // is not optional on the wire, and with nothing open it is the
+        // identity rather than absent. A decoder that let it go missing would
+        // read a cropped photograph as an uncropped one on the day the two
+        // sides disagreed about the key.
+        let json = Data(#"{"version":0,"is_open":false,"width":0,"height":0,"rows":[],"color":{"input":"","output":""},"geometry":{"centre":[0.0,0.0],"size":[1.0,1.0],"angle":0.0,"turns":0,"flip_h":false,"flip_v":false,"aspect":"free"},"passes":0,"can_undo":false,"can_redo":false,"export_format":"jpeg","export_quality":95}"#.utf8)
         let snap = try JSONDecoder().decode(Snapshot.self, from: json)
         XCTAssertFalse(snap.isOpen)
         XCTAssertTrue(snap.rows.isEmpty)
         XCTAssertNil(snap.path)
+        XCTAssertTrue(snap.geometry.isIdentity)
+    }
+
+    func testAGeometryDecodesItsSevenFields() throws {
+        let json = Data(#"""
+        {"centre":[0.1,-0.05],"size":[0.3,0.4],"angle":12.5,"turns":3,
+         "flip_h":true,"flip_v":false,"aspect":"ratio","aspect_w":16.0,"aspect_h":9.0}
+        """#.utf8)
+        let g = try JSONDecoder().decode(GeometryValue.self, from: json)
+        XCTAssertEqual(g.centre.x, 0.1, accuracy: 0.0001)
+        XCTAssertEqual(g.centre.y, -0.05, accuracy: 0.0001)
+        XCTAssertEqual(g.size.width, 0.3, accuracy: 0.0001)
+        XCTAssertEqual(g.size.height, 0.4, accuracy: 0.0001)
+        XCTAssertEqual(g.angle, 12.5, accuracy: 0.0001)
+        XCTAssertEqual(g.turns, 3)
+        XCTAssertTrue(g.flipH)
+        XCTAssertFalse(g.flipV)
+        XCTAssertEqual(g.aspect, .ratio(w: 16, h: 9))
+        XCTAssertFalse(g.isIdentity)
+    }
+
+    func testEveryAspectLockDecodes() throws {
+        // Three arms, spread across three keys: the string names the arm and
+        // the two numbers are there only for a ratio.
+        func lock(_ body: String) throws -> AspectLock {
+            let head = #"{"centre":[0,0],"size":[1,1],"angle":0,"turns":0,"flip_h":false,"flip_v":false,"#
+            let json = Data((head + body + "}").utf8)
+            return try JSONDecoder().decode(GeometryValue.self, from: json).aspect
+        }
+        XCTAssertEqual(try lock(#""aspect":"free""#), .free)
+        XCTAssertEqual(try lock(#""aspect":"original""#), .original)
+        XCTAssertEqual(
+            try lock(#""aspect":"ratio","aspect_w":3.0,"aspect_h":2.0"#), .ratio(w: 3, h: 2))
+
+        // A ratio with nothing to hold is not a ratio. The engine never writes
+        // one, and reading it as a lock would divide by a number that is not
+        // there.
+        XCTAssertEqual(try lock(#""aspect":"ratio""#), .free)
+
+        // And an arm this build has never heard of reads as free rather than
+        // refusing the whole snapshot — the same reason `ParamValue` has
+        // `.opaque`. A photograph written by a later version still opens.
+        XCTAssertEqual(try lock(#""aspect":"golden""#), .free)
+    }
+
+    func testALockedRatioAnswersWithItsProportion() throws {
+        // The number the crop arithmetic wants, from the two the panel prints.
+        XCTAssertEqual(try XCTUnwrap(AspectLock.ratio(w: 16, h: 9).widthOverHeight),
+                       16.0 / 9.0, accuracy: 0.0001)
+        // Free has no fixed ratio, and Original's is the source's — which only
+        // the engine knows, so this side does not guess at it.
+        XCTAssertNil(AspectLock.free.widthOverHeight)
+        XCTAssertNil(AspectLock.original.widthOverHeight)
+    }
+
+    func testAGeometryIsIdentityOnlyWhenItLeavesThePictureAlone() {
+        XCTAssertTrue(GeometryValue.identity.isIdentity)
+
+        // A lock is not a change to the picture — it constrains the next drag.
+        // `Geometry::is_identity` leaves it out for that reason, and so does
+        // this one.
+        XCTAssertTrue(
+            GeometryValue(
+                centre: .zero, size: CGSize(width: 1, height: 1), angle: 0, turns: 0,
+                flipH: false, flipV: false, aspect: .ratio(w: 1, h: 1)
+            ).isIdentity)
+
+        // Four quarter-turns is none, which is what the engine's modulo says.
+        XCTAssertTrue(
+            GeometryValue(
+                centre: .zero, size: CGSize(width: 1, height: 1), angle: 0, turns: 4,
+                flipH: false, flipV: false, aspect: .free
+            ).isIdentity)
+
+        for changed in [
+            GeometryValue(centre: CGPoint(x: 0.1, y: 0), size: CGSize(width: 1, height: 1),
+                          angle: 0, turns: 0, flipH: false, flipV: false, aspect: .free),
+            GeometryValue(centre: .zero, size: CGSize(width: 0.9, height: 1),
+                          angle: 0, turns: 0, flipH: false, flipV: false, aspect: .free),
+            GeometryValue(centre: .zero, size: CGSize(width: 1, height: 1),
+                          angle: 0.5, turns: 0, flipH: false, flipV: false, aspect: .free),
+            GeometryValue(centre: .zero, size: CGSize(width: 1, height: 1),
+                          angle: 0, turns: 1, flipH: false, flipV: false, aspect: .free),
+            GeometryValue(centre: .zero, size: CGSize(width: 1, height: 1),
+                          angle: 0, turns: 0, flipH: true, flipV: false, aspect: .free),
+            GeometryValue(centre: .zero, size: CGSize(width: 1, height: 1),
+                          angle: 0, turns: 0, flipH: false, flipV: true, aspect: .free),
+        ] {
+            XCTAssertFalse(changed.isIdentity, "\(changed) reads as doing nothing")
+        }
+    }
+
+    func testTheCommittedSnapshotCarriesAnIdentityGeometry() throws {
+        // Nothing in the fixture crops, so the block is the whole frame. If it
+        // ever decodes as something else, the two sides have parted company
+        // about what an uncropped photograph looks like.
+        let snap = try JSONDecoder().decode(Snapshot.self, from: fixture("snapshot"))
+        XCTAssertTrue(snap.geometry.isIdentity)
+        XCTAssertEqual(snap.geometry.aspect, .free)
     }
 
     func testEveryParameterValueKindDecodes() throws {

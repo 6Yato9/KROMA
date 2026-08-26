@@ -17,6 +17,12 @@ public struct Snapshot: Decodable, Sendable {
     public let height: UInt32
     public let rows: [Row]
     public let colour: Colour
+    /// The crop, straighten, quarter-turns and flips.
+    ///
+    /// Not optional, and not part of the stack: geometry sits *before* every
+    /// row, so with nothing open this is the identity rather than nothing at
+    /// all. See `GeometryValue`.
+    public let geometry: GeometryValue
     /// Passes the last frame executed. The number that proves the stage cache
     /// works: with a deep stack, dragging one slider should read 1.
     public let passes: Int
@@ -28,7 +34,7 @@ public struct Snapshot: Decodable, Sendable {
     public let exportQuality: UInt8
 
     enum CodingKeys: String, CodingKey {
-        case version, path, name, width, height, rows, passes
+        case version, path, name, width, height, rows, geometry, passes
         case isOpen = "is_open"
         case colour = "color"
         case canUndo = "can_undo"
@@ -41,14 +47,16 @@ public struct Snapshot: Decodable, Sendable {
 
     public static let empty = Snapshot(
         version: 0, isOpen: false, path: nil, name: nil, width: 0, height: 0,
-        rows: [], colour: Colour(input: "", output: ""), passes: 0,
+        rows: [], colour: Colour(input: "", output: ""), geometry: .identity,
+        passes: 0,
         canUndo: false, canRedo: false, undoLabel: nil, redoLabel: nil,
         exportFormat: "jpeg", exportQuality: 95
     )
 
     public init(
         version: UInt64, isOpen: Bool, path: String?, name: String?,
-        width: UInt32, height: UInt32, rows: [Row], colour: Colour, passes: Int,
+        width: UInt32, height: UInt32, rows: [Row], colour: Colour,
+        geometry: GeometryValue, passes: Int,
         canUndo: Bool, canRedo: Bool, undoLabel: String?, redoLabel: String?,
         exportFormat: String, exportQuality: UInt8
     ) {
@@ -60,6 +68,7 @@ public struct Snapshot: Decodable, Sendable {
         self.height = height
         self.rows = rows
         self.colour = colour
+        self.geometry = geometry
         self.passes = passes
         self.canUndo = canUndo
         self.canRedo = canRedo
@@ -89,6 +98,140 @@ public struct Snapshot: Decodable, Sendable {
         public let pinned: Bool
         public let label: String?
         public let params: [String: ParamValue]
+    }
+}
+
+/// The crop, straighten, quarter-turns and flips — `pe_core::Geometry`.
+///
+/// Seven fields and no arithmetic. Every rule about what makes one *legal* —
+/// that the crop stays inside the straightened source, that a locked aspect is
+/// honoured, that dragging a corner past the frame slides the rectangle rather
+/// than shrinking it — lives on `Geometry` in Rust, where it is tested. This
+/// side proposes a value and `Session.setGeometry` hands back the one the
+/// engine actually stored. Nothing here reimplements `shrink_to_fit`,
+/// `slide_to_fit` or `apply_aspect`, and nothing here should.
+///
+/// `CGPoint` and `CGSize` rather than pairs of `Float`, for the same reason
+/// `CurveValue` carries points: everything that draws a crop wants a rectangle,
+/// and the conversion would otherwise happen at every call site.
+public struct GeometryValue: Decodable, Sendable, Equatable {
+    /// Centre of the crop as an offset from the middle of the source, in units
+    /// of the source's own width and height. Zero is dead centre.
+    public let centre: CGPoint
+    /// Size of the crop as a fraction of the source.
+    public let size: CGSize
+    /// Straightening angle in degrees. Positive turns the picture
+    /// anticlockwise, which is the direction Lightroom's Angle slider moves.
+    public let angle: Double
+    /// Quarter-turns clockwise, applied after straightening. The engine stores
+    /// 0 to 3 and takes whatever it is given modulo four.
+    public let turns: Int
+    public let flipH: Bool
+    public let flipV: Bool
+    public let aspect: AspectLock
+
+    /// The whole frame, unturned and unflipped — `Geometry::default()`, and
+    /// what the snapshot carries with nothing open.
+    public static let identity = GeometryValue(
+        centre: .zero, size: CGSize(width: 1, height: 1), angle: 0, turns: 0,
+        flipH: false, flipV: false, aspect: .free
+    )
+
+    enum CodingKeys: String, CodingKey {
+        case centre, size, angle, turns, aspect
+        case flipH = "flip_h"
+        case flipV = "flip_v"
+        case aspectW = "aspect_w"
+        case aspectH = "aspect_h"
+    }
+
+    public init(
+        centre: CGPoint, size: CGSize, angle: Double, turns: Int,
+        flipH: Bool, flipV: Bool, aspect: AspectLock
+    ) {
+        self.centre = centre
+        self.size = size
+        self.angle = angle
+        self.turns = turns
+        self.flipH = flipH
+        self.flipV = flipV
+        self.aspect = aspect
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let centre = try c.decode([Double].self, forKey: .centre)
+        let size = try c.decode([Double].self, forKey: .size)
+        self.centre = CGPoint(x: centre.first ?? 0, y: centre.dropFirst().first ?? 0)
+        self.size = CGSize(width: size.first ?? 0, height: size.dropFirst().first ?? 0)
+        angle = try c.decode(Double.self, forKey: .angle)
+        turns = try c.decode(Int.self, forKey: .turns)
+        flipH = try c.decode(Bool.self, forKey: .flipH)
+        flipV = try c.decode(Bool.self, forKey: .flipV)
+
+        // The lock is the one value here spread across three keys: a string
+        // naming the arm, and two numbers that only a ratio has.
+        switch try c.decode(String.self, forKey: .aspect) {
+        case "original":
+            aspect = .original
+        case "ratio":
+            // Both numbers or neither. A ratio with nothing to hold is not a
+            // ratio, and reading it as one would divide by a zero the document
+            // never wrote.
+            if let w = try c.decodeIfPresent(Double.self, forKey: .aspectW),
+                let h = try c.decodeIfPresent(Double.self, forKey: .aspectH) {
+                aspect = .ratio(w: w, h: h)
+            } else {
+                aspect = .free
+            }
+        default:
+            // Free, and anything a later version grows that this build has
+            // never heard of — the same reason `ParamValue` has `.opaque`. A
+            // lock nobody recognises is one nobody is holding.
+            aspect = .free
+        }
+    }
+
+    /// True when this does nothing at all, so the viewer can take the plain
+    /// path and the panel can say "Original". Matching `Geometry::is_identity`,
+    /// including what it leaves out: the lock is not part of it, because a lock
+    /// constrains the next drag rather than changing the picture.
+    ///
+    /// Exactly, not nearly. A crop dragged and put back reads as untouched
+    /// because the engine writes the value it computed, not an accumulated
+    /// delta.
+    public var isIdentity: Bool {
+        centre == .zero && size == CGSize(width: 1, height: 1)
+            && angle == 0 && turns % 4 == 0 && !flipH && !flipV
+    }
+}
+
+/// What the crop's proportions are pinned to while the user drags it —
+/// `pe_core::AspectLock`.
+///
+/// Three arms, one of them with a payload. It reaches Swift two different ways
+/// and neither is this shape: the snapshot spells it as a string plus two
+/// numbers, and the drag path spells it as a single float. `GeometryValue`'s
+/// decoder does the first; `Session` does the second, because that spelling is
+/// the C ABI's and only `Engine.swift` may touch that.
+public enum AspectLock: Sendable, Equatable {
+    case free
+    /// The source photograph's own proportions.
+    case original
+    /// A fixed ratio, width to height.
+    case ratio(w: Double, h: Double)
+
+    /// The ratio this holds, width over height — 16:9 as 1.777…. Nil when
+    /// there is no fixed one: Free has none, and Original's depends on the
+    /// source, which is the engine's business to know and not this side's to
+    /// work out.
+    ///
+    /// The guard on the divisor is `AspectLock::ratio`'s, so a malformed lock
+    /// from a document on disk answers with a finite number rather than an
+    /// infinity.
+    public var widthOverHeight: Double? {
+        if case let .ratio(w, h) = self { return w / max(h, 1e-6) }
+        return nil
     }
 }
 
