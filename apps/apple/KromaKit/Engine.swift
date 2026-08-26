@@ -599,6 +599,157 @@ public final class Session {
             })
     }
 
+    // ---- the set ------------------------------------------------------------
+    //
+    // The photographs open at once, for the filmstrip. Only one of them is
+    // decoded, so what crosses here is paths, three marks and a 128-pixel
+    // thumbnail — never a frame. A session showing nothing, and a session
+    // showing the built-in chart, both have no set: the count is zero, the
+    // readers answer nil, and asking for thumbnails of nothing does nothing.
+
+    /// Open a set of photographs, focused on the first.
+    ///
+    /// The paths cross as JSON because that is what the ABI takes: a file name
+    /// is not a scalar and there is no count of them known in advance, so the
+    /// typed alternative is a pointer-and-length pair of a type the ABI is not
+    /// allowed to name.
+    ///
+    /// An empty list is a refusal rather than an empty set. The engine will not
+    /// hold a set of no photographs, so nothing that reads one has to cope with
+    /// the case.
+    public func openPaths(_ urls: [URL]) throws {
+        let json = try JSONEncoder().encode(urls.map(\.path))
+        try check(
+            String(decoding: json, as: UTF8.self).withCString {
+                pe_session_open_paths(handle, $0)
+            })
+    }
+
+    /// Show a different photograph of the set, parking the current edit and
+    /// taking that one's.
+    ///
+    /// Throws with no set open, for an index past the end, and for a photograph
+    /// that will not decode. In every one of those nothing has moved: the set
+    /// is still pointed where it was and the edit on screen is still the one
+    /// that was there.
+    ///
+    /// The engine writes the outgoing edit out as part of the switch, so a
+    /// caller does not flush before calling this — doing so would be a second
+    /// write of the same document.
+    public func focus(_ index: Int) throws {
+        guard let i = UInt32(exactly: index) else {
+            throw EngineError(code: -2, message: "there is no photograph \(index) in the set")
+        }
+        try check(pe_session_focus(handle, i))
+    }
+
+    /// How many photographs are in the set. Zero with no set open, which is the
+    /// truth rather than a failure — a strip of no entries is exactly the right
+    /// thing to draw for a session that has none.
+    public var entryCount: Int {
+        Int(max(pe_session_entry_count(handle), 0))
+    }
+
+    /// Which photograph of the set is the one on screen, or nil when there is
+    /// no set. Nil rather than zero, which would name an entry that does not
+    /// exist.
+    public var currentEntry: Int? {
+        let i = pe_session_current_entry(handle)
+        return i < 0 ? nil : Int(i)
+    }
+
+    /// The path of one photograph in the set.
+    ///
+    /// Nil with no set open and for an index past the end. The two are not told
+    /// apart because there is nothing a strip would do differently: an entry it
+    /// cannot have is an entry it cannot draw.
+    public func entryPath(_ index: Int) -> URL? {
+        guard let i = UInt32(exactly: index) else { return nil }
+        guard let raw = pe_session_entry_path(handle, i) else { return nil }
+        defer { pe_string_free(raw) }
+        return URL(fileURLWithPath: String(cString: raw))
+    }
+
+    /// The three marks a strip draws on one entry, in one call rather than
+    /// three, because a strip asks all three of every visible entry.
+    ///
+    /// Nil with no set open and for an index past the end, for the same reason
+    /// `entryPath` gives.
+    public func entryFlags(_ index: Int) -> (edited: Bool, failed: Bool, hasThumbnail: Bool)? {
+        guard let i = UInt32(exactly: index) else { return nil }
+        var edited = false
+        var failed = false
+        var hasThumbnail = false
+        guard pe_session_entry_flags(handle, i, &edited, &failed, &hasThumbnail) == 0 else {
+            return nil
+        }
+        return (edited, failed, hasThumbnail)
+    }
+
+    /// Ask for the thumbnails of `range` that have not been asked for yet.
+    ///
+    /// The range the strip is actually showing, not the whole set: opening a
+    /// folder of a thousand should not queue a thousand decodes before the
+    /// first one anybody can see. The decode happens on a worker thread and the
+    /// pixels arrive later, through `collectThumbnails`. Asking twice costs
+    /// nothing — the second ask is dropped.
+    ///
+    /// Not throwing, and a no-op with no set open: a session with no
+    /// photographs answers "give me your thumbnails" by having none, not by
+    /// failing.
+    public func requestThumbnails(_ range: Range<Int>) {
+        let from = max(range.lowerBound, 0)
+        let to = max(range.upperBound, from)
+        guard let a = UInt32(exactly: from), let b = UInt32(exactly: to) else { return }
+        _ = pe_session_request_thumbnails(handle, a, b)
+    }
+
+    /// Take delivery of whatever the thumbnail worker has finished. True if
+    /// anything arrived.
+    ///
+    /// **This answer is the whole mechanism**, the way the scope generation is
+    /// for the counts: it is what tells a holder of copies that any of them
+    /// have moved. A thumbnail is 64 KB and a set can be two hundred of them,
+    /// so copying on a schedule instead of on this answer is thirteen megabytes
+    /// per frame.
+    @discardableResult
+    public func collectThumbnails() -> Bool {
+        pe_session_collect_thumbnails(handle) == 1
+    }
+
+    /// Copy one entry's thumbnail out of the engine.
+    ///
+    /// Two calls, the same shape-then-fill `scopeBuffer` uses: ask the size,
+    /// then fill a buffer of exactly that size. The engine refuses a short
+    /// buffer rather than truncating, so a mismatch is an error here rather
+    /// than a plausible-looking photograph with its last rows missing.
+    ///
+    /// Nil means there is nothing to copy — no set, an index past the end, or a
+    /// thumbnail the worker has not delivered yet — which is not a failure.
+    public func thumbnail(_ index: Int) throws -> Thumbnail? {
+        guard let i = UInt32(exactly: index) else { return nil }
+        var width: UInt32 = 0
+        var height: UInt32 = 0
+        guard pe_session_thumbnail_shape(handle, i, &width, &height) == 0 else { return nil }
+
+        let count = Int(width) * Int(height) * 4
+        guard count > 0 else {
+            throw EngineError(
+                code: -1, message: "the engine gave a thumbnail shaped \(width)x\(height)")
+        }
+        var rgba = [UInt8](repeating: 0, count: count)
+        let written = rgba.withUnsafeMutableBufferPointer {
+            pe_session_thumbnail_data(handle, i, $0.baseAddress, UInt32(count))
+        }
+        guard written == Int32(count) else {
+            throw EngineError(
+                code: written,
+                message: "the engine gave \(written) bytes for a thumbnail shaped "
+                    + "\(width)x\(height)")
+        }
+        return Thumbnail(width: Int(width), height: Int(height), rgba: rgba)
+    }
+
     // ---- persistence and export ---------------------------------------------
 
     @discardableResult

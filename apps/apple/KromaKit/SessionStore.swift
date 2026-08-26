@@ -81,6 +81,11 @@ public final class SessionStore {
 
     /// Draw, if anything has changed. Called from the display link.
     public func renderIfNeeded() {
+        // At the top of the frame, and before anything else: thumbnails arrive
+        // on a worker thread, so this is the only place the store hears about
+        // them. One C call when nothing has turned up, which is almost every
+        // frame.
+        collectThumbnails()
         // The tick drives the autosave debounce, so it can fail with something
         // the person needs to know — that their work in progress is not being
         // written. It goes to the status bar like any other refusal, and does
@@ -109,6 +114,156 @@ public final class SessionStore {
         flush()
         run { try session.open(url) }
         refresh()
+    }
+
+    // ---- the set ---------------------------------------------------------
+
+    /// The photographs open, and which of them is on screen.
+    ///
+    /// Empty for a session showing nothing and for one showing the built-in
+    /// chart, which is not a file and therefore not a set of one. One
+    /// photograph opened on its own *is* a set of one — `open` goes through the
+    /// same door — so a strip has an entry to draw for it.
+    ///
+    /// A stored property, so a strip's body reads a value rather than walking
+    /// the ABI.
+    public private(set) var library: Library = .empty
+
+    /// The thumbnails, as pictures, keyed by the photograph's path.
+    ///
+    /// By path rather than by index for the reason `Library::index_of` is a
+    /// search rather than a stored number: the set shifts under every removal,
+    /// and a picture that ends up on the wrong entry is a filmstrip quietly
+    /// showing the wrong photograph.
+    ///
+    /// Not observed. What a view watches is `library`, which is written when
+    /// the marks move — including `hasThumbnail`. Observing 13 MB of pictures
+    /// as well would be a second notification for the same event.
+    @ObservationIgnored private var thumbnails: [URL: CGImage] = [:]
+
+    /// Open a set of photographs, focused on the first.
+    ///
+    /// An empty list is refused by the engine rather than opening a set of
+    /// none, and the refusal arrives in `problem` like any other.
+    public func openPaths(_ urls: [URL]) {
+        flush()
+        run { try session.openPaths(urls) }
+        refresh()
+    }
+
+    /// Show a different photograph of the set, keeping the edit on the one
+    /// being left.
+    ///
+    /// No `flush` first, unlike `open`: the engine writes the outgoing edit out
+    /// as part of the switch, so a flush here would be a second write of the
+    /// same document.
+    public func focus(_ index: Int) {
+        run { try session.focus(index) }
+        refresh()
+    }
+
+    /// Ask for the thumbnails of the entries a strip is actually showing.
+    ///
+    /// The visible range, not the whole set: opening a folder of a thousand
+    /// should not queue a thousand decodes before the first one anybody can
+    /// see. Asking twice for the same entry costs nothing.
+    public func requestThumbnails(_ range: Range<Int>) {
+        session.requestThumbnails(range)
+    }
+
+    /// The picture for one entry, once its thumbnail has arrived.
+    ///
+    /// A dictionary lookup and nothing else. The copy out of the engine and the
+    /// Core Graphics image are both made once, in `collectThumbnails`, so a
+    /// strip may ask this of every visible entry on every body evaluation.
+    public func thumbnail(for entry: LibraryEntry) -> CGImage? {
+        thumbnails[entry.path]
+    }
+
+    public func thumbnail(at index: Int) -> CGImage? {
+        guard let entry = library[index] else { return nil }
+        return thumbnails[entry.path]
+    }
+
+    /// Take delivery of thumbnails, and copy across only what arrived.
+    ///
+    /// The engine's answer is the whole mechanism, the way the scope generation
+    /// is for the counts: false means nothing has moved and nothing is copied.
+    /// A thumbnail is 64 KB and a set can be two hundred of them, so a store
+    /// that re-copied on a schedule would spend thirteen megabytes a frame to
+    /// arrive at the pictures it already had.
+    ///
+    /// The answer says whether anything did arrive, which is the one thing
+    /// worth knowing about a call made every frame.
+    @discardableResult
+    public func collectThumbnails() -> Bool {
+        guard session.collectThumbnails() else { return false }
+        // The marks moved with the delivery: `hasThumbnail` for what arrived,
+        // `failed` for what could not be read.
+        refreshLibrary()
+        syncThumbnails()
+        return true
+    }
+
+    /// Build a picture for every thumbnail that has one and this does not.
+    ///
+    /// Called only when `collectThumbnails` reports a delivery. Walking the
+    /// whole set to find the new arrivals is a lookup per photograph, which is
+    /// exactly the kind of thing a strip refuses to do per frame — but this is
+    /// not per frame, it is per thumbnail, and a thumbnail is a decode.
+    private func syncThumbnails() {
+        for entry in library.entries where entry.hasThumbnail {
+            guard thumbnails[entry.path] == nil else { continue }
+            do {
+                // Nil is a thumbnail that is not the shape it claims to be,
+                // which is not something to keep asking about; a throw is the
+                // engine and this side disagreeing about a buffer, which is.
+                if let picture = try session.thumbnail(entry.index)?.image {
+                    thumbnails[entry.path] = picture
+                }
+            } catch {
+                // Set rather than run through `run`: a thumbnail turning up is
+                // no reason to clear a refusal the person has not read yet.
+                problem = String(describing: error)
+            }
+        }
+    }
+
+    /// Pull the set across, and write it only when it has actually moved.
+    ///
+    /// A session with no set at all — nothing open, or the built-in chart —
+    /// answers in one C call. Otherwise it is a path and three marks per entry,
+    /// which is what a strip needs and is not a picture. Never called per
+    /// frame: the deliveries are, and a delivery is one call until something
+    /// actually arrives.
+    private func refreshLibrary() {
+        let count = session.entryCount
+        guard count > 0 || !library.isEmpty else { return }
+
+        var entries: [LibraryEntry] = []
+        entries.reserveCapacity(count)
+        for index in 0..<count {
+            guard let path = session.entryPath(index), let marks = session.entryFlags(index)
+            else { continue }
+            entries.append(
+                LibraryEntry(
+                    index: index, path: path, edited: marks.edited, failed: marks.failed,
+                    hasThumbnail: marks.hasThumbnail))
+        }
+
+        let next = Library(entries: entries, current: session.currentEntry)
+        // Only written when it is actually changing: assigning an equal set
+        // would tell every observing view to run its body again for nothing.
+        guard next != library else { return }
+        library = next
+
+        // A picture is 64 KB. A session worked through folder after folder
+        // would otherwise end up holding one of every photograph it had ever
+        // been shown, which is the accounting a filmstrip exists to avoid.
+        let kept = Set(entries.map(\.path))
+        if thumbnails.contains(where: { !kept.contains($0.key) }) {
+            thumbnails = thumbnails.filter { kept.contains($0.key) }
+        }
     }
 
     // ---- editing ---------------------------------------------------------
@@ -497,6 +652,10 @@ public final class SessionStore {
         // rectangle refreshed only when the version moved would be one the
         // engine had already stopped agreeing with.
         refreshCropRect()
+        // Before the version check for the same reason: which photograph of the
+        // set is on screen is not in the snapshot, and neither is the edited
+        // mark on the one just switched away from.
+        refreshLibrary()
         guard session.snapshotVersion != snapshot.version else { return }
         do {
             snapshot = try session.snapshot()
