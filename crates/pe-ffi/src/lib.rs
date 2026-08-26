@@ -726,6 +726,170 @@ pub unsafe extern "C" fn pe_session_remove_pin(
     })
 }
 
+// ---- geometry -------------------------------------------------------------
+
+/// The value of `aspect` that asks for the source photograph's own
+/// proportions.
+///
+/// [`pe_core::AspectLock`] has three arms and `aspect` is one float, because
+/// the alternative on a drag path is an enum across the ABI plus a second
+/// parameter to carry its payload. So: a positive number is a fixed
+/// width-to-height ratio, this one value is the source's own proportions, and
+/// every other value at or below zero is free. It is negative precisely
+/// because no ratio computed from two positive edges can collide with it, and
+/// it is named here — and in the generated header — rather than left as a bare
+/// `-1.0` in somebody's comment.
+pub const PE_ASPECT_ORIGINAL: f32 = -1.0;
+
+/// Read the `aspect` parameter. See [`PE_ASPECT_ORIGINAL`].
+///
+/// Infinity and NaN fall through to free rather than becoming a ratio no crop
+/// can hold.
+fn aspect_lock(aspect: f32) -> pe_core::AspectLock {
+    if aspect == PE_ASPECT_ORIGINAL {
+        pe_core::AspectLock::Original
+    } else if aspect > 0.0 && aspect.is_finite() {
+        pe_core::AspectLock::Ratio { w: aspect, h: 1.0 }
+    } else {
+        pe_core::AspectLock::Free
+    }
+}
+
+/// Write the `aspect` parameter back.
+///
+/// A ratio crosses as the single number `w / h`, so a lock a document spells
+/// `16:9` reads back here as `1.777…`. That is all the crop arithmetic ever
+/// wanted; the snapshot carries `aspect_w` and `aspect_h` separately for
+/// anything that needs to *print* the lock rather than apply it.
+fn aspect_value(lock: pe_core::AspectLock) -> f32 {
+    match lock {
+        pe_core::AspectLock::Free => 0.0,
+        pe_core::AspectLock::Original => PE_ASPECT_ORIGINAL,
+        // The same guard `AspectLock::ratio` uses, so a malformed lock on a
+        // document from disk crosses as a finite number rather than infinity —
+        // which would come back in as free and quietly drop the lock.
+        pe_core::AspectLock::Ratio { w, h } => w / h.max(1e-6),
+    }
+}
+
+/// Set the crop, straighten and flips, and write back what was actually
+/// stored.
+///
+/// **The values written back are frequently not the ones passed in, and that
+/// is the point of this function.** The engine corrects what it is given:
+/// quarter-turns are taken modulo four, a locked aspect re-shapes the crop,
+/// and the crop is then slid — and, if it still will not fit anywhere,
+/// shrunk — back inside the straightened source. What comes back is what the
+/// document now holds, so no shell ever needs a second copy of `apply_aspect`,
+/// `slide_to_fit` and `shrink_to_fit` to keep honest. A caller that ignores
+/// the out-parameters and goes on drawing what it asked for is drawing a
+/// rectangle the renderer does not produce, and that rectangle will jump to
+/// the real one the moment the drag ends and the snapshot is read again.
+///
+/// `cx` and `cy` are the crop's centre as an offset from the middle of the
+/// source, in units of the source's own width and height; `w` and `h` are its
+/// size as a fraction of the source; `angle` is degrees, positive
+/// anticlockwise; `turns` is quarter-turns clockwise. `aspect` is a positive
+/// width-to-height ratio, [`PE_ASPECT_ORIGINAL`] for the source's own
+/// proportions, or anything else at or below zero for free.
+///
+/// Every out-pointer may be null; pass nulls when only the status is wanted.
+/// The two flips have no out-parameter because nothing corrects them — they
+/// are stored exactly as given.
+///
+/// Nine in, seven out, all primitives: this is a drag path, and a JSON parse
+/// per frame to carry seven numbers is work nobody needs done.
+///
+/// Returns 0, `-1` for a null handle, or `-2` with nothing open.
+///
+/// # Safety
+/// `s` must be valid or null; each non-null out-pointer must be writable.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn pe_session_set_geometry(
+    s: *mut PeSession,
+    cx: f32,
+    cy: f32,
+    w: f32,
+    h: f32,
+    angle: f32,
+    turns: u32,
+    flip_h: bool,
+    flip_v: bool,
+    aspect: f32,
+    out_cx: *mut f32,
+    out_cy: *mut f32,
+    out_w: *mut f32,
+    out_h: *mut f32,
+    out_angle: *mut f32,
+    out_turns: *mut u32,
+    out_aspect: *mut f32,
+) -> i32 {
+    let want = pe_core::Geometry {
+        centre: [cx, cy],
+        size: [w, h],
+        angle,
+        // 256 is a multiple of four, so narrowing first would give the same
+        // answer; taking the remainder first says why.
+        turns: (turns % 4) as u8,
+        flip_h,
+        flip_v,
+        aspect: aspect_lock(aspect),
+    };
+    with(s, -1, move |s| match s.inner.set_geometry(want) {
+        Ok(g) => {
+            s.last_error = None;
+            unsafe {
+                if !out_cx.is_null() {
+                    out_cx.write(g.centre[0]);
+                }
+                if !out_cy.is_null() {
+                    out_cy.write(g.centre[1]);
+                }
+                if !out_w.is_null() {
+                    out_w.write(g.size[0]);
+                }
+                if !out_h.is_null() {
+                    out_h.write(g.size[1]);
+                }
+                if !out_angle.is_null() {
+                    out_angle.write(g.angle);
+                }
+                if !out_turns.is_null() {
+                    out_turns.write(g.turns as u32);
+                }
+                if !out_aspect.is_null() {
+                    out_aspect.write(aspect_value(g.aspect));
+                }
+            }
+            0
+        }
+        Err(e) => {
+            s.last_error = Some(e.to_string());
+            -2
+        }
+    })
+}
+
+/// Put the crop, straighten and flips back to the whole frame.
+///
+/// [`pe_session_set_geometry`] with the default would do the same thing, but
+/// "back to the original" is something a user asks for directly, and a shell
+/// should not have to spell out nine arguments — seven of them zero — to say
+/// it. Nothing is written back because there is nothing to correct: the answer
+/// is always the whole frame.
+///
+/// Returns 0, `-1` for a null handle, or `-2` with nothing open.
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_reset_geometry(s: *mut PeSession) -> i32 {
+    status(s, |s| {
+        s.set_geometry(pe_core::Geometry::default()).map(|_| ())
+    })
+}
+
 // ---- history --------------------------------------------------------------
 
 /// Bracket a drag so it becomes one undo step rather than three hundred.
@@ -1582,6 +1746,353 @@ mod tests {
         assert_eq!(pins[0]["to"][0].as_f64().unwrap() as f32, 0.28);
 
         unsafe { pe_session_free(s) };
+    }
+
+    /// The `geometry` block of the snapshot — the document's own view of the
+    /// crop, which is what the out-parameters have to agree with.
+    fn geometry_of(s: *mut PeSession) -> serde_json::Value {
+        snapshot(s)["geometry"].clone()
+    }
+
+    /// Everything the seven out-parameters can hold, so a test can ask for all
+    /// of them without seven `let mut`s each time.
+    #[derive(Default)]
+    struct Out {
+        cx: f32,
+        cy: f32,
+        w: f32,
+        h: f32,
+        angle: f32,
+        turns: u32,
+        aspect: f32,
+    }
+
+    impl Out {
+        /// What the engine stored, rebuilt from what it wrote back. The flips
+        /// have no out-parameter, so they are passed in here.
+        fn geometry(&self, flip_h: bool, flip_v: bool) -> pe_core::Geometry {
+            pe_core::Geometry {
+                centre: [self.cx, self.cy],
+                size: [self.w, self.h],
+                angle: self.angle,
+                turns: self.turns as u8,
+                flip_h,
+                flip_v,
+                aspect: pe_core::AspectLock::Free,
+            }
+        }
+    }
+
+    #[test]
+    fn a_geometry_crosses_and_comes_back_corrected() {
+        let s = pe_session_new();
+        unsafe { pe_session_open_test_chart(s, 64, 64) };
+
+        // A crop hanging off the top corner, and five quarter-turns, which is
+        // one.
+        let mut o = Out::default();
+        assert_eq!(
+            unsafe {
+                pe_session_set_geometry(
+                    s,
+                    0.9,
+                    0.9,
+                    0.5,
+                    0.5,
+                    0.0,
+                    5,
+                    true,
+                    false,
+                    0.0,
+                    &mut o.cx,
+                    &mut o.cy,
+                    &mut o.w,
+                    &mut o.h,
+                    &mut o.angle,
+                    &mut o.turns,
+                    &mut o.aspect,
+                )
+            },
+            0
+        );
+
+        // The engine corrected. Not "a status of 0 came back" — the numbers
+        // themselves are different ones.
+        assert_eq!(o.turns, 1, "five quarter-turns is one");
+        assert_ne!(
+            (o.cx, o.cy),
+            (0.9, 0.9),
+            "the crop was left hanging off the edge"
+        );
+        assert!(
+            o.geometry(true, false).fits(64, 64),
+            "what came back is still outside the source: {:?}",
+            o.geometry(true, false)
+        );
+
+        // And what came back is what the document holds, to the bit. Read as
+        // f32 both sides: the values were stored as f32, and widening them to
+        // f64 for JSON changes the printing, not the number.
+        let g = geometry_of(s);
+        assert_eq!(g["centre"][0].as_f64().unwrap() as f32, o.cx);
+        assert_eq!(g["centre"][1].as_f64().unwrap() as f32, o.cy);
+        assert_eq!(g["size"][0].as_f64().unwrap() as f32, o.w);
+        assert_eq!(g["size"][1].as_f64().unwrap() as f32, o.h);
+        assert_eq!(g["angle"].as_f64().unwrap() as f32, o.angle);
+        assert_eq!(g["turns"], 1);
+        // The flips are never corrected, which is why they have no
+        // out-parameter; they still have to arrive.
+        assert_eq!(g["flip_h"], true);
+        assert_eq!(g["flip_v"], false);
+        assert_eq!(g["aspect"], "free");
+
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn a_null_out_pointer_is_allowed() {
+        let s = pe_session_new();
+        unsafe { pe_session_open_test_chart(s, 64, 64) };
+
+        // A caller that does not care what was stored passes nulls and gets a
+        // status code. A 0.4 crop straightened by 12 degrees fits as it
+        // stands, so there is nothing to correct and the document should hold
+        // exactly what was asked for.
+        assert_eq!(
+            unsafe {
+                pe_session_set_geometry(
+                    s,
+                    0.0,
+                    0.0,
+                    0.4,
+                    0.4,
+                    12.0,
+                    0,
+                    false,
+                    true,
+                    0.0,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                )
+            },
+            0
+        );
+
+        let g = geometry_of(s);
+        assert_eq!(g["angle"].as_f64().unwrap() as f32, 12.0);
+        assert_eq!(g["size"][0].as_f64().unwrap() as f32, 0.4);
+        assert_eq!(g["size"][1].as_f64().unwrap() as f32, 0.4);
+        assert_eq!(g["flip_v"], true);
+
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn resetting_puts_it_back_to_the_whole_frame() {
+        let s = pe_session_new();
+        unsafe { pe_session_open_test_chart(s, 64, 64) };
+
+        let mut o = Out::default();
+        assert_eq!(
+            unsafe {
+                pe_session_set_geometry(
+                    s,
+                    0.1,
+                    -0.05,
+                    0.3,
+                    0.3,
+                    20.0,
+                    2,
+                    true,
+                    true,
+                    PE_ASPECT_ORIGINAL,
+                    &mut o.cx,
+                    &mut o.cy,
+                    &mut o.w,
+                    &mut o.h,
+                    &mut o.angle,
+                    &mut o.turns,
+                    &mut o.aspect,
+                )
+            },
+            0
+        );
+        assert_ne!(geometry_of(s)["angle"], 0.0, "nothing was set to reset");
+
+        assert_eq!(unsafe { pe_session_reset_geometry(s) }, 0);
+
+        let g = geometry_of(s);
+        assert_eq!(g["centre"][0].as_f64().unwrap() as f32, 0.0);
+        assert_eq!(g["centre"][1].as_f64().unwrap() as f32, 0.0);
+        assert_eq!(g["size"][0].as_f64().unwrap() as f32, 1.0);
+        assert_eq!(g["size"][1].as_f64().unwrap() as f32, 1.0);
+        assert_eq!(g["angle"].as_f64().unwrap() as f32, 0.0);
+        assert_eq!(g["turns"], 0);
+        assert_eq!(g["flip_h"], false);
+        assert_eq!(g["flip_v"], false);
+        assert_eq!(g["aspect"], "free", "the lock is part of the whole frame");
+
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn a_locked_ratio_reshapes_the_crop_and_comes_back_as_one() {
+        let s = pe_session_new();
+        unsafe { pe_session_open_test_chart(s, 64, 64) };
+
+        // 2:1 against a square crop of a square source: the height gives way,
+        // because `apply_aspect` never grows the crop.
+        let mut o = Out::default();
+        assert_eq!(
+            unsafe {
+                pe_session_set_geometry(
+                    s,
+                    0.0,
+                    0.0,
+                    0.8,
+                    0.8,
+                    0.0,
+                    0,
+                    false,
+                    false,
+                    2.0,
+                    &mut o.cx,
+                    &mut o.cy,
+                    &mut o.w,
+                    &mut o.h,
+                    &mut o.angle,
+                    &mut o.turns,
+                    &mut o.aspect,
+                )
+            },
+            0
+        );
+        assert_eq!((o.w, o.h), (0.8, 0.4), "the lock did not re-shape the crop");
+        assert_eq!(o.aspect, 2.0);
+
+        let g = geometry_of(s);
+        assert_eq!(g["aspect"], "ratio");
+        assert_eq!(g["aspect_w"].as_f64().unwrap() as f32, 2.0);
+        assert_eq!(g["aspect_h"].as_f64().unwrap() as f32, 1.0);
+        assert_eq!(g["size"][1].as_f64().unwrap() as f32, o.h);
+
+        unsafe { pe_session_free(s) };
+    }
+
+    /// The third arm has to survive the round trip. If it came back as the
+    /// number the source's proportions happen to work out to, the next frame
+    /// of the drag would hand that number back in as a fixed ratio and the
+    /// lock would quietly stop being "Original" — a control changing its own
+    /// value behind the user's back.
+    #[test]
+    fn an_original_lock_comes_back_as_original_and_not_as_a_ratio() {
+        let s = pe_session_new();
+        unsafe { pe_session_open_test_chart(s, 64, 64) };
+
+        let mut o = Out::default();
+        assert_eq!(
+            unsafe {
+                pe_session_set_geometry(
+                    s,
+                    0.0,
+                    0.0,
+                    0.8,
+                    0.8,
+                    0.0,
+                    0,
+                    false,
+                    false,
+                    PE_ASPECT_ORIGINAL,
+                    &mut o.cx,
+                    &mut o.cy,
+                    &mut o.w,
+                    &mut o.h,
+                    &mut o.angle,
+                    &mut o.turns,
+                    &mut o.aspect,
+                )
+            },
+            0
+        );
+        assert_eq!(o.aspect, PE_ASPECT_ORIGINAL);
+
+        let g = geometry_of(s);
+        assert_eq!(g["aspect"], "original");
+        assert!(g["aspect_w"].is_null(), "original carries no ratio");
+
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn a_geometry_with_nothing_open_is_refused_and_a_null_handle_is_told_apart() {
+        // Nothing open: -2, with a message to go with it.
+        let s = pe_session_new();
+        assert_eq!(
+            unsafe {
+                pe_session_set_geometry(
+                    s,
+                    0.0,
+                    0.0,
+                    1.0,
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                    false,
+                    0.0,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                )
+            },
+            -2
+        );
+        assert_eq!(unsafe { pe_session_reset_geometry(s) }, -2);
+        let err = unsafe { pe_session_last_error(s) };
+        assert!(
+            !err.is_null(),
+            "-2 without a message is a bug report nobody can write"
+        );
+        unsafe { pe_string_free(err) };
+        unsafe { pe_session_free(s) };
+
+        // A null handle: -1, and nowhere to have recorded anything.
+        let mut o = Out::default();
+        assert_eq!(
+            unsafe {
+                pe_session_set_geometry(
+                    ptr::null_mut(),
+                    0.0,
+                    0.0,
+                    1.0,
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                    false,
+                    0.0,
+                    &mut o.cx,
+                    &mut o.cy,
+                    &mut o.w,
+                    &mut o.h,
+                    &mut o.angle,
+                    &mut o.turns,
+                    &mut o.aspect,
+                )
+            },
+            -1
+        );
+        assert_eq!(o.w, 0.0, "a refused call wrote to the caller's memory");
+        assert_eq!(unsafe { pe_session_reset_geometry(ptr::null_mut()) }, -1);
     }
 
     #[test]
