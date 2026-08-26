@@ -64,7 +64,7 @@ Both hang off `Geometry`, so the panel and the overlay cannot disagree.
 - Modify: `crates/pe-session/src/describe.rs`, `session.rs`
 - Modify: `crates/pe-session/tests/fixtures.rs` (the snapshot gains a field)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `Geometry` is not in the snapshot at all — `grep -c geometry crates/pe-session/src/describe.rs` returns 0 — so Swift cannot see the current crop. Put it there, and give the session a setter that corrects what it is given.
 
@@ -148,7 +148,7 @@ Check `s.describe()` is what produces the snapshot and follow its actual
 spelling; `AspectLock` is an enum and needs a wire form Swift can read — look
 at how `ParamValue::Choice` does it and pick something as simple.
 
-- [ ] **Step 2: Write it**
+- [x] **Step 2: Write it**
 
 `Session::geometry()` returning `Option<Geometry>`, and:
 
@@ -171,7 +171,7 @@ and follow what the Windows tool does rather than inventing an order.
 Adding a field to the snapshot changes `apps/apple/Fixtures/snapshot.json`;
 regenerate it and confirm from the diff that **only** the geometry block is new.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 Baseline **684 Rust passed, 0 failed, 1 ignored**. Report the real number.
 
@@ -189,7 +189,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add -A && git commit -m "
 **Files:**
 - Modify: `crates/pe-ffi/src/lib.rs`
 
-- [ ] **Step 1: The two entry points**
+- [x] **Step 1: The two entry points**
 
 ```rust
 /// Set the crop, straighten and flips, and write back what was actually
@@ -232,7 +232,7 @@ directly and a shell should not have to construct a default to say it.
 Document it on both sides; a magic value nobody wrote down is worse than an
 enum.
 
-- [ ] **Step 2: Tests**
+- [x] **Step 2: Tests**
 
 Following `a_vertex_crosses_the_boundary_and_a_bad_one_is_refused`:
 
@@ -257,7 +257,7 @@ Following `a_vertex_crosses_the_boundary_and_a_bad_one_is_refused`:
 Fill each in against the real snapshot, as the warp and pin tests do. Assert on
 the *document*, not only the return code — a status alone proves nothing.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 ```bash
 cd "/Volumes/Projects/Programming/photo editor" && git add crates && git commit -m "Swift proposes a crop and the engine says what it really is"
@@ -271,14 +271,14 @@ cd "/Volumes/Projects/Programming/photo editor" && git add crates && git commit 
 - Modify: `apps/apple/KromaKit/Snapshot.swift`, `Engine.swift`, `SessionStore.swift`
 - Modify: `apps/apple/KromaKitTests/SnapshotTests.swift`, `EngineTests.swift`
 
-- [ ] **Step 1: Decode**
+- [x] **Step 1: Decode**
 
 `GeometryValue` mirroring the seven fields, with `isIdentity`. Decoded from the
 snapshot's new `geometry` block. The existing snapshot tests must still pass —
 if one decodes strictly and now fails, that is Task 1's change arriving, and
 the fix is here.
 
-- [ ] **Step 2: Set**
+- [x] **Step 2: Set**
 
 `Session.setGeometry(_:) throws -> GeometryValue` — **returns the corrected
 value**, which is the whole point. The doc comment must say so, because a call
@@ -287,7 +287,7 @@ site that discards it will draw a crop the engine did not accept.
 `SessionStore.setGeometry` holds the corrected value for the overlay to draw
 and skips the snapshot refresh mid-drag, like every other drag path here.
 
-- [ ] **Step 3: Tests**
+- [x] **Step 3: Tests**
 
 ```swift
     func testACropThatHangsOffTheEdgeComesBackInside()
@@ -295,7 +295,7 @@ and skips the snapshot refresh mid-drag, like every other drag path here.
     func testResettingRestoresTheWholeFrame()
 ```
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ---
 
@@ -305,7 +305,7 @@ and skips the snapshot refresh mid-drag, like every other drag path here.
 - Create: `apps/apple/KromaKit/Controls/CropOverlay.swift`
 - Modify: `apps/apple/KromaKit/MetalViewer.swift` or `PhotoEditor/ContentView.swift`
 
-- [ ] **Step 1: Draw it**
+- [x] **Step 1: Draw it**
 
 While the tool is open the viewer shows the **enclosing** frame — the whole
 source, straightened — rather than the cropped result. That is what makes the
@@ -319,7 +319,7 @@ Each drag: work out the proposed geometry, call `store.setGeometry`, and draw
 **what came back**. Never draw the proposal — the engine may have corrected it,
 and drawing the proposal is a rectangle that jumps when the drag ends.
 
-- [ ] **Step 2: Test what a render can show**
+- [x] **Step 2: Test what a render can show**
 
 The grips and the dimming are appearance; use the `ImageRenderer` approach that
 `RowMetricsTests`, `CurveBackdropTests` and `WarperCloudTests` established, and
@@ -329,7 +329,7 @@ Worth pinning: the region outside the crop is dimmer than inside; a corner grip
 sits on a corner; dragging a corner past the frame does not move the rectangle
 outside it.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 ---
 
@@ -350,7 +350,7 @@ showing me". This task removes both problems with the same change.
 - Modify: `apps/apple/KromaKit/Engine.swift`, `SessionStore.swift`,
   `Controls/CropOverlay.swift`
 
-- [ ] **Step 1: A framing override in the session**
+- [x] **Step 1: A framing override in the session**
 
 `Session::graded` renders `doc.geometry` directly (`session.rs:856`). The
 Windows shell does not: `preview.rs::render` takes a `framing: Geometry` —
@@ -377,7 +377,7 @@ change does, or the viewer will not repaint.
 Tests: that turning it on changes the rendered size to the enclosing frame's,
 that turning it off restores the crop, and that it is off by default.
 
-- [ ] **Step 2: The crop, in the frame being shown**
+- [x] **Step 2: The crop, in the frame being shown**
 
 ```rust
 pe_session_set_cropping(s, cropping: bool) -> i32
@@ -393,7 +393,7 @@ pe_session_set_crop_in_frame(s, u0, v0, u1, v1,
                              out_u0, out_v0, out_u1, out_v1) -> i32
 ```
 
-- [ ] **Step 3: Delete the Swift copy**
+- [x] **Step 3: Delete the Swift copy**
 
 `CropFrame`'s `enclosing`, `crop_uv_in` and `set_crop_uv_in` go, and with them
 the hand-transcribed expected values in `CropOverlayTests` that stood in for a
@@ -403,7 +403,7 @@ put it; the drag still draws only what came back.
 The mutation tests from Task 4 must still pass — they are about the overlay's
 behaviour, not about who does the arithmetic.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Baselines at the time of writing: **701 Rust**, **237 Swift**. Report the real
 numbers, and run the non-Apple check.
@@ -421,7 +421,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add -A && git commit -m "
 - Modify: `apps/apple/KromaKit/Controls/ToolStrip.swift`, `PhotoEditor/ContentView.swift`
 - Modify: `crates/pe-effects/src/tool.rs`
 
-- [ ] **Step 1: A tool that owns no effects**
+- [x] **Step 1: A tool that owns no effects**
 
 `Tool.Effects` already draws no pinned effects; Crop is the second such tool —
 it edits the document's geometry rather than a row in the stack. Add it to
@@ -432,24 +432,24 @@ existing test `every_pinned_effect_belongs_to_exactly_one_tool` still holds;
 Symbol: `crop` resolves on macOS 14 — **verify it, do not assume**, the way
 `ToolStripTests` already does for the other six.
 
-- [ ] **Step 2: The panel**
+- [x] **Step 2: The panel**
 
 Aspect lock (Free, Original, and the usual ratios), the angle as a `ScalarRow`
 so it looks like every other row, four quarter-turn and flip buttons, and a
 reset. All through `store.setGeometry`, all drawing the corrected value.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 ---
 
 ## Task 6: Look at it, then write it down
 
-- [ ] **Step 1** — `caffeinate -u -t 600 &` **before launching**; a sleeping
+- [x] **Step 1** — `caffeinate -u -t 600 &` **before launching**; a sleeping
 display returns a black frame and, if it sleeps before launch, defers the
 window so `System Events` reports none. Capture the tool open, a corner drag,
 and a straighten. Read the images.
 
-- [ ] **Step 2** — `apps/apple/README.md`: crop is the seventh tool, the engine
+- [x] **Step 2** — `apps/apple/README.md`: crop is the seventh tool, the engine
 corrects what the shell proposes, and there is no fixture here because there is
 no duplicated arithmetic to hold together — say that, because every other port
 in this repository has one and its absence should look deliberate.

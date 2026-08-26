@@ -99,7 +99,10 @@ regenerating.
 ## One tool at a time
 
 The inspector shows one tool, chosen from an icon strip: Basic, Colour Wheels,
-Curves, Colour Warper, Colour Mixer, Effects. Which of the **eleven** pinned
+Curves, Colour Warper, Colour Mixer, Crop, Effects. Crop and Effects own no
+pinned effects — Crop edits the document's geometry rather than a row in the
+stack, and Effects shows whatever was added — and a test names both, so a third
+empty tool is a failure rather than a silently blank panel. Which of the **eleven** pinned
 effects each tool draws lives in `pe_effects::Tool` and travels in
 `Fixtures/theme.json`, because once the panel shows one tool an effect that
 belongs to no tool is drawn nowhere at all — not truncated, not greyed, simply
@@ -118,6 +121,31 @@ A selected tool is `SELECT`, not the accent: "this is chosen" and "this is what
 you are working in" are different facts. The accent goes on an effect's name
 only where the effect *is* the tool — Curves, the Warper, the Mixer. Basic draws
 six effects and six accented names is no more use than none.
+
+## Crop, and why it has no fixture
+
+Every other port here ends with a committed fixture, because each duplicated
+arithmetic across the language boundary and the fixture is what stops the two
+copies drifting. Crop has none, deliberately.
+
+`pe_core::Geometry` already owns the whole model *and* every rule about what
+makes one legal — `apply_aspect`, `slide_to_fit`, `shrink_to_fit`, `enclosing`,
+`crop_uv_in`. So Swift reimplements nothing. It **proposes** a crop, the engine
+**corrects** it, and the corrected value comes straight back through
+out-parameters: `Session.setGeometry` returns a `GeometryValue` and is
+deliberately not `@discardableResult`, so discarding the correction has to be
+written down at the call site. A panel or an overlay that drew what it asked for
+instead would disagree with the engine and jump the moment the drag ended.
+
+While the tool is open the viewer shows the **enclosing** frame — the whole
+straightened source — rather than the cropped result, because otherwise there is
+nothing to drag back into. That is a flag (`pe_session_set_cropping`) rather
+than a geometry, so no shell has to know how to compute the frame.
+
+One consequence worth knowing: the scopes measure the enclosing frame while the
+crop tool is open, blank corners included. The Windows shell keeps a second
+texture and measures the crop; matching it would make the working texture thrash
+between the scope render and the present on every frame with both panels open.
 
 ## The scheme
 
