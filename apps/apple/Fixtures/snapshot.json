@@ -1058,6 +1058,21 @@
     "input": "sRGB",
     "output": "sRGB"
   },
+  "geometry": {
+    "centre": [
+      0.0,
+      0.0
+    ],
+    "size": [
+      1.0,
+      1.0
+    ],
+    "angle": 0.0,
+    "turns": 0,
+    "flip_h": false,
+    "flip_v": false,
+    "aspect": "free"
+  },
   "passes": 0,
   "can_undo": true,
   "can_redo": false,

@@ -232,6 +232,46 @@ impl Session {
             .map_or((0, 0), |p| (p.image.width, p.image.height))
     }
 
+    /// The crop, straighten and flips the document holds, or `None` when
+    /// nothing is open.
+    pub fn geometry(&self) -> Option<Geometry> {
+        Some(self.document()?.geometry)
+    }
+
+    /// Set the crop, straighten and flips, and return what was actually
+    /// stored.
+    ///
+    /// The engine corrects: a crop is brought inside the straightened source
+    /// and a locked aspect is honoured. The caller is handed the corrected
+    /// value rather than the one it asked for, because the alternative is a
+    /// shell drawing a rectangle the renderer will not produce — and because
+    /// the rules live on [`Geometry`], where they are tested, rather than in
+    /// each shell.
+    ///
+    /// The order is `apps/windows/src/crop.rs`'s. Its aspect button sets the
+    /// lock and calls `apply_aspect` before the fit, and its `edit` closes
+    /// every change with `shrink_to_fit`; the one exception is Position, which
+    /// slides instead, because *moving* a rectangle does not make it stop
+    /// fitting the way *straightening* it does, and shrinking there would let
+    /// one control quietly write another's value. A whole proposed geometry is
+    /// both at once, so it gets both, in that order: shape it, slide it back
+    /// from wherever the crop legally was, and shrink only if it still cannot
+    /// fit anywhere.
+    pub fn set_geometry(&mut self, want: Geometry) -> Result<Geometry, SessionError> {
+        let photo = self.photo.as_ref().ok_or(SessionError::NothingOpen)?;
+        let (w, h) = (photo.image.width, photo.image.height);
+        let from = photo.history.document().geometry.centre;
+
+        let mut g = want;
+        g.turns %= 4;
+        g.apply_aspect(w, h);
+        g.slide_to_fit(from, w, h);
+        g.shrink_to_fit(w, h);
+
+        self.edit("Crop", move |doc| doc.geometry = g)?;
+        Ok(g)
+    }
+
     pub fn undo_label(&self) -> Option<String> {
         self.photo
             .as_ref()?
@@ -1937,5 +1977,120 @@ mod tests {
             s.scopes().is_none(),
             "an edit should discard the measurement it invalidated"
         );
+    }
+
+    // ---- geometry -------------------------------------------------------
+
+    #[test]
+    fn a_fresh_document_has_no_crop_and_says_so() {
+        let s = chart_session();
+        let g = s.geometry().expect("something is open");
+        assert!(g.is_identity(), "a fresh photograph is not cropped");
+    }
+
+    /// The engine corrects what it is handed. A crop that hangs off the edge is
+    /// not a crop anyone can render, and the shell should not have to know the
+    /// rules to avoid proposing one — that is what `shrink_to_fit` and
+    /// `slide_to_fit` are for, and they live here.
+    #[test]
+    fn a_crop_that_hangs_off_the_edge_is_brought_back_inside() {
+        let mut s = chart_session();
+        let (w, h) = s.image_size();
+        let want = pe_core::Geometry {
+            centre: [0.9, 0.9],
+            size: [0.5, 0.5],
+            ..Default::default()
+        };
+        let got = s.set_geometry(want).unwrap();
+        assert!(
+            got.fits(w, h),
+            "the engine returned a crop that is not inside the source: {got:?}"
+        );
+        assert_ne!(got.centre, want.centre, "nothing was corrected");
+    }
+
+    /// And a move is a move: it slides back to the edge rather than shrinking,
+    /// which is the distinction `apps/windows` draws between Position and
+    /// everything else. Shrinking here would let one control write another's
+    /// value.
+    #[test]
+    fn a_crop_that_is_slid_back_keeps_its_size() {
+        let mut s = chart_session();
+        let want = pe_core::Geometry {
+            centre: [0.9, 0.9],
+            size: [0.5, 0.5],
+            ..Default::default()
+        };
+        let got = s.set_geometry(want).unwrap();
+        assert_eq!(got.size, want.size, "a move resized the crop");
+    }
+
+    /// And the corrected value is what the document holds — the caller is told
+    /// the truth rather than being left holding what it asked for.
+    #[test]
+    fn what_comes_back_is_what_was_stored() {
+        let mut s = chart_session();
+        let want = pe_core::Geometry {
+            angle: 12.0,
+            size: [0.4, 0.4],
+            ..Default::default()
+        };
+        let got = s.set_geometry(want).unwrap();
+        assert_eq!(s.geometry().unwrap(), got);
+    }
+
+    #[test]
+    fn a_locked_aspect_is_honoured() {
+        let mut s = chart_session();
+        let (w, h) = s.image_size();
+        let want = pe_core::Geometry {
+            aspect: pe_core::AspectLock::Ratio { w: 1.0, h: 1.0 },
+            size: [0.8, 0.4],
+            ..Default::default()
+        };
+        let got = s.set_geometry(want).unwrap();
+        let (ow, oh) = got.output_size(w, h);
+        assert!(
+            (ow as f32 / oh as f32 - 1.0).abs() < 0.02,
+            "a square lock produced {ow}x{oh}"
+        );
+    }
+
+    /// Straightening is the case that must shrink: the rotated rectangle
+    /// genuinely does not fit any more, wherever it is put.
+    #[test]
+    fn straightening_a_full_frame_cuts_it_in() {
+        let mut s = chart_session();
+        let (w, h) = s.image_size();
+        let want = pe_core::Geometry {
+            angle: 10.0,
+            ..Default::default()
+        };
+        let got = s.set_geometry(want).unwrap();
+        assert!(got.fits(w, h), "{got:?} still hangs off the edge");
+        assert!(got.size[0] < 1.0, "a straightened crop was not cut in");
+        assert_eq!(got.angle, 10.0, "the angle asked for was not kept");
+    }
+
+    #[test]
+    fn setting_a_geometry_with_nothing_open_is_refused() {
+        let mut s = Session::new();
+        assert!(s.set_geometry(pe_core::Geometry::default()).is_err());
+        assert!(s.geometry().is_none());
+    }
+
+    /// A crop is an edit like any other, so it takes its place in the history
+    /// rather than changing the picture behind undo's back.
+    #[test]
+    fn a_crop_can_be_undone() {
+        let mut s = chart_session();
+        let want = pe_core::Geometry {
+            size: [0.5, 0.5],
+            ..Default::default()
+        };
+        s.set_geometry(want).unwrap();
+        assert!(s.can_undo());
+        s.undo().unwrap();
+        assert!(s.geometry().unwrap().is_identity());
     }
 }

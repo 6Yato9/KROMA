@@ -226,6 +226,9 @@ pub struct Snapshot {
     pub height: u32,
     pub rows: Vec<Row>,
     pub color: Color,
+    /// The crop the document holds. Always present — the identity when nothing
+    /// is open — so the shell draws the overlay from one branch and not two.
+    pub geometry: GeometryJson,
     /// Passes the last frame executed. The number that proves the stage cache
     /// works: with a nine-row stack, dragging the deepest slider reads 1.
     pub passes: usize,
@@ -259,6 +262,54 @@ pub struct Row {
 pub struct Color {
     pub input: String,
     pub output: String,
+}
+
+/// The crop, straighten, quarter-turns and flips.
+///
+/// Flat, like everything else here. `AspectLock` is a Rust enum with a payload
+/// on one of its three arms, and that shape costs an `if let` on each side of
+/// the wire for no gain — so it travels the way a `Choice` travels: `aspect` is
+/// a string naming the arm, and the two numbers that only a ratio has are set
+/// only when it is one.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GeometryJson {
+    /// Centre of the crop as an offset from the middle of the source, in units
+    /// of the source's own width and height.
+    pub centre: [f32; 2],
+    /// Size of the crop as a fraction of the source.
+    pub size: [f32; 2],
+    /// Straightening angle in degrees, positive anticlockwise.
+    pub angle: f32,
+    /// Quarter-turns clockwise, 0 to 3.
+    pub turns: u8,
+    pub flip_h: bool,
+    pub flip_v: bool,
+    /// One of: free, original, ratio.
+    pub aspect: String,
+    /// Set only when `aspect` is `ratio`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aspect_w: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aspect_h: Option<f32>,
+}
+
+fn geometry(g: &pe_core::Geometry) -> GeometryJson {
+    let (aspect, aspect_w, aspect_h) = match g.aspect {
+        pe_core::AspectLock::Free => ("free", None, None),
+        pe_core::AspectLock::Original => ("original", None, None),
+        pe_core::AspectLock::Ratio { w, h } => ("ratio", Some(w), Some(h)),
+    };
+    GeometryJson {
+        centre: g.centre,
+        size: g.size,
+        angle: g.angle,
+        turns: g.turns,
+        flip_h: g.flip_h,
+        flip_v: g.flip_v,
+        aspect: aspect.to_string(),
+        aspect_w,
+        aspect_h,
+    }
 }
 
 pub fn snapshot(session: &crate::Session) -> Snapshot {
@@ -306,6 +357,7 @@ pub fn snapshot(session: &crate::Session) -> Snapshot {
             input: doc.map(|d| d.color.input.clone()).unwrap_or_default(),
             output: doc.map(|d| d.color.output.clone()).unwrap_or_default(),
         },
+        geometry: geometry(&session.geometry().unwrap_or_default()),
         passes: session.last_passes(),
         can_undo: session.can_undo(),
         can_redo: session.can_redo(),
@@ -427,6 +479,58 @@ mod tests {
         let snap = snapshot(&s);
         assert!(snap.can_undo);
         assert_eq!(snap.undo_label.as_deref(), Some("Add Exposure"));
+    }
+
+    /// The snapshot carries it, so the shell can draw the crop it is editing.
+    #[test]
+    fn the_snapshot_carries_the_geometry() {
+        let mut s = crate::Session::new();
+        s.open_test_chart(64, 64).unwrap();
+        let want = pe_core::Geometry {
+            angle: 7.5,
+            turns: 1,
+            flip_h: true,
+            ..Default::default()
+        };
+        s.set_geometry(want).unwrap();
+
+        let json = serde_json::to_value(snapshot(&s)).unwrap();
+        let g = &json["geometry"];
+        assert!((g["angle"].as_f64().unwrap() - 7.5).abs() < 1e-4);
+        assert_eq!(g["turns"], 1);
+        assert_eq!(g["flip_h"], true);
+    }
+
+    /// The aspect lock is a Rust enum, and it crosses as a string plus the two
+    /// numbers only a ratio has — the shape a choice takes everywhere else
+    /// here. A shell reads one field to know which arm it is.
+    #[test]
+    fn an_aspect_lock_crosses_as_a_name_and_its_numbers() {
+        let mut s = crate::Session::new();
+        s.open_test_chart(64, 64).unwrap();
+
+        let json = serde_json::to_value(snapshot(&s)).unwrap();
+        assert_eq!(json["geometry"]["aspect"], "free");
+        assert!(json["geometry"]["aspect_w"].is_null(), "free has no ratio");
+
+        let want = pe_core::Geometry {
+            aspect: pe_core::AspectLock::Ratio { w: 16.0, h: 9.0 },
+            ..Default::default()
+        };
+        s.set_geometry(want).unwrap();
+        let json = serde_json::to_value(snapshot(&s)).unwrap();
+        assert_eq!(json["geometry"]["aspect"], "ratio");
+        assert_eq!(json["geometry"]["aspect_w"], 16.0);
+        assert_eq!(json["geometry"]["aspect_h"], 9.0);
+    }
+
+    /// And a shut session still has one, so the shell draws its overlay from
+    /// one branch rather than two.
+    #[test]
+    fn a_snapshot_of_nothing_carries_an_uncropped_geometry() {
+        let snap = snapshot(&crate::Session::new());
+        assert_eq!(snap.geometry.size, [1.0, 1.0]);
+        assert_eq!(snap.geometry.aspect, "free");
     }
 
     #[test]
