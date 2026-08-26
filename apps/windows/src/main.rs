@@ -32,7 +32,7 @@ use pe_core::{Document, History, RowIdGenerator, Stack};
 use pe_session::export::{export_name, same_file, unclaimed_export_path};
 use pe_session::{Support, autosave};
 
-use crate::library::Library;
+use crate::library::{Library, Thumbnails};
 use pe_render::GpuContext;
 
 use crate::preview::{Framing, Preview, View};
@@ -177,6 +177,10 @@ pub struct App {
     /// Every photograph open at once. The current one's pixels and edit
     /// live in the fields above; the rest are parked here.
     library: Library,
+    /// The library's thumbnails, as textures this window can draw. The library
+    /// itself holds bytes — it is shared with a shell that has a different
+    /// idea of what a texture is.
+    thumbnails: Thumbnails,
     show_strip: bool,
     /// A grade waiting to be applied to another photograph.
     clipboard: Option<Stack>,
@@ -296,6 +300,7 @@ impl App {
             titled: false,
             view: View::default(),
             library,
+            thumbnails: Thumbnails::default(),
             show_strip,
             clipboard: None,
             batch: None,
@@ -448,6 +453,7 @@ impl App {
             return;
         }
         let was_current = index == self.library.current();
+        let leaving = self.library.path(index).map(|p| p.to_path_buf());
         // Its edit goes out first. Taking a photograph out of the set is not
         // "throw away what I did to it" — the file is untouched, and if it is
         // opened again the work should still be there.
@@ -455,6 +461,11 @@ impl App {
             self.flush_autosave();
         }
         self.library.remove(index);
+        if let Some(path) = leaving {
+            // The thumbnail's texture goes with the photograph. Nothing else
+            // in the window is holding it now.
+            self.thumbnails.forget(&path);
+        }
         self.remember_session();
         if self.library.is_empty() {
             self.status.problem("no photos open");
@@ -972,8 +983,10 @@ impl eframe::App for App {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Thumbnails arriving from the worker.
-        if self.library.collect(ctx) {
+        // Thumbnails arriving from the worker, as bytes; uploading them is
+        // this shell's half of the job.
+        if self.library.collect() {
+            self.thumbnails.upload(ctx, &self.library);
             ctx.request_repaint();
         }
         // One photograph of a batch per frame, so the window keeps drawing and
@@ -1337,7 +1350,7 @@ impl eframe::App for App {
                 .resizable(false)
                 .show(ctx, |ui| {
                     ui.add_space(2.0);
-                    action = filmstrip::strip(ui, &mut self.library);
+                    action = filmstrip::strip(ui, &mut self.library, &self.thumbnails);
                 });
         }
 

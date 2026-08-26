@@ -11,7 +11,7 @@
 //! between a strip that handles it and one that does not is entirely in
 //! whether it does work per photograph or per *visible* photograph.
 
-use crate::library::Library;
+use crate::library::{Library, Thumbnails};
 
 /// Size of one cell's picture area.
 const CELL: egui::Vec2 = egui::vec2(104.0, 74.0);
@@ -49,7 +49,11 @@ pub enum Action {
 }
 
 /// Draw the strip. Returns what the user did, if anything.
-pub fn strip(ui: &mut egui::Ui, library: &mut Library) -> Option<Action> {
+///
+/// The thumbnails come in beside the library rather than out of it: what the
+/// library holds is bytes, and the texture made from them belongs to the
+/// shell — see [`crate::library`].
+pub fn strip(ui: &mut egui::Ui, library: &mut Library, thumbs: &Thumbnails) -> Option<Action> {
     let mut clicked = None;
     let stride = CELL.y + GAP;
     let count = library.len();
@@ -72,7 +76,8 @@ pub fn strip(ui: &mut egui::Ui, library: &mut Library) -> Option<Action> {
                 );
                 let response = ui.interact(cell, ui.id().with(i), egui::Sense::click());
                 let entry = &library.entries()[i];
-                draw(ui, cell, entry, i == current, response.hovered());
+                let texture = thumbs.get(&entry.path);
+                draw(ui, cell, entry, texture, i == current, response.hovered());
                 if response.clicked() {
                     clicked = Some(Action::Show(i));
                 }
@@ -96,13 +101,17 @@ fn draw(
     ui: &egui::Ui,
     cell: egui::Rect,
     entry: &crate::library::Entry,
+    texture: Option<&egui::TextureHandle>,
     selected: bool,
     hovered: bool,
 ) {
     let painter = ui.painter_at(cell);
     painter.rect_filled(cell, 3.0, crate::theme::colour::WELL);
 
-    match (&entry.thumb, entry.failed) {
+    // The texture rather than `entry.thumb`: bytes that have arrived but not
+    // yet been uploaded are one frame away from being drawable, and until they
+    // are there is nothing to put in the cell.
+    match (texture, entry.failed) {
         (Some(texture), _) => {
             // Fit rather than fill: a filmstrip is for recognising a frame,
             // and cropping the frame to a common shape is a strange way to go

@@ -12,11 +12,13 @@
 pub mod autosave;
 pub mod describe;
 pub mod export;
+pub mod library;
 pub mod scopes;
 pub mod session;
 pub mod support;
 pub mod surface;
 
+pub use library::{Library, Thumbnail};
 pub use scopes::Scopes;
 pub use session::{Session, SessionError};
 pub use support::Support;
