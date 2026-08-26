@@ -1701,9 +1701,11 @@ dependencies = [
  "pe-color",
  "pe-core",
  "pe-effects",
+ "pe-io",
  "pe-scopes",
  "pe-session",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

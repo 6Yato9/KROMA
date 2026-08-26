@@ -298,6 +298,296 @@ pub unsafe extern "C" fn pe_session_row_count(s: *mut PeSession) -> i64 {
     with(s, -1, |s| s.inner.row_count() as i64)
 }
 
+// ---- the set --------------------------------------------------------------
+//
+// The photographs a session has open, for the filmstrip. Only one of them is
+// decoded — a 24-megapixel frame is 96 MB of RGBA, so a folder of two hundred
+// would be twenty gigabytes — and the whole point of a strip is to make a set
+// navigable without holding it. What crosses here is paths, three flags and a
+// 128-pixel thumbnail. Never a frame.
+//
+// [`Session::library`] answers `None` until a set is opened and again for the
+// built-in chart, which is not a file and therefore not a set of one. Every
+// function below has an answer for that: the counts say zero, the readers say
+// `-2` or null, and asking for thumbnails of nothing is a no-op rather than a
+// failure. None of those is `-1`, which stays a null handle throughout.
+
+/// Open a set of photographs, focused on the first. `paths_json` is a JSON
+/// array of file paths — `["/a.jpg","/b.jpg"]`.
+///
+/// JSON because rule 4 puts cold paths there: a file name is not a scalar, and
+/// there is no count of them known in advance, so the typed alternative is a
+/// pointer-and-length pair of a type this ABI is not allowed to name.
+///
+/// Returns 0; `-1` for a null handle, for a null or non-UTF-8 `paths_json`, or
+/// for JSON that is not an array of strings; `-2` if the session refused, with
+/// the reason in [`pe_session_last_error`].
+///
+/// **An empty array is `-2`, not 0.** [`Session::open_paths`] refuses it, so
+/// that no reader of a set ever has to cope with a set of no photographs, and
+/// that judgement is passed through rather than re-made here. A malformed list
+/// is `-1` and leaves the session exactly as it was — and, when there is a
+/// session to write it on, says what was wrong in [`pe_session_last_error`].
+///
+/// # Safety
+/// `s` and `paths_json` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_open_paths(
+    s: *mut PeSession,
+    paths_json: *const c_char,
+) -> i32 {
+    let Some(json) = as_str(paths_json) else {
+        return -1;
+    };
+    let Ok(paths) = serde_json::from_str::<Vec<String>>(json) else {
+        return with(s, -1, |s| {
+            s.last_error = Some("open_paths wants a JSON array of paths".to_string());
+            -1
+        });
+    };
+    status(s, move |s| {
+        s.open_paths(paths.into_iter().map(std::path::PathBuf::from).collect())
+    })
+}
+
+/// Show a different photograph of the set, parking the current edit and taking
+/// that one's.
+///
+/// Returns 0; `-1` for a null handle; `-2` with no set open, for an index past
+/// the end, or for a photograph that will not decode. The reason is in
+/// [`pe_session_last_error`], and in every one of those cases nothing has
+/// moved: the set is still pointed where it was and the edit on screen is
+/// still the one that was there.
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_focus(s: *mut PeSession, index: u32) -> i32 {
+    status(s, move |s| s.focus(index as usize))
+}
+
+/// How many photographs are in the set.
+///
+/// `-1` for a null handle; **0 with no set open**, which is the truth rather
+/// than a failure — a session showing nothing, or showing the built-in chart,
+/// has no photographs in it, and a strip of zero entries is exactly the right
+/// thing to draw.
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_entry_count(s: *mut PeSession) -> i32 {
+    with(s, -1, |s| s.inner.library().map_or(0, |l| l.len() as i32))
+}
+
+/// The path of one photograph in the set. Caller must release it with
+/// [`pe_string_free`].
+///
+/// Null for a null handle, with no set open, and for an index past the end.
+/// The three are not told apart because there is nothing a strip would do
+/// differently: an entry it cannot have is an entry it cannot draw.
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_entry_path(s: *mut PeSession, index: u32) -> *mut c_char {
+    with(s, ptr::null_mut(), |s| {
+        match s.inner.library().and_then(|l| l.path(index as usize)) {
+            Some(p) => to_c(p.display().to_string()),
+            None => ptr::null_mut(),
+        }
+    })
+}
+
+/// The three marks a filmstrip draws on one entry: whether its edit has
+/// anything in it to undo, whether its decode failed, and whether its
+/// thumbnail has arrived.
+///
+/// Three bools in one call rather than three calls, because a strip asks all
+/// three of every visible entry on every frame it draws.
+///
+/// Any out-pointer may be null. Returns 0; `-1` for a null handle; `-2` with
+/// no set open or for an index past the end, in which case nothing is written.
+///
+/// # Safety
+/// `s` must be valid or null; each non-null out-pointer must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_entry_flags(
+    s: *mut PeSession,
+    index: u32,
+    out_edited: *mut bool,
+    out_failed: *mut bool,
+    out_has_thumb: *mut bool,
+) -> i32 {
+    with(s, -1, |s| {
+        let Some(entry) = s
+            .inner
+            .library()
+            .and_then(|l| l.entries().get(index as usize))
+        else {
+            return -2;
+        };
+        unsafe {
+            if !out_edited.is_null() {
+                out_edited.write(entry.edited());
+            }
+            if !out_failed.is_null() {
+                out_failed.write(entry.failed);
+            }
+            if !out_has_thumb.is_null() {
+                out_has_thumb.write(entry.thumb.is_some());
+            }
+        }
+        0
+    })
+}
+
+/// Which photograph of the set is the one on screen.
+///
+/// `-1` for a null handle; `-2` with no set open, because there is no index to
+/// give and 0 would name an entry that does not exist.
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_current_entry(s: *mut PeSession) -> i32 {
+    with(s, -1, |s| {
+        s.inner.library().map_or(-2, |l| l.current() as i32)
+    })
+}
+
+/// Ask for the thumbnails of `from..to` that have not been asked for yet.
+///
+/// The range the strip is actually showing, not the whole set: opening a
+/// folder of a thousand should not queue a thousand decodes before the first
+/// one anybody can see. The decode happens on a worker thread and the pixels
+/// arrive later, through [`pe_session_collect_thumbnails`]. Asking twice for
+/// the same entry costs nothing; the second ask is dropped.
+///
+/// Indices past the end are ignored, and a `from` at or past `to` asks for
+/// nothing. Returns 0, or `-1` for a null handle.
+///
+/// **With no set open this is a no-op that returns 0**, which is what
+/// [`Session::request_thumbnails`] does: a session with no photographs answers
+/// "give me your thumbnails" by having none, not by failing.
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_request_thumbnails(
+    s: *mut PeSession,
+    from: u32,
+    to: u32,
+) -> i32 {
+    with(s, -1, |s| {
+        s.inner.request_thumbnails(from as usize..to as usize);
+        0
+    })
+}
+
+/// Take delivery of whatever the thumbnail worker has finished.
+///
+/// 1 if anything arrived — so the shell knows to upload it and repaint — 0 if
+/// nothing did, `-1` for a null handle. With no set open nothing can arrive,
+/// so 0.
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_collect_thumbnails(s: *mut PeSession) -> i32 {
+    with(s, -1, |s| i32::from(s.inner.collect_thumbnails()))
+}
+
+/// How big one entry's thumbnail is, in pixels.
+///
+/// RGBA, eight bits a channel, rows top to bottom, so the buffer
+/// [`pe_session_thumbnail_data`] wants is `width * height * 4` bytes. The long
+/// edge is [`pe_session::library::THUMB_EDGE`]; the short one follows the
+/// photograph's proportions, so neither is worth assuming.
+///
+/// Either out-pointer may be null. Returns 0; `-1` for a null handle; `-2`
+/// with no set open, for an index past the end, or for a thumbnail that has
+/// not arrived yet — ask [`pe_session_request_thumbnails`] and then
+/// [`pe_session_collect_thumbnails`] first. Nothing is written on a failure.
+///
+/// # Safety
+/// `s` must be valid or null; each non-null out-pointer must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_thumbnail_shape(
+    s: *mut PeSession,
+    index: u32,
+    out_w: *mut u32,
+    out_h: *mut u32,
+) -> i32 {
+    with(s, -1, |s| {
+        let Some(thumb) = thumbnail(s, index) else {
+            return -2;
+        };
+        unsafe {
+            if !out_w.is_null() {
+                out_w.write(thumb.width);
+            }
+            if !out_h.is_null() {
+                out_h.write(thumb.height);
+            }
+        }
+        0
+    })
+}
+
+/// Copy a thumbnail's RGBA bytes into `out`, returning how many were written,
+/// or a negative number: `-1` for a null handle, a null `out`, no set open, an
+/// index past the end, or a thumbnail that has not arrived; `-2` if `capacity`
+/// is short of the `width * height * 4` [`pe_session_thumbnail_shape`]
+/// reported.
+///
+/// Short is refused rather than truncated, for the same reason a scope's is:
+/// 64 KB of pixels with the last rows missing is a plausible-looking
+/// photograph that does not exist, and a strip full of them looks like a
+/// decoder bug rather than a caller's arithmetic.
+///
+/// The buffer is the caller's, before and after — nothing is allocated here,
+/// so rule 2 stays trivially satisfied and there is no `pe_*_free` to call.
+///
+/// # Safety
+/// `s` must be valid or null. `out` must point to at least `capacity` writable
+/// bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_thumbnail_data(
+    s: *mut PeSession,
+    index: u32,
+    out: *mut u8,
+    capacity: u32,
+) -> i32 {
+    with(s, -1, |s| {
+        if out.is_null() {
+            return -1;
+        }
+        let Some(thumb) = thumbnail(s, index) else {
+            return -1;
+        };
+        let wanted = thumb.rgba.len();
+        if (capacity as usize) < wanted {
+            return -2;
+        }
+        unsafe { ptr::copy_nonoverlapping(thumb.rgba.as_ptr(), out, wanted) };
+        wanted as i32
+    })
+}
+
+/// One entry's thumbnail, if there is a set, the index is in it, and the
+/// worker has delivered. The single `None` the two thumbnail functions above
+/// both answer to, so that they cannot come to disagree about which entries
+/// have pixels.
+fn thumbnail(s: &PeSession, index: u32) -> Option<&pe_session::Thumbnail> {
+    s.inner
+        .library()?
+        .entries()
+        .get(index as usize)?
+        .thumb
+        .as_ref()
+}
+
 // ---- the screen -----------------------------------------------------------
 
 /// Adopt a `CAMetalLayer`.
@@ -1562,6 +1852,46 @@ mod tests {
         assert!(unsafe { pe_session_snapshot_json(ptr::null_mut()) }.is_null());
         assert_eq!(unsafe { pe_session_snapshot_version(ptr::null_mut()) }, 0);
         assert_eq!(unsafe { pe_session_undo(ptr::null_mut()) }, -1);
+        let list = cstr("[\"/a.png\"]");
+        assert_eq!(
+            unsafe { pe_session_open_paths(ptr::null_mut(), list.as_ptr()) },
+            -1
+        );
+        assert_eq!(unsafe { pe_session_focus(ptr::null_mut(), 0) }, -1);
+        assert_eq!(unsafe { pe_session_entry_count(ptr::null_mut()) }, -1);
+        assert!(unsafe { pe_session_entry_path(ptr::null_mut(), 0) }.is_null());
+        assert_eq!(
+            unsafe {
+                pe_session_entry_flags(
+                    ptr::null_mut(),
+                    0,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                )
+            },
+            -1
+        );
+        assert_eq!(unsafe { pe_session_current_entry(ptr::null_mut()) }, -1);
+        assert_eq!(
+            unsafe { pe_session_request_thumbnails(ptr::null_mut(), 0, 1) },
+            -1
+        );
+        assert_eq!(
+            unsafe { pe_session_collect_thumbnails(ptr::null_mut()) },
+            -1
+        );
+        assert_eq!(
+            unsafe {
+                pe_session_thumbnail_shape(ptr::null_mut(), 0, ptr::null_mut(), ptr::null_mut())
+            },
+            -1
+        );
+        let mut out = [0u8; 4];
+        assert_eq!(
+            unsafe { pe_session_thumbnail_data(ptr::null_mut(), 0, out.as_mut_ptr(), 4) },
+            -1
+        );
         unsafe { pe_session_free(ptr::null_mut()) };
     }
 
@@ -2561,6 +2891,446 @@ mod tests {
             -1
         );
         assert!(unsafe { pe_session_over_white_fraction(s) } < 0.0);
+        unsafe { pe_session_free(s) };
+    }
+
+    // ---- the set ---------------------------------------------------------
+
+    /// A real photograph on disc, because everything a set knows is about
+    /// paths and a thumbnail has to be decoded from a file that exists.
+    fn photo_at(dir: &std::path::Path, name: &str, width: u32, height: u32) -> std::path::PathBuf {
+        let path = dir.join(name);
+        pe_io::save_png(
+            &pe_io::test_chart(width, height),
+            &path,
+            &pe_color::space::SRGB,
+        )
+        .expect("the temporary directory is writable");
+        path
+    }
+
+    /// The JSON list `pe_session_open_paths` takes.
+    fn paths_json(paths: &[&std::path::Path]) -> CString {
+        let list: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+        cstr(&serde_json::to_string(&list).unwrap())
+    }
+
+    /// One entry's path, as the shell reads it: string out, copied, freed.
+    fn entry_path(s: *mut PeSession, index: u32) -> Option<String> {
+        let p = unsafe { pe_session_entry_path(s, index) };
+        if p.is_null() {
+            return None;
+        }
+        let text = unsafe { CStr::from_ptr(p) }.to_str().unwrap().to_owned();
+        unsafe { pe_string_free(p) };
+        Some(text)
+    }
+
+    /// The last failure's message, or `None` if the last call succeeded.
+    fn last_error(s: *mut PeSession) -> Option<String> {
+        let m = unsafe { pe_session_last_error(s) };
+        if m.is_null() {
+            return None;
+        }
+        let text = unsafe { CStr::from_ptr(m) }.to_str().unwrap().to_owned();
+        unsafe { pe_string_free(m) };
+        Some(text)
+    }
+
+    /// Poll until the worker has delivered entry `index`'s thumbnail, or given
+    /// up on it. A real thread, so this waits to a deadline rather than
+    /// sleeping for a guessed interval and hoping.
+    fn wait_for_thumbnail(s: *mut PeSession, index: u32) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            unsafe { pe_session_collect_thumbnails(s) };
+            let (mut has_thumb, mut failed) = (false, false);
+            assert_eq!(
+                unsafe {
+                    pe_session_entry_flags(s, index, ptr::null_mut(), &mut failed, &mut has_thumb)
+                },
+                0
+            );
+            if has_thumb || failed {
+                assert!(!failed, "the worker could not read a file just written");
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the thumbnail worker delivered nothing in thirty seconds"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn a_set_crosses_as_paths_and_an_index() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let b = photo_at(tmp.path(), "b.png", 96, 32);
+        let c = photo_at(tmp.path(), "c.png", 32, 32);
+
+        let s = pe_session_new();
+        let support = cstr(&tmp.path().join("support").display().to_string());
+        unsafe { pe_session_set_support_dir(s, support.as_ptr()) };
+        let list = paths_json(&[&a, &b, &c]);
+        assert_eq!(unsafe { pe_session_open_paths(s, list.as_ptr()) }, 0);
+
+        assert_eq!(unsafe { pe_session_entry_count(s) }, 3);
+        assert_eq!(unsafe { pe_session_current_entry(s) }, 0);
+        assert_eq!(entry_path(s, 0), Some(a.display().to_string()));
+        assert_eq!(entry_path(s, 2), Some(c.display().to_string()));
+        assert_eq!(
+            entry_path(s, 3),
+            None,
+            "an entry past the end is not a path"
+        );
+
+        // The document, not just the return code: the first photograph is the
+        // one showing, and only it has been decoded.
+        let snap = snapshot(s);
+        assert_eq!(snap["name"], "a.png");
+        assert_eq!(snap["width"], 64);
+        assert_eq!(snap["height"], 64);
+
+        // And focusing another moves both the index and the pixels.
+        assert_eq!(unsafe { pe_session_focus(s, 1) }, 0);
+        assert_eq!(unsafe { pe_session_current_entry(s) }, 1);
+        let snap = snapshot(s);
+        assert_eq!(snap["name"], "b.png");
+        assert_eq!(
+            snap["width"], 96,
+            "the index moved but the photograph did not"
+        );
+        assert_eq!(snap["height"], 32);
+
+        // Past the end is refused, and refused without moving.
+        assert_eq!(unsafe { pe_session_focus(s, 3) }, -2);
+        assert!(last_error(s).is_some(), "a refusal nobody can report");
+        assert_eq!(unsafe { pe_session_current_entry(s) }, 1);
+        assert_eq!(snapshot(s)["name"], "b.png");
+
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn the_strip_is_told_which_photographs_have_been_edited() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let b = photo_at(tmp.path(), "b.png", 64, 64);
+
+        let s = pe_session_new();
+        let support = cstr(&tmp.path().join("support").display().to_string());
+        unsafe { pe_session_set_support_dir(s, support.as_ptr()) };
+        let list = paths_json(&[&a, &b]);
+        assert_eq!(unsafe { pe_session_open_paths(s, list.as_ptr()) }, 0);
+
+        // Sharpen rather than exposure: exposure is one of the pinned rows a
+        // fresh document already carries, so adding it proves nothing.
+        let key = cstr("sharpen");
+        let row = unsafe { pe_session_add_effect(s, key.as_ptr()) };
+        assert!(row >= 0);
+        let amount = cstr("amount");
+        assert_eq!(
+            unsafe { pe_session_set_float(s, row as u64, amount.as_ptr(), 1.5) },
+            0
+        );
+
+        // The edit is only parked once it stops being the one on screen.
+        assert_eq!(unsafe { pe_session_focus(s, 1) }, 0);
+
+        let (mut edited, mut failed, mut has_thumb) = (false, true, true);
+        assert_eq!(
+            unsafe { pe_session_entry_flags(s, 0, &mut edited, &mut failed, &mut has_thumb) },
+            0
+        );
+        assert!(edited, "the sharpened photograph is not marked as edited");
+        assert!(!failed);
+        assert!(!has_thumb, "a thumbnail arrived that was never asked for");
+
+        let (mut edited, mut failed, mut has_thumb) = (true, true, true);
+        assert_eq!(
+            unsafe { pe_session_entry_flags(s, 1, &mut edited, &mut failed, &mut has_thumb) },
+            0
+        );
+        assert!(!edited, "the untouched photograph is marked as edited");
+        assert!(!failed);
+        assert!(!has_thumb);
+
+        // Every out-pointer may be null, and past the end writes nothing.
+        assert_eq!(
+            unsafe {
+                pe_session_entry_flags(s, 0, ptr::null_mut(), ptr::null_mut(), ptr::null_mut())
+            },
+            0
+        );
+        let mut untouched = true;
+        assert_eq!(
+            unsafe {
+                pe_session_entry_flags(s, 2, &mut untouched, ptr::null_mut(), ptr::null_mut())
+            },
+            -2
+        );
+        assert!(untouched, "a refused call wrote to an out-parameter anyway");
+
+        // And the parked edit really is the sharpen, not just a flag.
+        assert_eq!(unsafe { pe_session_focus(s, 0) }, 0);
+        let snap = snapshot(s);
+        let sharpen = snap["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["effect"] == "sharpen")
+            .expect("the parked edit came back without its row");
+        assert_eq!(sharpen["params"]["amount"]["v"], 1.5);
+
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn a_thumbnail_crosses_as_a_buffer_the_caller_owns() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = photo_at(tmp.path(), "a.png", 320, 240);
+
+        let s = pe_session_new();
+        let list = paths_json(&[&a]);
+        assert_eq!(unsafe { pe_session_open_paths(s, list.as_ptr()) }, 0);
+
+        // Nothing arrives that was never asked for, and nothing to read yet.
+        assert_eq!(unsafe { pe_session_collect_thumbnails(s) }, 0);
+        let (mut w, mut h) = (0u32, 0u32);
+        assert_eq!(
+            unsafe { pe_session_thumbnail_shape(s, 0, &mut w, &mut h) },
+            -2,
+            "a thumbnail that has not arrived reported a shape"
+        );
+        let mut probe = [0u8; 4];
+        assert_eq!(
+            unsafe { pe_session_thumbnail_data(s, 0, probe.as_mut_ptr(), 4) },
+            -1
+        );
+
+        assert_eq!(unsafe { pe_session_request_thumbnails(s, 0, 1) }, 0);
+        wait_for_thumbnail(s, 0);
+
+        assert_eq!(
+            unsafe { pe_session_thumbnail_shape(s, 0, &mut w, &mut h) },
+            0
+        );
+        assert_eq!(
+            (w, h),
+            (pe_session::library::THUMB_EDGE, 96),
+            "128 on the long edge, and the short one in the photograph's own proportions"
+        );
+
+        let n = (w * h * 4) as usize;
+        let mut out = vec![0u8; n];
+        assert_eq!(
+            unsafe { pe_session_thumbnail_data(s, 0, out.as_mut_ptr(), n as u32) },
+            n as i32
+        );
+        // The pixels, not just the count: a test chart is not black, and every
+        // pixel of it is opaque.
+        let (pixels, rest) = out.as_chunks::<4>();
+        assert!(rest.is_empty(), "a thumbnail is a whole number of pixels");
+        assert!(
+            pixels.iter().all(|px| px[3] == 255),
+            "the alpha channel did not survive the copy"
+        );
+        assert!(
+            pixels.iter().any(|px| px[0..3] != [0, 0, 0]),
+            "the buffer came back as 64 KB of black"
+        );
+
+        // Short is refused rather than truncated: 64 KB of pixels with the
+        // last rows missing is a plausible photograph that does not exist.
+        let mut short = vec![0xABu8; n];
+        assert_eq!(
+            unsafe { pe_session_thumbnail_data(s, 0, short.as_mut_ptr(), (n - 1) as u32) },
+            -2
+        );
+        assert!(
+            short.iter().all(|b| *b == 0xAB),
+            "a refused copy wrote into the buffer anyway"
+        );
+
+        // A null buffer and an index past the end are the same nothing.
+        assert_eq!(
+            unsafe { pe_session_thumbnail_data(s, 0, ptr::null_mut(), n as u32) },
+            -1
+        );
+        assert_eq!(
+            unsafe { pe_session_thumbnail_data(s, 1, out.as_mut_ptr(), n as u32) },
+            -1
+        );
+        assert_eq!(
+            unsafe { pe_session_thumbnail_shape(s, 1, &mut w, &mut h) },
+            -2
+        );
+
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn a_range_asks_only_for_what_is_in_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = photo_at(tmp.path(), "a.png", 64, 48);
+        let b = photo_at(tmp.path(), "b.png", 64, 48);
+        let c = photo_at(tmp.path(), "c.png", 64, 48);
+
+        let s = pe_session_new();
+        let list = paths_json(&[&a, &b, &c]);
+        assert_eq!(unsafe { pe_session_open_paths(s, list.as_ptr()) }, 0);
+
+        // An inverted range, and one entirely past the end, ask for nothing —
+        // which is how a strip scrolled off its own set behaves.
+        assert_eq!(unsafe { pe_session_request_thumbnails(s, 2, 1) }, 0);
+        assert_eq!(unsafe { pe_session_request_thumbnails(s, 7, 9) }, 0);
+        assert_eq!(unsafe { pe_session_collect_thumbnails(s) }, 0);
+
+        assert_eq!(unsafe { pe_session_request_thumbnails(s, 1, 2) }, 0);
+        wait_for_thumbnail(s, 1);
+        assert_eq!(
+            unsafe { pe_session_collect_thumbnails(s) },
+            0,
+            "something arrived twice"
+        );
+
+        // Only the one asked for. The other two are still paths.
+        for (index, expected) in [(0u32, false), (1, true), (2, false)] {
+            let mut has_thumb = !expected;
+            assert_eq!(
+                unsafe {
+                    pe_session_entry_flags(
+                        s,
+                        index,
+                        ptr::null_mut(),
+                        ptr::null_mut(),
+                        &mut has_thumb,
+                    )
+                },
+                0
+            );
+            assert_eq!(has_thumb, expected, "entry {index}");
+        }
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn a_malformed_or_empty_list_is_refused_and_changes_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = photo_at(tmp.path(), "a.png", 32, 32);
+
+        let s = pe_session_new();
+        let good = paths_json(&[&a]);
+        assert_eq!(unsafe { pe_session_open_paths(s, good.as_ptr()) }, 0);
+        let before = snapshot(s);
+
+        // Not a C string at all.
+        assert_eq!(unsafe { pe_session_open_paths(s, ptr::null()) }, -1);
+        // Not JSON.
+        assert_eq!(
+            unsafe { pe_session_open_paths(s, cstr("{ not json").as_ptr()) },
+            -1
+        );
+        let text = last_error(s).expect("a malformed list left no explanation");
+        assert!(text.contains("array of paths"), "unhelpful message: {text}");
+        // JSON, but not an array of strings.
+        assert_eq!(
+            unsafe { pe_session_open_paths(s, cstr("[1,2,3]").as_ptr()) },
+            -1
+        );
+        assert_eq!(
+            unsafe { pe_session_open_paths(s, cstr("\"/a.png\"").as_ptr()) },
+            -1
+        );
+        // An array of no photographs at all: the session's own refusal, with a
+        // message, rather than a set of nothing for every reader to cope with.
+        assert_eq!(unsafe { pe_session_open_paths(s, cstr("[]").as_ptr()) }, -2);
+        assert!(last_error(s).is_some(), "an empty set was refused silently");
+        // A path that is not a photograph: refused, with the reason.
+        let missing = paths_json(&[&tmp.path().join("nope.png")]);
+        assert_eq!(unsafe { pe_session_open_paths(s, missing.as_ptr()) }, -2);
+        let text = last_error(s).expect("a failed decode left no explanation");
+        assert!(text.contains("nope.png"), "unhelpful message: {text}");
+
+        // Through all of that the session is exactly where it started.
+        assert_eq!(unsafe { pe_session_entry_count(s) }, 1);
+        assert_eq!(unsafe { pe_session_current_entry(s) }, 0);
+        let after = snapshot(s);
+        assert_eq!(after["name"], before["name"]);
+        assert_eq!(after["version"], before["version"], "a refusal edited");
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn a_session_with_no_set_answers_every_question_about_one() {
+        // A `Library` is built around its paths and the support directory, so
+        // it cannot exist before a set is opened — and the built-in chart is
+        // not a file, so it is not a set of one either. Each of these has an
+        // answer rather than a sentinel that means "null handle".
+        for open_a_chart in [false, true] {
+            let s = pe_session_new();
+            if open_a_chart {
+                assert_eq!(unsafe { pe_session_open_test_chart(s, 32, 32) }, 0);
+            }
+
+            assert_eq!(unsafe { pe_session_entry_count(s) }, 0);
+            assert_eq!(unsafe { pe_session_current_entry(s) }, -2);
+            assert_eq!(entry_path(s, 0), None);
+            let mut untouched = true;
+            assert_eq!(
+                unsafe {
+                    pe_session_entry_flags(s, 0, &mut untouched, ptr::null_mut(), ptr::null_mut())
+                },
+                -2
+            );
+            assert!(untouched);
+            assert_eq!(unsafe { pe_session_focus(s, 0) }, -2);
+            assert!(last_error(s).is_some());
+
+            // Asking a session with no photographs for their thumbnails is
+            // answered by there being none, not by a failure.
+            assert_eq!(unsafe { pe_session_request_thumbnails(s, 0, 10) }, 0);
+            assert_eq!(unsafe { pe_session_collect_thumbnails(s) }, 0);
+
+            let (mut w, mut h) = (7u32, 7u32);
+            assert_eq!(
+                unsafe { pe_session_thumbnail_shape(s, 0, &mut w, &mut h) },
+                -2
+            );
+            assert_eq!((w, h), (7, 7), "a refused shape wrote anyway");
+            let mut out = [0u8; 8];
+            assert_eq!(
+                unsafe { pe_session_thumbnail_data(s, 0, out.as_mut_ptr(), 8) },
+                -1
+            );
+            unsafe { pe_session_free(s) };
+        }
+    }
+
+    #[test]
+    fn opening_one_photograph_the_old_way_is_still_a_set_of_one() {
+        // `pe_session_open_path` predates the set and must keep behaving as it
+        // did, which now means: a set of exactly one, focused on it.
+        let tmp = tempfile::tempdir().unwrap();
+        let a = photo_at(tmp.path(), "a.png", 48, 48);
+
+        let s = pe_session_new();
+        let path = cstr(&a.display().to_string());
+        assert_eq!(unsafe { pe_session_open_path(s, path.as_ptr()) }, 0);
+        assert_eq!(unsafe { pe_session_entry_count(s) }, 1);
+        assert_eq!(unsafe { pe_session_current_entry(s) }, 0);
+        assert_eq!(entry_path(s, 0), Some(a.display().to_string()));
+        // Focusing the one already showing is not a reason to fail.
+        assert_eq!(unsafe { pe_session_focus(s, 0) }, 0);
+        assert_eq!(unsafe { pe_session_focus(s, 1) }, -2);
+
+        // And opening the chart afterwards puts the set away, because a chart
+        // has no file for a strip to be a strip of.
+        assert_eq!(unsafe { pe_session_open_test_chart(s, 32, 32) }, 0);
+        assert_eq!(unsafe { pe_session_entry_count(s) }, 0);
+        assert_eq!(unsafe { pe_session_current_entry(s) }, -2);
         unsafe { pe_session_free(s) };
     }
 }
