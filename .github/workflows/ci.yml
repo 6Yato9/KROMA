@@ -2,7 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # This repository's branch is `master`. It said `main` from the first
+    # commit, so no push has ever triggered a run — the workflow has been
+    # green by never having executed, which is the one failure mode a CI
+    # badge cannot show you.
+    branches: [master]
   pull_request:
 
 env:
@@ -65,8 +69,7 @@ jobs:
       - name: Install cbindgen
         run: cargo install cbindgen --locked
       # Generating it here proves the C ABI surface still parses, which is the
-      # cheap half of keeping the Swift bridge honest while the Mac app is
-      # still a scaffold.
+      # cheap half of keeping the Swift bridge honest.
       - name: Generate header
         run: cbindgen --config cbindgen.toml --crate pe-ffi --output /tmp/pe_ffi.h
       - name: Show header
@@ -88,11 +91,20 @@ jobs:
       # Swift side fails to decode something it has never seen.
       - name: Fixtures are current
         run: cargo test -p pe-session --test fixtures
+      # Both targets. The spike is the smallest thing that proves the layer
+      # path; the application is the thing anybody actually runs, and it was
+      # left out of CI back when it was a scaffold and not added when it
+      # stopped being one.
       - name: Build the spike
         run: |
           cd apps/apple
           xcodegen generate
           xcodebuild -project PhotoEditor.xcodeproj -scheme Spike \
+                     -configuration Debug build CODE_SIGNING_ALLOWED=NO
+      - name: Build the application
+        run: |
+          cd apps/apple
+          xcodebuild -project PhotoEditor.xcodeproj -scheme PhotoEditor \
                      -configuration Debug build CODE_SIGNING_ALLOWED=NO
       # The Swift half of the fixture check. A field added in Rust and not
       # here fails on this side, which is the whole reason the fixtures are
