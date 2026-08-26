@@ -190,6 +190,18 @@ impl Watcher {
         self.seen != self.written
     }
 
+    /// The same question asked with the revision handed in rather than
+    /// remembered.
+    ///
+    /// [`Watcher::pending`] answers from `seen`, which only [`Watcher::tick`]
+    /// updates — so it is only true for a host that is calling `tick` every
+    /// frame. Leaving a photograph is asked by hosts that may not be: a
+    /// session switched by a test, by the FFI, or by a shell between frames.
+    /// Asking about the revision in hand needs nobody to have looked first.
+    pub fn unsaved(&self, revision: u64) -> bool {
+        revision != self.written
+    }
+
     /// Start again on a different photograph.
     pub fn reset(&mut self, revision: u64) {
         self.seen = revision;
@@ -298,5 +310,23 @@ mod tests {
         assert!(w.pending());
         w.reset(1);
         assert!(!w.pending());
+    }
+
+    /// A host that never calls `tick` still gets a straight answer, which
+    /// `pending` cannot give it: `seen` has never moved, so it says there is
+    /// nothing outstanding however far the document has gone.
+    #[test]
+    fn work_is_outstanding_even_when_nobody_has_been_ticking() {
+        let mut w = Watcher::new();
+        w.reset(4);
+        assert!(
+            !w.unsaved(4),
+            "the revision that was written is not unsaved"
+        );
+        assert!(w.unsaved(5), "an edit since the last write was not noticed");
+        assert!(
+            !w.pending(),
+            "this is the case `pending` gets wrong, and the reason `unsaved` exists"
+        );
     }
 }

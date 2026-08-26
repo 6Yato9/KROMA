@@ -5,6 +5,7 @@
 //! the parts that were never about interface moved down here where the Mac and
 //! the iPad can reach them.
 
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use pe_color::space;
@@ -12,6 +13,7 @@ use pe_core::{Document, Geometry, History, ParamValue, RowId, RowIdGenerator, St
 use pe_io::DecodedImage;
 use pe_render::{EffectRenderer, GpuContext, ImageTexture, Region, Sampling, TransformPass};
 
+use crate::library::Library;
 use crate::scopes::Scopes;
 use crate::surface::Attached;
 use crate::{Support, autosave, export};
@@ -57,6 +59,8 @@ pub enum SessionError {
     TooManyPins(usize),
     #[error("no layer attached")]
     NoLayer,
+    #[error("no photograph at {index}, of {count} open")]
+    NoSuchPhoto { index: usize, count: usize },
     #[error(transparent)]
     Surface(#[from] crate::surface::SurfaceError),
 }
@@ -140,6 +144,15 @@ pub struct Session {
     instance: wgpu::Instance,
     gpu: Gpu,
     photo: Option<Photo>,
+    /// The set the open photograph belongs to, and the parked edit of every
+    /// other photograph in it.
+    ///
+    /// `None` until a set is opened, because a [`Library`] is built around the
+    /// paths it holds and the support directory its edits are kept in — and at
+    /// [`Session::new`] the host has said neither. A session showing the
+    /// built-in chart has no set either: there is no file for a filmstrip to be
+    /// a strip of.
+    library: Option<Library>,
     support: Support,
     /// What an export would be written as. Kept on the session because it
     /// is a property of the sitting rather than of a photograph; nothing
@@ -187,6 +200,7 @@ impl Session {
             instance: GpuContext::create_instance(),
             gpu: Gpu::default(),
             photo: None,
+            library: None,
             support: Support::default(),
             export_settings: export::Export::default(),
             open_set: Vec::new(),
@@ -202,6 +216,12 @@ impl Session {
     }
 
     /// Where this host keeps the application's own files. See [`Support`].
+    ///
+    /// Said once, at start-up, before anything is opened. A [`Library`] is
+    /// built around the support directory in force when the set was opened, so
+    /// moving it afterwards would leave the parked edits reading from the old
+    /// one — and rebuilding the library to fix that would throw those edits
+    /// away, which is worse than the problem.
     pub fn set_support_dir(&mut self, root: impl Into<PathBuf>) {
         self.support = Support::at(root);
     }
@@ -406,16 +426,49 @@ impl Session {
 
     /// Open a photograph, restoring whatever was being done to it last time.
     pub fn open_path(&mut self, path: impl AsRef<Path>) -> Result<(), SessionError> {
-        let path = path.as_ref().to_path_buf();
-        let image = pe_io::load(&path).map_err(|e| SessionError::Read {
-            path: path.display().to_string(),
+        self.open_paths(vec![path.as_ref().to_path_buf()])
+    }
+
+    /// Open a set of photographs, focused on the first.
+    ///
+    /// Only the first is decoded — a 24-megapixel frame is 96 MB of RGBA, so a
+    /// folder of two hundred would be twenty gigabytes. The rest are paths and
+    /// parked edits until one of them is [`Session::focus`]ed.
+    ///
+    /// One path is the case that existed before this took a list, and it still
+    /// behaves exactly as it did: the autosave decides what the document is,
+    /// and a `.peproj` beside the photograph is pulled over the top only when
+    /// somebody asks for it.
+    pub fn open_paths(&mut self, paths: Vec<PathBuf>) -> Result<(), SessionError> {
+        let Some(first) = paths.first().cloned() else {
+            // Opening nothing is the caller's mistake, not a session with an
+            // empty set in it — and saying so here is cheaper than every
+            // reader of `library()` having to cope with a set of no
+            // photographs.
+            return Err(SessionError::NothingOpen);
+        };
+        // The pixels first: a photograph that will not decode leaves the
+        // session exactly as it was, rather than half-swapped.
+        let image = pe_io::load(&first).map_err(|e| SessionError::Read {
+            path: first.display().to_string(),
             message: e.to_string(),
         })?;
         // The autosave wins over a fresh document, because it is where the
         // person happened to stop. A sidecar is pulled over the top explicitly.
-        let doc = autosave::load(&self.support, &path)
-            .unwrap_or_else(|| pe_effects::new_document(path.to_string_lossy()));
-        self.adopt(Some(path), image, doc);
+        let doc = autosave::load(&self.support, &first)
+            .unwrap_or_else(|| pe_effects::new_document(first.to_string_lossy()));
+        self.adopt(Some(first), image, doc);
+        // Every photograph in the set is one an export must not land on. The
+        // name built for photo A can collide with photo B sitting right beside
+        // it in the same folder, and now that the session holds the set it is
+        // the one that knows.
+        self.open_set = paths.clone();
+        let mut library = Library::new(paths, self.support.clone());
+        // The first entry's edit is in hand rather than parked, which is what
+        // `focus` means here — see [`Library::focus`], which points the set at
+        // an entry the caller has already opened.
+        library.focus(0);
+        self.library = Some(library);
         Ok(())
     }
 
@@ -427,6 +480,103 @@ impl Session {
         Ok(())
     }
 
+    /// Show a different photograph, parking the current edit and taking that
+    /// one's.
+    ///
+    /// The edit is [`Library::switch`]'s business and the pixels are this
+    /// function's. Both shells were orchestrating that pair by hand; one of
+    /// them had to forget eventually.
+    ///
+    /// **The autosave goes out first.** Parking an edit is a promise to
+    /// remember it, and memory is what a crash takes: an editor that parks
+    /// four photographs' work and writes only the fifth loses four. So the
+    /// outgoing document is written before it stops being the one on screen,
+    /// with the throttle skipped — the change that would have triggered the
+    /// write is exactly the one about to be put away. A write that fails is
+    /// reported *and nothing moves*, because carrying on is the one outcome
+    /// that turns a failed write into lost work.
+    pub fn focus(&mut self, index: usize) -> Result<(), SessionError> {
+        let library = self.library.as_ref().ok_or(SessionError::NothingOpen)?;
+        let count = library.len();
+        if index >= count {
+            // The set can shrink between a strip being drawn and a thumbnail
+            // in it being clicked, and a restored session names an index from
+            // a folder that may have lost photographs since.
+            return Err(SessionError::NoSuchPhoto { index, count });
+        }
+        if index == library.current() {
+            return Ok(());
+        }
+        let path = library
+            .path(index)
+            .expect("in range, checked above")
+            .to_path_buf();
+
+        // The pixels before anything is parked, so that a photograph which
+        // will not decode leaves the set where it was.
+        let image = pe_io::load(&path).map_err(|e| SessionError::Read {
+            path: path.display().to_string(),
+            message: e.to_string(),
+        })?;
+
+        self.park_the_outgoing_edit()?;
+
+        // A placeholder to move the outgoing history out wholesale rather than
+        // clone it: `History` deliberately is not `Clone`, because an undo
+        // stack with two owners is a bug waiting to happen.
+        let photo = self.photo.as_mut().ok_or(SessionError::NothingOpen)?;
+        let outgoing = std::mem::replace(
+            &mut photo.history,
+            History::new(Document::from_path(String::new())),
+        );
+        let outgoing_ids = std::mem::take(&mut photo.ids);
+        let (history, ids) = self.library.as_mut().expect("checked above").switch(
+            index,
+            outgoing,
+            outgoing_ids,
+            image.space,
+        );
+        self.install(Some(path), image, history, ids);
+        Ok(())
+    }
+
+    /// The set the open photograph belongs to, or `None` when there is no set
+    /// — nothing open, or the built-in chart, which is not a file.
+    pub fn library(&self) -> Option<&Library> {
+        self.library.as_ref()
+    }
+
+    /// Ask for the thumbnails of a range of the set that have not been asked
+    /// for yet. See [`Library::request`].
+    pub fn request_thumbnails(&mut self, range: Range<usize>) {
+        if let Some(library) = self.library.as_mut() {
+            library.request(range);
+        }
+    }
+
+    /// Take delivery of whatever the worker finished. True if anything did.
+    pub fn collect_thumbnails(&mut self) -> bool {
+        self.library.as_mut().is_some_and(Library::collect)
+    }
+
+    /// Write the open photograph's document out if it has moved since the last
+    /// write, throttle or no throttle.
+    ///
+    /// The condition is the single-photograph path's: [`Session::tick`] writes
+    /// when the revision has gone past what was last written, and this asks the
+    /// same question without the idle timer. Not writing an unchanged document
+    /// is what keeps merely *visiting* a photograph from leaving an autosave
+    /// that would afterwards shadow the `.peproj` beside it.
+    fn park_the_outgoing_edit(&mut self) -> Result<(), SessionError> {
+        let Some(photo) = self.photo.as_ref() else {
+            return Ok(());
+        };
+        if !self.watcher.unsaved(photo.history.revision()) {
+            return Ok(());
+        }
+        self.write_autosave()
+    }
+
     fn adopt(&mut self, path: Option<PathBuf>, image: DecodedImage, doc: Document) {
         // A source the file itself declared beats the document's guess, which
         // is how a Display P3 file from a phone renders as Display P3.
@@ -436,6 +586,28 @@ impl Session {
         }
         let ids = RowIdGenerator::resuming(&doc);
         let history = History::new(doc);
+        // Opening is opening a set of one until told otherwise. Whatever set
+        // was open belonged to the photograph being replaced.
+        self.library = None;
+        self.open_set = Vec::new();
+        self.install(path, image, history, ids);
+    }
+
+    /// Put a photograph and its edit in hand, whether the edit was just built
+    /// from a document or unparked by [`Library::switch`].
+    ///
+    /// The half of `adopt` that does not invent the document, because a parked
+    /// history arrives with an undo stack that must not be flattened into a
+    /// fresh one — and must not have the declared colour space written over it
+    /// either. A file's claim is applied when a document is invented and never
+    /// again; see [`crate::library::fresh_document`].
+    fn install(
+        &mut self,
+        path: Option<PathBuf>,
+        image: DecodedImage,
+        history: History,
+        ids: RowIdGenerator,
+    ) {
         self.watcher.reset(history.revision());
         self.photo = Some(Photo {
             path,
@@ -1940,6 +2112,325 @@ mod tests {
                 .all(|r| r.effect != "sharpen"),
             "the reverted edit came back"
         );
+    }
+
+    // ---- a set of photographs -------------------------------------------
+
+    /// A real file on disc, because everything about a set is about paths.
+    fn photo_at(dir: &Path, name: &str, width: u32, height: u32) -> PathBuf {
+        let path = dir.join(name);
+        pe_io::save_png(
+            &pe_io::test_chart(width, height),
+            &path,
+            &pe_color::space::SRGB,
+        )
+        .expect("the temporary directory is writable");
+        path
+    }
+
+    #[test]
+    fn a_session_opens_a_set_and_shows_the_first() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let b = photo_at(tmp.path(), "b.png", 96, 32);
+        let c = photo_at(tmp.path(), "c.png", 32, 32);
+
+        let mut s = Session::new();
+        s.open_paths(vec![a.clone(), b, c]).unwrap();
+
+        assert!(s.is_open());
+        assert_eq!(s.path(), Some(a.as_path()), "the first one is not showing");
+        let library = s.library().expect("a set was opened");
+        assert_eq!(library.len(), 3);
+        assert_eq!(library.current(), 0);
+        // And only the first is decoded. The whole reason a filmstrip exists is
+        // to make a set navigable without holding it: three 24-megapixel frames
+        // would be nearly 300 MB, two hundred of them twenty gigabytes.
+        assert_eq!(
+            s.image_size(),
+            (64, 64),
+            "the pixels are not the first photograph's"
+        );
+    }
+
+    #[test]
+    fn opening_no_photographs_at_all_is_refused() {
+        let mut s = Session::new();
+        assert!(matches!(
+            s.open_paths(Vec::new()),
+            Err(SessionError::NothingOpen)
+        ));
+        assert!(!s.is_open());
+        assert!(s.library().is_none());
+    }
+
+    #[test]
+    fn focusing_another_photograph_swaps_the_pixels_and_the_edit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let b = photo_at(tmp.path(), "b.png", 96, 32);
+
+        let mut s = Session::new();
+        s.set_support_dir(tmp.path().join("support"));
+        s.open_paths(vec![a.clone(), b.clone()]).unwrap();
+        // Sharpen rather than exposure: exposure is one of the pinned rows
+        // every fresh document already carries.
+        let row = s.add_effect("sharpen").unwrap();
+        s.set_float(row, "amount", 1.5).unwrap();
+
+        s.focus(1).unwrap();
+        assert_eq!(s.path(), Some(b.as_path()));
+        assert_eq!(s.image_size(), (96, 32), "the pixels did not follow");
+        assert_eq!(s.library().unwrap().current(), 1);
+        assert!(
+            !s.can_undo(),
+            "the second photograph arrived with the first one's undo stack"
+        );
+        assert!(
+            s.document()
+                .unwrap()
+                .stack
+                .iter()
+                .all(|r| r.effect != "sharpen"),
+            "the first photograph's grade came along"
+        );
+
+        // And back: parking is not discarding, and the undo stack is the part
+        // that proves it — a document alone could have been read off disc.
+        s.focus(0).unwrap();
+        assert_eq!(s.path(), Some(a.as_path()));
+        assert_eq!(s.image_size(), (64, 64), "the pixels did not come back");
+        assert!(s.can_undo(), "the parked undo stack was thrown away");
+        let amount = s
+            .document()
+            .unwrap()
+            .stack
+            .iter()
+            .find(|r| r.effect == "sharpen")
+            .and_then(|r| r.params.get("amount"))
+            .and_then(pe_core::ParamValue::as_float);
+        assert_eq!(amount, Some(1.5), "the parked edit was lost");
+    }
+
+    /// The edit that was parked is written, not merely remembered — a crash
+    /// after switching should not lose it.
+    ///
+    /// This is the whole difference between an editor that keeps four
+    /// photographs' work and one that keeps the last one. Asserted through a
+    /// second session opening the photograph cold, which is what surviving a
+    /// crash actually means.
+    #[test]
+    fn switching_away_saves_the_edit_it_parked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let support = tmp.path().join("support");
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let b = photo_at(tmp.path(), "b.png", 64, 64);
+
+        let mut s = Session::new();
+        s.set_support_dir(&support);
+        s.open_paths(vec![a.clone(), b]).unwrap();
+        let row = s.add_effect("sharpen").unwrap();
+        s.set_float(row, "amount", 1.5).unwrap();
+        // Nothing has gone out yet: the throttle has not run out, nobody has
+        // called `tick`, and nobody has asked for a write. So the assertion
+        // below is about the switch and nothing else.
+        assert!(
+            autosave::load(&Support::at(&support), &a).is_none(),
+            "something wrote the autosave before the switch did"
+        );
+
+        s.focus(1).unwrap();
+
+        let mut crashed_and_reopened = Session::new();
+        crashed_and_reopened.set_support_dir(&support);
+        crashed_and_reopened.open_paths(vec![a]).unwrap();
+        let amount = crashed_and_reopened
+            .document()
+            .unwrap()
+            .stack
+            .iter()
+            .find(|r| r.effect == "sharpen")
+            .and_then(|r| r.params.get("amount"))
+            .and_then(pe_core::ParamValue::as_float);
+        assert_eq!(
+            amount,
+            Some(1.5),
+            "the edit was parked in memory and never written; a crash would have taken it"
+        );
+    }
+
+    /// Merely visiting a photograph is not editing it, and must not leave an
+    /// autosave behind.
+    ///
+    /// An autosave beats a `.peproj` when the photograph is next opened —
+    /// rightly, because it is by construction the later of the two. A write on
+    /// every switch would make an untouched document the later one, and a crop
+    /// somebody deliberately saved beside their photograph would be shadowed by
+    /// a blank because they clicked past it.
+    #[test]
+    fn passing_through_a_photograph_does_not_write_over_what_is_saved_beside_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let support = tmp.path().join("support");
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let b = photo_at(tmp.path(), "b.png", 64, 64);
+
+        let mut s = Session::new();
+        s.set_support_dir(&support);
+        s.open_paths(vec![a.clone(), b]).unwrap();
+        s.focus(1).unwrap();
+
+        assert!(
+            autosave::load(&Support::at(&support), &a).is_none(),
+            "a photograph nobody edited was autosaved on the way past"
+        );
+    }
+
+    #[test]
+    fn focusing_past_the_end_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let b = photo_at(tmp.path(), "b.png", 64, 64);
+
+        let mut s = Session::new();
+        s.open_paths(vec![a.clone(), b]).unwrap();
+        assert!(matches!(
+            s.focus(2),
+            Err(SessionError::NoSuchPhoto { index: 2, count: 2 })
+        ));
+        // And the refusal left the session where it was rather than half-moved.
+        assert_eq!(s.path(), Some(a.as_path()));
+        assert_eq!(s.library().unwrap().current(), 0);
+    }
+
+    /// Clicking the thumbnail already showing is not a reason to throw the
+    /// picture away and decode it again.
+    #[test]
+    fn focusing_the_photograph_already_showing_changes_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let b = photo_at(tmp.path(), "b.png", 64, 64);
+
+        let mut s = Session::new();
+        s.open_paths(vec![a, b]).unwrap();
+        let before = s.snapshot_version();
+        s.focus(0).unwrap();
+        assert_eq!(s.snapshot_version(), before, "the photograph was reloaded");
+    }
+
+    #[test]
+    fn a_photograph_that_will_not_decode_leaves_the_set_where_it_was() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let shredded = tmp.path().join("shredded.png");
+        std::fs::write(&shredded, b"not really a png").unwrap();
+
+        let mut s = Session::new();
+        s.open_paths(vec![a.clone(), shredded]).unwrap();
+        assert!(matches!(s.focus(1), Err(SessionError::Read { .. })));
+        assert_eq!(s.path(), Some(a.as_path()), "the session was half-swapped");
+        assert_eq!(s.library().unwrap().current(), 0);
+        assert_eq!(s.image_size(), (64, 64));
+    }
+
+    /// The one-photograph case is the case that existed before a session held a
+    /// set, and it is the same call with one element in it.
+    #[test]
+    fn a_one_photograph_session_still_behaves_as_it_did() {
+        let tmp = tempfile::tempdir().unwrap();
+        let photo = photo_at(tmp.path(), "only.png", 64, 64);
+        // A sidecar beside it, which `open_path` has never read: pulling one
+        // over the top is an explicit action. Routing the open through the
+        // library would have quietly started honouring it.
+        let mut sidecar = pe_effects::new_document(photo.to_string_lossy().to_string());
+        sidecar.geometry.size = [0.3, 0.6];
+        std::fs::write(photo.with_extension("peproj"), sidecar.to_json().unwrap()).unwrap();
+
+        let mut s = Session::new();
+        s.set_support_dir(tmp.path().join("support"));
+        s.open_path(&photo).unwrap();
+
+        assert!(s.is_open());
+        assert_eq!(s.path(), Some(photo.as_path()));
+        assert_eq!(s.row_count(), pe_effects::PINNED_ROWS.len());
+        assert_ne!(
+            s.geometry().unwrap().size,
+            [0.3, 0.6],
+            "opening a photograph started reading the sidecar beside it"
+        );
+        // A set of one, so a shell asking for the strip gets a straight answer
+        // rather than a special case.
+        let library = s.library().expect("a set of one is still a set");
+        assert_eq!(library.len(), 1);
+        assert_eq!(library.current(), 0);
+        assert!(matches!(s.focus(1), Err(SessionError::NoSuchPhoto { .. })));
+
+        // And the autosave still comes back, which is the behaviour every
+        // single-photograph test in this file is about.
+        let row = s.add_effect("sharpen").unwrap();
+        s.set_float(row, "amount", 1.5).unwrap();
+        s.write_autosave().unwrap();
+
+        let mut again = Session::new();
+        again.set_support_dir(tmp.path().join("support"));
+        again.open_path(&photo).unwrap();
+        let restored = again
+            .document()
+            .unwrap()
+            .stack
+            .iter()
+            .find(|r| r.effect == "sharpen")
+            .and_then(|r| r.params.get("amount"))
+            .and_then(pe_core::ParamValue::as_float);
+        assert_eq!(restored, Some(1.5));
+    }
+
+    #[test]
+    fn a_thumbnail_asked_for_through_the_session_arrives() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = photo_at(tmp.path(), "a.png", 320, 240);
+
+        let mut s = Session::new();
+        s.open_paths(vec![a]).unwrap();
+        assert!(
+            !s.collect_thumbnails(),
+            "something arrived that was never asked for"
+        );
+        s.request_thumbnails(0..1);
+
+        // The worker is a real thread, so this polls to a deadline rather than
+        // sleeping for a guessed interval and hoping.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            s.collect_thumbnails();
+            let entry = &s.library().unwrap().entries()[0];
+            if entry.thumb.is_some() || entry.failed {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the thumbnail worker delivered nothing in thirty seconds"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let thumb = s.library().unwrap().entries()[0]
+            .thumb
+            .as_ref()
+            .expect("the worker could not read a file it had just written");
+        assert_eq!(thumb.width, crate::library::THUMB_EDGE);
+    }
+
+    /// Asking a session with nothing open, or with the built-in chart, for a
+    /// set gets nothing rather than a set of one thing that is not a file.
+    #[test]
+    fn a_chart_is_not_a_set_of_photographs() {
+        let mut s = Session::new();
+        assert!(s.library().is_none());
+        s.open_test_chart(64, 64).unwrap();
+        assert!(s.library().is_none());
+        assert!(matches!(s.focus(0), Err(SessionError::NothingOpen)));
+        assert!(!s.collect_thumbnails());
+        // And it does not panic when asked for thumbnails it has no set for.
+        s.request_thumbnails(0..8);
     }
 
     #[test]
