@@ -8,6 +8,9 @@ on:
     # badge cannot show you.
     branches: [master]
   pull_request:
+  # So a run can be asked for without inventing a commit — useful when a push
+  # has gone in but no run appeared, which is a thing that happens.
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
