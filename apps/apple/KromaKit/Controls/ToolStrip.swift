@@ -3,7 +3,7 @@ import SwiftUI
 /// The colour page's tools, and the strip that chooses between them.
 ///
 /// A mirror of `pe_effects::Tool`, and checked against it by the fixture: the
-/// same six tools in the same order, each claiming the same effects. Which
+/// same seven tools in the same order, each claiming the same effects. Which
 /// tool draws an effect is one answer per effect, so it is decided in the
 /// engine and read here rather than decided twice.
 ///
@@ -19,6 +19,13 @@ public enum Tool: String, CaseIterable, Sendable {
     case colourMixer = "Colour Mixer"
     /// Whatever the user added, and the browser that adds more.
     case effects = "Effects"
+    /// The crop, the straightening angle, the quarter-turns and the flips.
+    ///
+    /// The one tool that edits the document's *geometry* rather than a row in
+    /// its stack — so it owns no pinned effects, there is no `Effect` behind it
+    /// and no registry parameters to generate controls from. `CropPanel` is
+    /// what it draws.
+    case crop = "Crop"
 
     /// What the button says it is — the tooltip, and the accessibility label.
     ///
@@ -42,9 +49,11 @@ public enum Tool: String, CaseIterable, Sendable {
         case .curves: ["curves"]
         case .colourWarper: ["colour_warper"]
         case .colourMixer: ["colour_mixer"]
-        // Not pinned, and deliberately: this one shows the rows the user put
-        // there.
+        // Neither of these is pinned, and deliberately. Effects shows the
+        // rows the user put there; Crop edits the document's geometry, which is
+        // not a row at all.
         case .effects: []
+        case .crop: []
         }
     }
 
@@ -57,9 +66,10 @@ public enum Tool: String, CaseIterable, Sendable {
     /// design.
     ///
     /// **A name the system does not have renders as nothing** — a blank button
-    /// in a strip of six is one nobody can identify — so every one of these is
-    /// asked of `NSImage` in `ToolStripTests` rather than assumed. All six are
-    /// from 2019–2021, well below the 14.0 deployment target.
+    /// in a strip of seven is one nobody can identify — so every one of these
+    /// is asked of `NSImage` in `ToolStripTests` rather than assumed. All seven
+    /// are from 2019–2021, well below the 14.0 deployment target: `crop` is
+    /// SF Symbols 1.0, and was the first name tried.
     public var symbol: String {
         switch self {
         case .basic: "slider.horizontal.3"
@@ -68,8 +78,22 @@ public enum Tool: String, CaseIterable, Sendable {
         case .colourWarper: "square.grid.3x3"
         case .colourMixer: "paintpalette"
         case .effects: "wand.and.stars"
+        case .crop: "crop"
         }
     }
+
+    /// Whether the viewer shows the **enclosing** frame — the whole
+    /// straightened source — rather than the cropped result while this tool is
+    /// open.
+    ///
+    /// One rule, read twice: it is what puts `CropOverlay` over the picture and
+    /// what is handed to `SessionStore.setCropping`. Written here rather than
+    /// as two comparisons in `ContentView` because the two must not be able to
+    /// disagree — a rectangle drawn over a viewer that is showing the crop
+    /// rather than the frame around it is a rectangle with nothing outside it
+    /// to drag back in, and cropping left on after switching away shows the
+    /// wrong picture in every other tool.
+    public var showsWholeFrame: Bool { self == .crop }
 
     /// The tool that draws an effect, if a pinned one does.
     ///
@@ -96,9 +120,12 @@ public enum Tool: String, CaseIterable, Sendable {
     /// draws them.
     ///
     /// One function rather than a rule in the view and a copy of it in a test,
-    /// because the property that matters is about *all six tools at once*:
+    /// because the property that matters is about *all seven tools at once*:
     /// every row belongs to exactly one of them. A row belonging to none is
     /// drawn nowhere at all, with nothing to say so.
+    ///
+    /// A tool that claims nothing draws nothing, which is the right answer for
+    /// Crop: its panel is not made of rows.
     ///
     /// A pinned tool follows its own effect order — the tool decides which
     /// panels belong together and in what sequence, not the stack. A key the
@@ -122,7 +149,7 @@ public enum Tool: String, CaseIterable, Sendable {
     }
 }
 
-/// The strip: six buttons, one tool on screen at a time.
+/// The strip: seven buttons, one tool on screen at a time.
 ///
 /// **The accent is not here.** A selected tool is "this is chosen", which is
 /// `SELECT` — the same colour the scopes toggle and the choice chips use. The
@@ -180,7 +207,7 @@ public struct ToolStrip: View {
         }
 
         /// Tall enough for a large symbol with a little air, and a round number
-        /// so six of them read as one band.
+        /// so the whole row of them reads as one band.
         static let height: CGFloat = 26
 
         private var fill: Color {

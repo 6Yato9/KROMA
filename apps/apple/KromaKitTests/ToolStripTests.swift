@@ -6,8 +6,8 @@ import XCTest
 ///
 /// Two of these are about a thing the compiler cannot see. A tool's symbol is
 /// a *string* handed to the system, so a name the system does not have is not
-/// a build error — it is a button that draws nothing, in a strip of six, with
-/// no way for anybody to tell which one it was. And which effects a tool
+/// a build error — it is a button that draws nothing, in a strip of seven,
+/// with no way for anybody to tell which one it was. And which effects a tool
 /// claims is written in the engine and again in Swift, so the fixture is what
 /// keeps the two lists one list.
 final class ToolStripTests: XCTestCase {
@@ -35,8 +35,8 @@ final class ToolStripTests: XCTestCase {
     // ---- the symbols ------------------------------------------------------
 
     /// A symbol that does not exist renders as nothing, and a blank button in a
-    /// strip of six is one nobody can identify. `NSImage` returns nil for a name
-    /// the system does not have, so this is checkable rather than a hope.
+    /// strip of seven is one nobody can identify. `NSImage` returns nil for a
+    /// name the system does not have, so this is checkable rather than a hope.
     func testEveryToolHasASymbolTheSystemActuallyHas() {
         for tool in Tool.allCases {
             XCTAssertNotNil(
@@ -45,7 +45,7 @@ final class ToolStripTests: XCTestCase {
         }
     }
 
-    /// And no two tools wear the same one, which is six buttons and five
+    /// And no two tools wear the same one, which would be seven buttons and six
     /// distinguishable ones.
     func testNoTwoToolsShareASymbol() {
         XCTAssertEqual(
@@ -130,9 +130,9 @@ final class ToolStripTests: XCTestCase {
     ///
     /// With one tool on screen, a row no tool claims is a control that exists,
     /// responds to nothing and appears nowhere — and there is no scroll far
-    /// enough to find it. So the six tools are checked as a *partition* of the
+    /// enough to find it. So the tools are checked as a *partition* of the
     /// document rather than one at a time.
-    func testTheSixToolsBetweenThemDrawEveryRowExactlyOnce() throws {
+    func testTheToolsBetweenThemDrawEveryRowExactlyOnce() throws {
         let snap = try JSONDecoder().decode(Snapshot.self, from: fixture("snapshot"))
         XCTAssertFalse(snap.rows.isEmpty, "the fixture document has no rows")
         XCTAssertEqual(
@@ -149,10 +149,32 @@ final class ToolStripTests: XCTestCase {
         }
     }
 
-    /// The added stack is a tool with no pinned effects of its own — it shows
-    /// whatever the user put there, and it is where the browser lives.
-    func testTheEffectsToolOwnsNothingPinned() {
-        XCTAssertTrue(Tool.effects.effects.isEmpty)
+    /// Exactly two tools have no pinned effects of their own, and both are
+    /// deliberate: Effects shows whatever the user put there and is where the
+    /// browser lives, and Crop edits the document's geometry rather than a row
+    /// in its stack.
+    ///
+    /// Named rather than counted, and the mirror of
+    /// `only_effects_and_crop_own_nothing_pinned` in `pe-effects`. What it
+    /// catches is a *third* — a tool added to the strip and its effects list
+    /// forgotten, which draws an empty panel and takes its effects off screen
+    /// with it.
+    func testOnlyEffectsAndCropOwnNothingPinned() {
+        XCTAssertEqual(
+            Tool.allCases.filter { $0.effects.isEmpty }, [.effects, .crop],
+            "a tool with no pinned effects that is not one of these two is a panel "
+                + "that draws nothing")
+    }
+
+    /// And Crop is the one tool the viewer changes for.
+    ///
+    /// `showsWholeFrame` is read twice in `ContentView` — once to put the
+    /// overlay over the picture and once to tell the engine to frame the
+    /// enclosing rectangle — so that the two cannot disagree. Left on after
+    /// switching away, every other tool would be graded against a picture with
+    /// the cut-away parts still in it.
+    func testOnlyCropFramesTheWholeSource() {
+        XCTAssertEqual(Tool.allCases.filter(\.showsWholeFrame), [.crop])
     }
 
     // ---- the strip --------------------------------------------------------
@@ -221,5 +243,8 @@ final class ToolStripTests: XCTestCase {
                 tool.draws(store.snapshot.rows).map(\.row.effect), tool.effects,
                 "\(tool.name) does not draw what it claims")
         }
+        // Including Crop, which claims nothing and so must draw nothing: its
+        // panel is the document's geometry, not a row of its stack.
+        XCTAssertTrue(Tool.crop.draws(store.snapshot.rows).isEmpty)
     }
 }

@@ -18,15 +18,6 @@ struct ContentView: View {
 
     private var tool: Tool { Tool(rawValue: toolName) ?? .basic }
 
-    /// Whether the crop overlay is over the photograph.
-    ///
-    /// Temporary quarters. Crop becomes a tool in the strip, alongside the
-    /// other six, and this toggle goes when it does — it is here so the overlay
-    /// is reachable rather than written and unreachable. Not remembered between
-    /// launches, because a tool that puts a rectangle over the picture is one
-    /// you are *in*, not a preference.
-    @State private var cropping = false
-
     private var chosenTool: Binding<Tool> {
         Binding(get: { tool }, set: { toolName = $0.rawValue })
     }
@@ -55,6 +46,22 @@ struct ContentView: View {
         .onAppear {
             store.setSupportDirectory(Self.supportDirectory)
             store.openTestChart()
+            // The tool is remembered between launches, so this may already be
+            // Crop — in which case the viewer has to open on the enclosing
+            // frame rather than waiting for a change that never comes.
+            store.setCropping(tool.showsWholeFrame)
+        }
+        // The engine frames the viewer on the whole straightened source while
+        // the crop tool is showing, so there is something outside the rectangle
+        // to see and to drag back into — and, just as importantly, it is turned
+        // off again on the way out. Left on, every other tool would be grading
+        // a picture with the cut-away parts still in it.
+        //
+        // Driven from here rather than from `CropOverlay`'s `onAppear`, because
+        // the flag decides what the *viewer* draws and the overlay is only what
+        // goes on top of it.
+        .onChange(of: tool) { _, chosen in
+            store.setCropping(chosen.showsWholeFrame)
         }
     }
 
@@ -96,7 +103,7 @@ struct ContentView: View {
         MetalViewer(store: store)
             .background(Palette.viewer.color)
             .overlay {
-                if cropping { CropOverlay(store: store) }
+                if tool.showsWholeFrame { CropOverlay(store: store) }
             }
     }
 
@@ -113,7 +120,8 @@ struct ContentView: View {
             ToolStrip(chosen: chosenTool)
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    if tool == .effects {
+                    switch tool {
+                    case .effects:
                         addedRows
                         // The browser belongs to this tool now rather than
                         // sitting under every panel, and it is directly under
@@ -121,7 +129,12 @@ struct ContentView: View {
                         // where the reader is already looking.
                         EffectBrowser(registry: store.registry, store: store)
                             .padding(.vertical, 8)
-                    } else {
+                    case .crop:
+                        // The one tool with no rows behind it: it edits the
+                        // document's geometry, which is a value on the document
+                        // rather than an entry in its stack.
+                        CropPanel(store: store)
+                    default:
                         pinnedPanels
                     }
                 }
@@ -135,8 +148,8 @@ struct ContentView: View {
     ///
     /// `Tool.draws` is what decides, here and in `ToolStripTests` both, so the
     /// property the test asserts — every row of the document is drawn by
-    /// exactly one of the six tools — is a property of what this view actually
-    /// draws rather than of a second copy of the rule.
+    /// exactly one of the seven tools — is a property of what this view
+    /// actually draws rather than of a second copy of the rule.
     @ViewBuilder
     private var pinnedPanels: some View {
         ForEach(tool.draws(store.snapshot.rows)) { drawn in
@@ -206,16 +219,6 @@ struct ContentView: View {
                     .foregroundStyle(Palette.dim.color)
             }
             Spacer()
-            Toggle("Crop", isOn: $cropping)
-                .toggleStyle(KromaToggleButtonStyle())
-                .help("Crop, straighten and flip")
-                // The engine frames the viewer on the whole straightened source
-                // while the tool is open, so there is something outside the
-                // rectangle to see and to drag back into. Driven from here
-                // rather than from the overlay's `onAppear`, because the flag
-                // decides what the *viewer* draws and the overlay is only what
-                // goes on top of it.
-                .onChange(of: cropping) { _, on in store.setCropping(on) }
             Toggle("Scopes", isOn: $showScopes)
                 .toggleStyle(KromaToggleButtonStyle())
                 .help("Waveform, parade, vectorscope and histogram")

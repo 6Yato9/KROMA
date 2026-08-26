@@ -227,6 +227,10 @@
     {
       "effects": [],
       "name": "Effects"
+    },
+    {
+      "effects": [],
+      "name": "Crop"
     }
   ]
 }

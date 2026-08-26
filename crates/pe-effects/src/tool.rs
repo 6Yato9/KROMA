@@ -21,6 +21,13 @@ pub enum Tool {
     ColourMixer,
     /// Whatever the user added, and the browser that adds more.
     Effects,
+    /// The crop, the straightening angle, the quarter-turns and the flips.
+    ///
+    /// The one tool that edits the document's *geometry* rather than a row in
+    /// its stack, which is why it owns no pinned effects: there is no
+    /// `Effect` behind it and no parameters to look up. It sits last for the
+    /// same reason the Windows shell puts its Image page after Effects.
+    Crop,
 }
 
 impl Tool {
@@ -29,13 +36,14 @@ impl Tool {
     /// Here rather than in a shell for the same reason [`crate::Group::ALL`]
     /// is: a variant added and not listed is a tool with no button, and the
     /// only symptom is a panel nobody can reach.
-    pub const ALL: [Tool; 6] = [
+    pub const ALL: [Tool; 7] = [
         Tool::Basic,
         Tool::ColourWheels,
         Tool::Curves,
         Tool::ColourWarper,
         Tool::ColourMixer,
         Tool::Effects,
+        Tool::Crop,
     ];
 
     pub fn name(self) -> &'static str {
@@ -46,6 +54,7 @@ impl Tool {
             Tool::ColourWarper => "Colour Warper",
             Tool::ColourMixer => "Colour Mixer",
             Tool::Effects => "Effects",
+            Tool::Crop => "Crop",
         }
     }
 
@@ -69,9 +78,11 @@ impl Tool {
             Tool::Curves => &["curves"],
             Tool::ColourWarper => &["colour_warper"],
             Tool::ColourMixer => &["colour_mixer"],
-            // Not pinned, and deliberately: this one shows the rows the user
-            // put there.
+            // Neither of these is pinned, and deliberately. Effects shows the
+            // rows the user put there; Crop edits the document's geometry,
+            // which is not a row at all.
             Tool::Effects => &[],
+            Tool::Crop => &[],
         }
     }
 
@@ -153,11 +164,29 @@ mod tests {
         }
     }
 
-    /// The added stack is a tool with no pinned effects of its own — it shows
-    /// whatever the user put there.
+    /// Exactly two tools have no pinned effects of their own, and both are
+    /// deliberate: [`Tool::Effects`] shows whatever the user put there, and
+    /// [`Tool::Crop`] edits the document's geometry rather than a row in the
+    /// stack.
+    ///
+    /// Named rather than counted, and asserted in both directions, because the
+    /// failure this guards is a *third* one — a tool added to the strip and its
+    /// effects list forgotten. That draws an empty panel with nothing to say
+    /// so, and the effects it should have drawn appear nowhere: the same
+    /// silence `every_pinned_effect_belongs_to_exactly_one_tool` catches from
+    /// the other end.
     #[test]
-    fn the_effects_tool_owns_nothing_pinned() {
-        assert!(Tool::Effects.effects().is_empty());
+    fn only_effects_and_crop_own_nothing_pinned() {
+        let empty: Vec<Tool> = Tool::ALL
+            .into_iter()
+            .filter(|t| t.effects().is_empty())
+            .collect();
+        assert_eq!(
+            empty,
+            vec![Tool::Effects, Tool::Crop],
+            "a tool with no pinned effects that is not one of these two is a \
+             panel that draws nothing"
+        );
     }
 
     #[test]
