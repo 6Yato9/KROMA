@@ -65,7 +65,7 @@ returns nil for a missing name, so that is a test, and this plan requires it.
 - Create: `crates/pe-effects/src/tool.rs`
 - Modify: `crates/pe-effects/src/lib.rs`, `crates/pe-session/tests/fixtures.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
     /// Every pinned effect has exactly one home. A pinned effect belonging to
@@ -111,7 +111,7 @@ returns nil for a missing name, so that is a test, and this plan requires it.
     }
 ```
 
-- [ ] **Step 2: Write it**
+- [x] **Step 2: Write it**
 
 ```rust
 //! Which tool an effect belongs to.
@@ -182,14 +182,14 @@ impl Tool {
 
 Check `PINNED_ROWS` is reachable and spelled as assumed; follow the code if not.
 
-- [ ] **Step 3: Fixture**
+- [x] **Step 3: Fixture**
 
 Extend `crates/pe-session/tests/fixtures.rs` with a `tools` block: each tool's
 name and its effect keys in order. Swift mirrors the enum and asserts against
 it, so a tenth pinned effect added on the Rust side and not given a home fails
 on both sides rather than silently vanishing from the interface.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Baseline **675 Rust passed, 0 failed, 1 ignored**. Report the real number.
 
@@ -210,7 +210,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add -A && git commit -m "
 - Modify: `apps/apple/PhotoEditor/ContentView.swift`
 - Create: `apps/apple/KromaKitTests/ToolStripTests.swift`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```swift
     /// A symbol that does not exist renders as nothing, and a blank button in a
@@ -255,7 +255,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add -A && git commit -m "
     }
 ```
 
-- [ ] **Step 2: Write the strip**
+- [x] **Step 2: Write the strip**
 
 `ToolStrip` is a row of six buttons: an SF Symbol each, the selected one on
 `SELECT` with `TITLE` ink, the rest `ICON` on the panel. A `.help()` tooltip
@@ -278,7 +278,7 @@ which you used and whether any first choice had to be replaced:
 which is `SELECT`; the accent stays on the name of the effect you are working
 in. That distinction is the whole reason both colours exist.
 
-- [ ] **Step 3: Show one tool**
+- [x] **Step 3: Show one tool**
 
 `ContentView`'s inspector currently walks every row. It now:
 
@@ -296,7 +296,7 @@ to compensate; the two solve different problems.
 every panel; it belongs to `Tool.Effects` now. Check that adding an effect still
 works and that the added row appears where the user is looking.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Baseline **196 Swift tests, 0 failures**. Report the real number, and build the
 app: `** BUILD SUCCEEDED **`, no new Swift warnings. Two are pre-existing:

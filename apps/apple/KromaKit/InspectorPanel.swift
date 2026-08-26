@@ -18,13 +18,28 @@ public struct InspectorPanel: View {
     /// Two of them, one under the other, is what the panel did before.
     let showsTitle: Bool
 
+    /// Whether this panel's name is also the name of the tool showing it.
+    ///
+    /// The strip already says which tool you are in, so a tool that draws six
+    /// effects would otherwise put six accented names on screen at once —
+    /// which is the "an accent on every heading says nothing" failure arriving
+    /// through the grouping instead of through the colour. Only a tool that
+    /// *is* one effect — Curves, the Warper, the Mixer — has a name worth
+    /// accenting, because there the effect and the tool are the same thing.
+    let namesTheTool: Bool
+
     public init(
-        effect: Effect, row: Snapshot.Row, store: SessionStore, showsTitle: Bool = true
+        effect: Effect,
+        row: Snapshot.Row,
+        store: SessionStore,
+        showsTitle: Bool = true,
+        namesTheTool: Bool = false
     ) {
         self.effect = effect
         self.row = row
         self.store = store
         self.showsTitle = showsTitle
+        self.namesTheTool = namesTheTool
     }
 
     public var body: some View {
@@ -34,7 +49,9 @@ public struct InspectorPanel: View {
             // nowhere else; seven pinned panels shouting it at once is the
             // same nothing as accenting every heading. Folding is also what
             // makes a column of nine panels navigable at all.
-            InspectorSection(effect: effect.key, title: effect.name, namesAnEffect: true) {
+            InspectorSection(
+                effect: effect.key, title: effect.name, namesAnEffect: namesTheTool
+            ) {
                 contents
             }
         } else {

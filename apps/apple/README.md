@@ -96,6 +96,29 @@ is not a fixture that has gone stale — it is the drawn control and the rendere
 one having parted company, and one of them is wrong. Find out which before
 regenerating.
 
+## One tool at a time
+
+The inspector shows one tool, chosen from an icon strip: Basic, Colour Wheels,
+Curves, Colour Warper, Colour Mixer, Effects. Which of the **eleven** pinned
+effects each tool draws lives in `pe_effects::Tool` and travels in
+`Fixtures/theme.json`, because once the panel shows one tool an effect that
+belongs to no tool is drawn nowhere at all — not truncated, not greyed, simply
+absent with nothing to say so. Two tests make that impossible, one per side.
+
+Eleven panels in one scrolling column was the arrangement this replaces:
+reaching the warper meant scrolling past a hundred and thirty controls.
+
+The strip is drawn with **SF Symbols**, where the Windows shell draws its glyphs
+by hand. That is the one place the two shells deliberately differ — a
+hand-drawn glyph on macOS would be reproducing a Windows workaround rather than
+a design. A missing symbol renders as nothing, so a test asserts every one of
+the six resolves.
+
+A selected tool is `SELECT`, not the accent: "this is chosen" and "this is what
+you are working in" are different facts. The accent goes on an effect's name
+only where the effect *is* the tool — Curves, the Warper, the Mixer. Basic draws
+six effects and six accented names is no more use than none.
+
 ## The scheme
 
 Every colour comes from `crates/pe-theme`, shared with the Windows shell, and

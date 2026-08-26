@@ -122,7 +122,15 @@ struct ContentView: View {
     private var pinnedPanels: some View {
         ForEach(tool.draws(store.snapshot.rows)) { drawn in
             if let effect = store.registry.effect(drawn.row.effect) {
-                InspectorPanel(effect: effect, row: drawn.row, store: store)
+                InspectorPanel(
+                    effect: effect,
+                    row: drawn.row,
+                    store: store,
+                    // Accented only where the effect *is* the tool. Basic draws
+                    // six of these and six accented names is no more use than
+                    // none.
+                    namesTheTool: tool.effects.count == 1
+                )
                 Hairline()
             }
         }
