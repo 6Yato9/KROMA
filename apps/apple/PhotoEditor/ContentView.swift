@@ -23,21 +23,35 @@ struct ContentView: View {
     }
 
     var body: some View {
-        HSplitView {
-            VStack(spacing: 0) {
-                viewerAndScopes
-                statusBar
+        HStack(spacing: 0) {
+            // Down the left, not across the bottom. The window is wider than
+            // it is tall and a photograph is not, so a horizontal strip costs
+            // height — the dimension the picture is already short of.
+            //
+            // Beside the split rather than inside it: a filmstrip's width is
+            // the width of a thumbnail and there is nothing for a wider one to
+            // show, so there is no reason to offer a handle that only makes it
+            // wrong. And unconditional, because the strip draws nothing at all
+            // for a set of one or none — which set gets a strip is decided in
+            // `Filmstrip` and nowhere else.
+            Filmstrip(store: store)
+            HSplitView {
+                VStack(spacing: 0) {
+                    viewerAndScopes
+                    statusBar
+                }
+                inspector
+                    // Wide enough for a row, and resizable. It was pinned at
+                    // 260, which is less than the label, readout and reset
+                    // arrow cost between them — every control in the
+                    // application was drawing its label with the front clipped
+                    // off.
+                    .frame(
+                        minWidth: RowMetrics.minimumPanel,
+                        idealWidth: 330,
+                        maxWidth: 520
+                    )
             }
-            inspector
-                // Wide enough for a row, and resizable. It was pinned at 260,
-                // which is less than the label, readout and reset arrow cost
-                // between them — every control in the application was drawing
-                // its label with the front clipped off.
-                .frame(
-                    minWidth: RowMetrics.minimumPanel,
-                    idealWidth: 330,
-                    maxWidth: 520
-                )
         }
         .frame(minWidth: 900, minHeight: 560)
         // Behind the splits, so the seams between them are the panel grey
