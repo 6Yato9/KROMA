@@ -186,5 +186,47 @@
       "C259BB",
       "CC54C4"
     ]
-  }
+  },
+  "tools": [
+    {
+      "effects": [
+        "white_balance",
+        "exposure",
+        "contrast",
+        "tone",
+        "presence",
+        "colour"
+      ],
+      "name": "Basic"
+    },
+    {
+      "effects": [
+        "primaries",
+        "log_wheels"
+      ],
+      "name": "Colour Wheels"
+    },
+    {
+      "effects": [
+        "curves"
+      ],
+      "name": "Curves"
+    },
+    {
+      "effects": [
+        "colour_warper"
+      ],
+      "name": "Colour Warper"
+    },
+    {
+      "effects": [
+        "colour_mixer"
+      ],
+      "name": "Colour Mixer"
+    },
+    {
+      "effects": [],
+      "name": "Effects"
+    }
+  ]
 }

@@ -441,12 +441,62 @@ fn the_theme_fixture_is_current() {
     // of them said something else.
     let axes: Vec<String> = CHANNEL_AXES.iter().map(Ramp::tag).collect();
 
+    // The icon strip: each tool, in the strip's order, with the pinned effects
+    // it draws in the order it draws them.
+    //
+    // Here rather than in a fixture of its own because this file is what holds
+    // the two shells to one inspector — the palette, the ramps, the wheel axes
+    // and now which panel a pinned effect appears on are the same kind of
+    // shared answer, and a Swift copy of any of them is the same mistake.
+    //
+    // What it buys: once the panel shows one tool at a time, a pinned effect
+    // belonging to no tool is drawn nowhere at all. `pe_effects::tool` refuses
+    // that on the Rust side; this is what refuses it on the Swift one, so a
+    // twelfth pinned effect given no home fails both suites rather than
+    // silently vanishing from the interface.
+    let tools: Vec<serde_json::Value> = pe_effects::Tool::ALL
+        .iter()
+        .map(|t| serde_json::json!({ "name": t.name(), "effects": t.effects() }))
+        .collect();
+
     let json = serde_json::to_string_pretty(&serde_json::json!({
         "palette": palette,
         "ramps": ramps,
         "sampled": sampled,
         "axes": axes,
+        "tools": tools,
     }))
     .unwrap();
     check("theme.json", json);
+}
+
+/// Every pinned effect appears on exactly one tool, checked against the
+/// registry rather than against the list `pe-effects` was written with.
+///
+/// The same shape as `every_registered_curve_has_a_backdrop` above, and here
+/// for the same reason: `pe_effects::tool`'s own suite already asks this, but
+/// this is the suite that also writes the fixture Swift reads, so the thing
+/// shipped across is the thing that was checked.
+#[test]
+fn the_strip_has_a_home_for_every_pinned_effect() {
+    use pe_effects::Tool;
+
+    for key in pe_effects::PINNED_ROWS {
+        assert!(Tool::of(key).is_some(), "{key} is on no tool");
+    }
+    // And the tools between them claim every pinned effect, once each, and
+    // nothing else — which is the half that catches a tool left holding a key
+    // after the row it named stopped being pinned.
+    let claimed: Vec<&str> = Tool::ALL
+        .iter()
+        .flat_map(|t| t.effects())
+        .copied()
+        .collect();
+    let mut sorted = claimed.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(sorted.len(), claimed.len(), "a tool claims a repeat");
+    let mut pinned = pe_effects::PINNED_ROWS.to_vec();
+    pinned.sort_unstable();
+    assert_eq!(sorted, pinned, "the strip and the pinned rows disagree");
 }
