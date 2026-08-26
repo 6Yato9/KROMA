@@ -59,6 +59,29 @@ jobs:
           path: tests/golden/out/
           if-no-files-found: ignore
 
+  # A script committed without its executable bit is a script nobody can run
+  # from a fresh clone — and it is invisible on a filesystem that reports 777
+  # for everything, which is what this repository is developed on. That is
+  # exactly what happened to `build-engine.sh`: mode 644 in the index, 755 on
+  # the author's disc, and the Mac app unbuildable by anyone else until CI ran
+  # for the first time and said "Permission denied".
+  script-modes:
+    name: scripts are executable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Every tracked script is executable
+        run: |
+          bad=$(git ls-files -s '*.sh' | awk '$1 != "100755" { print $4 }')
+          if [ -n "$bad" ]; then
+            echo "committed without the executable bit:"
+            echo "$bad"
+            echo
+            echo "fix with: git update-index --chmod=+x <path>"
+            exit 1
+          fi
+          echo "all $(git ls-files '*.sh' | wc -l | tr -d ' ') tracked scripts are executable"
+
   ffi-header:
     name: FFI header is current
     runs-on: ubuntu-latest
