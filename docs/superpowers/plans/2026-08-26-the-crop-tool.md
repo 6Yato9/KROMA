@@ -333,6 +333,87 @@ outside it.
 
 ---
 
+## Task 4b: The viewer shows what you are cutting away
+
+Task 4's brief said no Rust should change. That was wrong, and it left the tool
+half-built: the overlay draws a correct rectangle over the **cropped** picture,
+so with any non-identity crop you cannot see what you are cutting away or drag
+back into it. That is the property the whole tool rests on.
+
+It also forced Swift to duplicate `enclosing`, `crop_uv_in` and
+`set_crop_uv_in` — about forty lines — because the ABI carries the seven
+scalars and nothing that answers "where is the crop in the frame you are
+showing me". This task removes both problems with the same change.
+
+**Files:**
+- Modify: `crates/pe-session/src/session.rs`, `crates/pe-ffi/src/lib.rs`
+- Modify: `apps/apple/KromaKit/Engine.swift`, `SessionStore.swift`,
+  `Controls/CropOverlay.swift`
+
+- [ ] **Step 1: A framing override in the session**
+
+`Session::graded` renders `doc.geometry` directly (`session.rs:856`). The
+Windows shell does not: `preview.rs::render` takes a `framing: Geometry` —
+"the geometry the *viewer* is showing, which is normally" the document's —
+and `main.rs` passes the enclosing frame while the crop tool is open.
+
+Give the session the same thing, but as a **flag rather than a geometry**, so
+the shell never computes a frame:
+
+```rust
+    /// Show the whole straightened source rather than the crop.
+    ///
+    /// While the crop tool is open the viewer has to show what is being cut
+    /// away, or there is nothing to drag back into. `Geometry::enclosing` is
+    /// what that frame is, and it is computed here rather than passed in so
+    /// no shell has to know how.
+    pub fn set_cropping(&mut self, cropping: bool)
+```
+
+and use `if self.cropping { geometry.enclosing(w, h) } else { geometry }` where
+the working texture is built. It must invalidate the same guards a geometry
+change does, or the viewer will not repaint.
+
+Tests: that turning it on changes the rendered size to the enclosing frame's,
+that turning it off restores the crop, and that it is off by default.
+
+- [ ] **Step 2: The crop, in the frame being shown**
+
+```rust
+pe_session_set_cropping(s, cropping: bool) -> i32
+
+/// Where the crop sits inside the frame the viewer is showing, as u0, v0, u1,
+/// v1. This is `Geometry::crop_uv_in` and exists so no shell has to hold a
+/// second copy of it.
+pe_session_crop_in_frame(s, out_u0, out_v0, out_u1, out_v1) -> i32
+
+/// Move the crop to a rectangle of the frame being shown, correcting as
+/// `pe_session_set_geometry` does, and write back where it actually landed.
+pe_session_set_crop_in_frame(s, u0, v0, u1, v1,
+                             out_u0, out_v0, out_u1, out_v1) -> i32
+```
+
+- [ ] **Step 3: Delete the Swift copy**
+
+`CropFrame`'s `enclosing`, `crop_uv_in` and `set_crop_uv_in` go, and with them
+the hand-transcribed expected values in `CropOverlayTests` that stood in for a
+fixture. The overlay asks the engine where the crop is and tells it where to
+put it; the drag still draws only what came back.
+
+The mutation tests from Task 4 must still pass — they are about the overlay's
+behaviour, not about who does the arithmetic.
+
+- [ ] **Step 4: Verify and commit**
+
+Baselines at the time of writing: **701 Rust**, **237 Swift**. Report the real
+numbers, and run the non-Apple check.
+
+```bash
+cd "/Volumes/Projects/Programming/photo editor" && git add -A && git commit -m "The viewer shows what the crop is cutting away"
+```
+
+---
+
 ## Task 5: The panel, and an eighth tool
 
 **Files:**
