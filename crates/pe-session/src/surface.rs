@@ -31,6 +31,43 @@ pub enum SurfaceError {
     Incompatible,
     #[error("could not acquire a drawable: {0}")]
     Acquire(wgpu::SurfaceError),
+    /// There is no `CAMetalLayer` to attach to here.
+    ///
+    /// The type and the entry point exist on every platform so the C ABI has
+    /// one shape everywhere — a function that is present on one build and
+    /// missing on another is a worse thing to hand a caller than one that
+    /// answers honestly.
+    #[error("attaching a layer is an Apple-platform thing")]
+    NotThisPlatform,
+}
+
+/// Build a wgpu surface on a host-owned layer.
+///
+/// `SurfaceTargetUnsafe::CoreAnimationLayer` exists only on Apple platforms,
+/// and it is the single genuinely platform-specific line in this crate. It sat
+/// here ungated for about a hundred commits, during which the workspace did
+/// not compile on Windows at all — the CI matrix that would have said so on
+/// the first push was aimed at a branch this repository has never had.
+///
+/// # Safety
+/// `layer` must be a live `CAMetalLayer` that outlives the surface.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub(crate) unsafe fn surface_on_layer(
+    instance: &wgpu::Instance,
+    layer: *mut c_void,
+) -> Result<wgpu::Surface<'static>, SurfaceError> {
+    unsafe { instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(layer)) }
+        .map_err(|e| SurfaceError::Create(e.to_string()))
+}
+
+/// # Safety
+/// Takes the same arguments as its Apple counterpart and reads neither.
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+pub(crate) unsafe fn surface_on_layer(
+    _instance: &wgpu::Instance,
+    _layer: *mut c_void,
+) -> Result<wgpu::Surface<'static>, SurfaceError> {
+    Err(SurfaceError::NotThisPlatform)
 }
 
 /// A layer we have been given, and the surface configured onto it.
@@ -67,10 +104,7 @@ impl Attached {
         if layer.is_null() {
             return Err(SurfaceError::NullLayer);
         }
-        let surface = unsafe {
-            instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(layer))
-        }
-        .map_err(|e| SurfaceError::Create(e.to_string()))?;
+        let surface = unsafe { surface_on_layer(instance, layer) }?;
 
         let caps = surface.get_capabilities(adapter);
         // Ask for an sRGB-encoding target so the transfer function is applied

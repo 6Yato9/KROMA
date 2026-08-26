@@ -963,11 +963,7 @@ impl Session {
         // The adapter must come from the instance the surface belongs to, and
         // must be told about the surface: on a machine with more than one GPU,
         // the one picked otherwise may not be able to present to this window.
-        let probe = unsafe {
-            self.instance
-                .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(layer))
-        }
-        .map_err(|e| SessionError::NoGpu(e.to_string()))?;
+        let probe = unsafe { crate::surface::surface_on_layer(&self.instance, layer) }?;
         if self.gpu.context.is_none() {
             let gpu = pollster::block_on(GpuContext::from_instance(&self.instance, Some(&probe)))
                 .map_err(|e| SessionError::NoGpu(e.to_string()))?;
