@@ -46,7 +46,7 @@ public struct InspectorPanel: View {
         if showsTitle {
             // Foldable, and titled in the accent only while it is open.
             // Resolve spends the accent on the effect you are working in and
-            // nowhere else; seven pinned panels shouting it at once is the
+            // nowhere else; eleven pinned panels shouting it at once is the
             // same nothing as accenting every heading. Folding is also what
             // makes a column of nine panels navigable at all.
             InspectorSection(
@@ -319,7 +319,7 @@ struct InspectorSection<Content: View>: View {
     /// Whether this heading names a whole effect rather than a group inside
     /// one. An effect's name is accented while its panel is open and grey
     /// while it is shut, which is what `resolve.rs` does — and the reason the
-    /// accent stays worth something. Seven pinned panels all titled in it at
+    /// accent stays worth something. Eleven pinned panels all titled in it at
     /// once says exactly as little as accenting every heading would.
     let namesAnEffect: Bool
     private let content: () -> Content

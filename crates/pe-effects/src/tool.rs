@@ -95,6 +95,23 @@ mod tests {
     /// no tool is one the user cannot reach at all once the panel shows one
     /// tool at a time — it would simply not be drawn, anywhere, with nothing
     /// to say so.
+    /// How many rows a fresh document carries.
+    ///
+    /// Asserted not because the number itself matters but because it is quoted
+    /// in prose that reasons from it — the pass counter's justification in
+    /// `pe-effects`, the neutral-skip in `pe-render`, the export's VRAM
+    /// arithmetic, and two comments in the Swift shell about how many accented
+    /// titles is too many. It read "nine" for a long time after `colour_warper`
+    /// and `log_wheels` were pinned. If this fails, go and read those.
+    #[test]
+    fn a_fresh_document_carries_eleven_rows() {
+        assert_eq!(
+            crate::PINNED_ROWS.len(),
+            11,
+            "the pinned count changed; four comments and two Swift files quote it"
+        );
+    }
+
     #[test]
     fn every_pinned_effect_belongs_to_exactly_one_tool() {
         for key in crate::PINNED_ROWS {

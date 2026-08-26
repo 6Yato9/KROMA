@@ -293,7 +293,7 @@ mod tests {
         // The property the ping-pong exists to provide: a 24MP export costs
         // about 576 MB whether the stack has one row or fifty. Caching a
         // texture per row the way the preview does would need over 1.5 GB for
-        // nine rows, and keep climbing.
+        // eleven rows, and keep climbing.
         let ping_pong = estimated_vram(6000, 4000);
         assert!(
             ping_pong < 700 * 1024 * 1024,

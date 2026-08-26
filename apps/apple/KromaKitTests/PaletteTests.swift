@@ -144,7 +144,7 @@ final class PaletteTests: XCTestCase {
 ///
 /// Resolve's interface is almost entirely grey, which is why its one orange
 /// title tells you where you are without having to shout. Spending it on every
-/// heading — or on seven pinned panels at once, which is the same thing
+/// heading — or on eleven pinned panels at once, which is the same thing
 /// arriving through the layout instead of through the colour — says nothing at
 /// all. `resolve.rs` accents an effect's name only while its panel is open,
 /// and this is that rule.

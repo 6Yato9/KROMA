@@ -688,9 +688,9 @@ fn effect_source(name: &str) -> &'static str {
 ///
 /// Wider than `StackRow::is_noop`, which only knows about the enable toggle and
 /// the blend. This also asks the registry whether the parameters sit at their
-/// neutral values, which matters now that every document carries nine pinned
+/// neutral values, which matters now that every document carries eleven pinned
 /// panels that start out doing nothing — without it a freshly opened photo
-/// would burn nine full-screen passes a frame to produce itself.
+/// would burn eleven full-screen passes a frame to produce itself.
 ///
 /// An effect this build does not recognise is inert too: the row round-trips
 /// through the document, but there is nothing to render.

@@ -303,7 +303,7 @@ impl EffectDef {
 
     /// Whether these parameters leave the image untouched.
     ///
-    /// The pinned panels mean a fresh document already carries nine rows. Each
+    /// The pinned panels mean a fresh document already carries eleven rows. Each
     /// would otherwise cost a full-screen pass every frame to do nothing.
     /// Skipping the inert ones keeps a new document at zero passes and makes
     /// the pass counter mean what it says: the work your edit actually costs.
