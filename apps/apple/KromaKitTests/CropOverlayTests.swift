@@ -7,24 +7,27 @@ import XCTest
 /// The crop overlay: where the rectangle sits, what a drag does to it, and what
 /// the thing actually looks like.
 ///
-/// Two halves, and they fail for different reasons.
+/// Three parts, and they fail for different reasons.
 ///
-/// The first half pins ``CropFrame`` against `pe_core::geometry`. That mapping
-/// is a second copy of `Geometry::enclosing` and `Geometry::crop_uv_in`, which
-/// the plan for this tool set out to avoid and which the C ABI leaves no way to
-/// avoid: `pe_session_set_geometry` carries nine scalars in and seven out, and
-/// none of them is "where is the crop in the frame you are showing me". So the
-/// copy exists, and the numbers below were taken from `pe_core`'s own
-/// `crop_uv_in` — a quarter-turn and a flip put a rectangle somewhere entirely
-/// plausible and entirely wrong, and nothing but the engine's own answer can
-/// say which.
+/// The first asks a real engine where the crop is. It used to pin a *copy* of
+/// `Geometry::enclosing` and `Geometry::crop_uv_in` that lived in `CropFrame`,
+/// against numbers transcribed from `pe_core` — a fixture in all but name,
+/// because the C ABI carried the seven scalars of a geometry and nothing that
+/// answered "where is the crop in the frame you are showing me". It answers that
+/// now (`pe_session_crop_in_frame`), the copy is gone, and so are the
+/// transcribed numbers: what is left to check on this side is not the
+/// arithmetic — which cannot drift from an engine that performs it — but that
+/// the overlay asks and draws the answer.
 ///
-/// The second half renders the overlay headlessly and reads the bitmap back,
-/// the way `RowMetricsTests`, `CurveBackdropTests` and `WarperCloudTests` do.
-/// What that can check is where the ink lands and how heavy it is. Whether the
-/// result is *pleasant* — and whether the rectangle lands on the photograph
-/// when the engine is drawing it into a Metal layer underneath — stays
-/// unverified until somebody looks at it.
+/// The second is the drag, which is this side's: which handle a press catches,
+/// what a delta does to a rectangle, and where that rectangle lands on screen.
+///
+/// The third renders the overlay headlessly and reads the bitmap back, the way
+/// `RowMetricsTests`, `CurveBackdropTests` and `WarperCloudTests` do. What that
+/// can check is where the ink lands and how heavy it is. Whether the result is
+/// *pleasant* — and whether the rectangle lands on the photograph when the
+/// engine is drawing it into a Metal layer underneath — stays unverified until
+/// somebody looks at it.
 final class CropOverlayTests: XCTestCase {
 
     private static let source = CGSize(width: 1024, height: 768)
@@ -41,118 +44,159 @@ final class CropOverlayTests: XCTestCase {
         )
     }
 
-    private static func model(_ g: GeometryValue) -> CropFrame {
-        CropFrame(crop: g, source: source)
-    }
-
-    // ---- the mapping, against the engine's own arithmetic -----------------
-
-    /// The numbers `pe_core::Geometry::crop_uv_in` produces for the frame
-    /// `Geometry::enclosing` gives, for the same six geometries.
-    ///
-    /// Taken from the engine by running `crop_uv_in` over each case and
-    /// printing the result to six places; the derivation is in `CropFrame.rect`.
-    /// If this ever fails, the Swift copy has drifted and the overlay is
-    /// drawing a rectangle somewhere the renderer does not put the crop.
-    private struct Case {
-        let name: String
-        let crop: GeometryValue
-        /// The enclosing frame's size, as a fraction of the source.
-        let frame: CGSize
-        /// min x, min y, max x, max y in the frame's uv.
-        let rect: [Double]
-    }
-
-    private static var cases: [Case] {
+    /// The six geometries the mapping used to be pinned against, one of each
+    /// shape of trouble: a plain crop, a straightened one, a quarter-turn, a
+    /// turn with a flip, and both flips at a negative angle. The permutation is
+    /// the part that looks entirely plausible when it is wrong.
+    private static var cases: [(name: String, crop: GeometryValue)] {
         [
-            Case(
-                name: "plain", crop: base(),
-                frame: CGSize(width: 1, height: 1),
-                rect: [0.350000, 0.250130, 0.850000, 0.649870]),
-            Case(
-                name: "angle 12", crop: base(angle: 12),
-                frame: CGSize(width: 1.134081, height: 1.255363),
-                rect: [0.367700, 0.300934, 0.808699, 0.619398]),
-            Case(
-                name: "one quarter-turn", crop: base(turns: 1),
-                frame: CGSize(width: 1, height: 1),
-                rect: [0.350130, 0.350000, 0.749870, 0.850000]),
-            Case(
-                name: "one quarter-turn, flipped horizontally",
-                crop: base(turns: 1, flipH: true),
-                frame: CGSize(width: 1, height: 1),
-                rect: [0.250130, 0.350000, 0.649870, 0.850000]),
-            Case(
-                name: "three quarter-turns, flipped vertically, 7.5 degrees",
-                crop: base(angle: 7.5, turns: 3, flipV: true),
-                frame: CGSize(width: 1.089339, height: 1.165480),
-                rect: [0.285587, 0.362242, 0.628603, 0.821435]),
-            Case(
-                name: "two quarter-turns, both flips, -20 degrees",
-                crop: base(angle: -20, turns: 2, flipH: true, flipV: true),
-                frame: CGSize(width: 1.196208, height: 1.395720),
-                rect: [0.374612, 0.320989, 0.792571, 0.607369]),
+            ("plain", base()),
+            ("angle 12", base(angle: 12)),
+            ("one quarter-turn", base(turns: 1)),
+            ("one quarter-turn, flipped horizontally", base(turns: 1, flipH: true)),
+            (
+                "three quarter-turns, flipped vertically, 7.5 degrees",
+                base(angle: 7.5, turns: 3, flipV: true)
+            ),
+            (
+                "two quarter-turns, both flips, -20 degrees",
+                base(angle: -20, turns: 2, flipH: true, flipV: true)
+            ),
         ]
     }
 
-    func testTheEnclosingFrameIsTheEnginesEnclosingFrame() {
+    /// A session with the test chart open and a geometry set, ready to be asked
+    /// where the crop is.
+    @MainActor
+    private static func opened(_ crop: GeometryValue, cropping: Bool) throws -> SessionStore {
+        let store = try XCTUnwrap(SessionStore())
+        store.openTestChart(width: UInt32(source.width), height: UInt32(source.height))
+        store.setGeometry(crop)
+        store.setCropping(cropping)
+        XCTAssertNil(store.problem)
+        return store
+    }
+
+    // ---- where the engine says the crop is --------------------------------
+
+    /// With the tool closed the viewer is showing the crop itself, so the crop
+    /// fills it. Six geometries, and the one call answers all six without this
+    /// side knowing anything about turns or flips.
+    @MainActor
+    func testTheCropFillsTheFrameUntilTheToolIsOpened() throws {
         for c in Self.cases {
-            let f = CropFrame.enclosing(c.crop, source: Self.source)
-            XCTAssertEqual(f.size.width, c.frame.width, accuracy: 2e-5, c.name)
-            XCTAssertEqual(f.size.height, c.frame.height, accuracy: 2e-5, c.name)
-            // Centred, unlocked, and carrying the crop's own angle, turn and
-            // flips — which is what makes the crop axis-aligned inside it.
-            XCTAssertEqual(f.centre, .zero, c.name)
-            XCTAssertEqual(f.aspect, .free, c.name)
-            XCTAssertEqual(f.angle, c.crop.angle, c.name)
-            XCTAssertEqual(f.turns, c.crop.turns, c.name)
-            XCTAssertEqual(f.flipH, c.crop.flipH, c.name)
-            XCTAssertEqual(f.flipV, c.crop.flipV, c.name)
+            let store = try Self.opened(c.crop, cropping: false)
+            let r = store.cropRect
+            XCTAssertEqual(Double(r.minX), 0, accuracy: 1e-3, "\(c.name): min x")
+            XCTAssertEqual(Double(r.minY), 0, accuracy: 1e-3, "\(c.name): min y")
+            XCTAssertEqual(Double(r.width), 1, accuracy: 1e-3, "\(c.name): width")
+            XCTAssertEqual(Double(r.height), 1, accuracy: 1e-3, "\(c.name): height")
         }
     }
 
-    func testTheRectangleIsWhereTheEngineSaysTheCropIs() {
+    /// And opening the tool puts the crop *inside* a bigger frame, which is the
+    /// property the whole tool rests on: there is something outside the
+    /// rectangle to see, and to drag back into.
+    @MainActor
+    func testOpeningTheToolPutsTheCropInsideABiggerFrame() throws {
         for c in Self.cases {
-            let r = Self.model(c.crop).rect
-            XCTAssertEqual(Double(r.minX), c.rect[0], accuracy: 2e-5, "\(c.name): min x")
-            XCTAssertEqual(Double(r.minY), c.rect[1], accuracy: 2e-5, "\(c.name): min y")
-            XCTAssertEqual(Double(r.maxX), c.rect[2], accuracy: 2e-5, "\(c.name): max x")
-            XCTAssertEqual(Double(r.maxY), c.rect[3], accuracy: 2e-5, "\(c.name): max y")
+            let store = try Self.opened(c.crop, cropping: true)
+            let r = store.cropRect
+            XCTAssertGreaterThanOrEqual(Double(r.minX), -1e-3, "\(c.name): off the left")
+            XCTAssertGreaterThanOrEqual(Double(r.minY), -1e-3, "\(c.name): off the top")
+            XCTAssertLessThanOrEqual(Double(r.maxX), 1 + 1e-3, "\(c.name): off the right")
+            XCTAssertLessThanOrEqual(Double(r.maxY), 1 + 1e-3, "\(c.name): off the bottom")
+            XCTAssertLessThan(
+                Double(r.width * r.height), 0.9,
+                "\(c.name): the crop fills the frame the tool is showing, so there is "
+                    + "nothing outside it to drag back in")
         }
+    }
+
+    /// The one case anybody can check by hand: half the frame, dead centre,
+    /// unstraightened. The frame is then the whole source and the crop is the
+    /// middle half of it.
+    @MainActor
+    func testACentredHalfCropIsTheMiddleOfTheFrame() throws {
+        let store = try Self.opened(
+            GeometryValue(
+                centre: .zero, size: CGSize(width: 0.5, height: 0.5), angle: 0, turns: 0,
+                flipH: false, flipV: false, aspect: .free),
+            cropping: true)
+        XCTAssertEqual(Double(store.cropRect.minX), 0.25, accuracy: 2e-3)
+        XCTAssertEqual(Double(store.cropRect.minY), 0.25, accuracy: 2e-3)
+        XCTAssertEqual(Double(store.cropRect.width), 0.5, accuracy: 2e-3)
+        XCTAssertEqual(Double(store.cropRect.height), 0.5, accuracy: 2e-3)
+    }
+
+    /// An uncropped photograph fills its frame with the tool open too — the
+    /// case the overlay opens on, and the one where a sign error is invisible
+    /// everywhere else.
+    @MainActor
+    func testAnUncroppedPhotographFillsTheFrame() throws {
+        let store = try Self.opened(.identity, cropping: true)
+        XCTAssertEqual(Double(store.cropRect.minX), 0, accuracy: 1e-3)
+        XCTAssertEqual(Double(store.cropRect.minY), 0, accuracy: 1e-3)
+        XCTAssertEqual(Double(store.cropRect.width), 1, accuracy: 1e-3)
+        XCTAssertEqual(Double(store.cropRect.height), 1, accuracy: 1e-3)
     }
 
     /// Reading the rectangle and writing it back is the round trip every drag
     /// makes, so a mismatch here moves the crop a little on every frame of a
     /// gesture that was not supposed to move it at all.
-    ///
-    /// The height comes back as 307/768 rather than 0.4 because the engine
-    /// measures a crop in whole pixels — `output_size` rounds — and this side
-    /// rounds with it rather than around it.
-    func testPuttingTheRectangleBackWhereItIsChangesNothing() {
+    @MainActor
+    func testPuttingTheRectangleBackWhereItIsChangesNothing() throws {
         for c in Self.cases {
-            let model = Self.model(c.crop)
-            let same = model.proposing(model.rect)
-            XCTAssertEqual(Double(same.centre.x), 0.1, accuracy: 1e-6, "\(c.name): centre x")
-            XCTAssertEqual(Double(same.centre.y), -0.05, accuracy: 1e-6, "\(c.name): centre y")
-            XCTAssertEqual(Double(same.size.width), 0.5, accuracy: 1e-6, "\(c.name): width")
+            let store = try Self.opened(c.crop, cropping: true)
+            let was = store.cropRect
+            store.beginInteraction("Crop")
+            store.setCropRect(was)
+            XCTAssertNil(store.problem, c.name)
+            let now = store.cropRect
+            store.endInteraction()
+            XCTAssertEqual(Double(now.minX), Double(was.minX), accuracy: 2e-3, "\(c.name): min x")
+            XCTAssertEqual(Double(now.minY), Double(was.minY), accuracy: 2e-3, "\(c.name): min y")
             XCTAssertEqual(
-                Double(same.size.height), 307.0 / 768.0, accuracy: 1e-6, "\(c.name): height")
-            // And the fields a drag has no business touching are untouched.
-            XCTAssertEqual(same.angle, c.crop.angle, "\(c.name): angle")
-            XCTAssertEqual(same.turns, c.crop.turns, "\(c.name): turns")
-            XCTAssertEqual(same.flipH, c.crop.flipH, "\(c.name): flip h")
-            XCTAssertEqual(same.flipV, c.crop.flipV, "\(c.name): flip v")
+                Double(now.width), Double(was.width), accuracy: 2e-3, "\(c.name): width")
+            XCTAssertEqual(
+                Double(now.height), Double(was.height), accuracy: 2e-3, "\(c.name): height")
+            // And the fields a crop drag has no business touching are untouched.
+            let g = store.geometry
+            XCTAssertEqual(g.angle, c.crop.angle, "\(c.name): angle")
+            XCTAssertEqual(g.turns, c.crop.turns, "\(c.name): turns")
+            XCTAssertEqual(g.flipH, c.crop.flipH, "\(c.name): flip h")
+            XCTAssertEqual(g.flipV, c.crop.flipV, "\(c.name): flip v")
         }
     }
 
-    /// An uncropped photograph fills its frame, which is the case the overlay
-    /// opens on and the one where a sign error is invisible everywhere else.
-    func testAnUncroppedPhotographFillsTheFrame() {
-        let r = Self.model(.identity).rect
-        XCTAssertEqual(Double(r.minX), 0, accuracy: 1e-6)
-        XCTAssertEqual(Double(r.minY), 0, accuracy: 1e-6)
-        XCTAssertEqual(Double(r.width), 1, accuracy: 1e-6)
-        XCTAssertEqual(Double(r.height), 1, accuracy: 1e-6)
+    /// Closing the tool does not edit the photograph. It is a property of the
+    /// viewer, so there must be nothing to undo.
+    @MainActor
+    func testOpeningTheToolIsNotAnEdit() throws {
+        let store = try Self.opened(Self.base(angle: 12), cropping: true)
+        let held = store.geometry
+        store.setCropping(false)
+        XCTAssertEqual(store.geometry, held, "opening the crop tool changed the document")
+    }
+
+    /// The ratio hint a locked drag holds. It is the shape of the rectangle the
+    /// engine handed back, because the engine has already applied the lock to
+    /// it — not a second reading of the lock on this side.
+    func testTheRatioHintIsTheShapeOfTheRectangleThatCameBack() {
+        let wide = CGRect(x: 0.1, y: 0.2, width: 0.6, height: 0.3)
+        XCTAssertEqual(
+            try XCTUnwrap(CropOverlay.screenRatio(of: .ratio(w: 1, h: 1), showing: wide)),
+            2, accuracy: 1e-9,
+            "a square lock on a frame twice as wide as it is tall is 2:1 in the frame's uv")
+        XCTAssertEqual(
+            try XCTUnwrap(CropOverlay.screenRatio(of: .original, showing: wide)),
+            2, accuracy: 1e-9, "Original is a lock like any other once the engine has applied it")
+        // Free holds nothing, so a drag is free to reshape the rectangle.
+        XCTAssertNil(CropOverlay.screenRatio(of: .free, showing: wide))
+        // And a rectangle with no area gives no hint rather than an infinity.
+        XCTAssertNil(
+            CropOverlay.screenRatio(
+                of: .ratio(w: 1, h: 1), showing: CGRect(x: 0, y: 0, width: 0.5, height: 0)))
     }
 
     // ---- the drag ---------------------------------------------------------
@@ -231,18 +275,14 @@ final class CropOverlayTests: XCTestCase {
     /// jumps the instant the drag ends.
     @MainActor
     func testDraggingACornerPastTheFrameLeavesTheRectangleInsideIt() throws {
-        let store = try XCTUnwrap(SessionStore())
-        store.openTestChart(width: 1024, height: 768)
-        store.setGeometry(
+        let store = try Self.opened(
             GeometryValue(
                 centre: .zero, size: CGSize(width: 0.5, height: 0.5), angle: 0, turns: 0,
-                flipH: false, flipV: false, aspect: .free))
-        XCTAssertNil(store.problem)
+                flipH: false, flipV: false, aspect: .free),
+            cropping: true)
 
-        let source = CGSize(width: 1024, height: 768)
-        let model = CropFrame(crop: store.geometry, source: source)
         let asked = CropGrip.dragged(
-            model.rect, grip: .edge(left: true, right: false, top: true, bottom: false),
+            store.cropRect, grip: .edge(left: true, right: false, top: true, bottom: false),
             by: CGSize(width: -0.4, height: -0.4))
         // The proposal really is off the picture, or this proves nothing.
         XCTAssertLessThan(Double(asked.minX), 0)
@@ -252,9 +292,9 @@ final class CropOverlayTests: XCTestCase {
         // deliberately behind until the gesture ends, so this is the engine's
         // corrected answer or it is nothing.
         store.beginInteraction("Crop")
-        store.setGeometry(model.proposing(asked))
+        store.setCropRect(asked)
         XCTAssertNil(store.problem)
-        let drawn = CropFrame(crop: store.geometry, source: source).rect
+        let drawn = store.cropRect
         // A thousandth rather than nothing: `Geometry::fits` carries a
         // ten-thousandth of the frame as slop and a crop is measured in whole
         // pixels, so the rectangle lands on the edge rather than exactly at it.
@@ -275,7 +315,7 @@ final class CropOverlayTests: XCTestCase {
         // And nothing jumps when the hand comes off: what was drawn during the
         // drag is what the document turns out to hold.
         store.endInteraction()
-        let settled = CropFrame(crop: store.geometry, source: source).rect
+        let settled = store.cropRect
         XCTAssertEqual(Double(settled.minX), Double(drawn.minX), accuracy: 1e-6)
         XCTAssertEqual(Double(settled.minY), Double(drawn.minY), accuracy: 1e-6)
         XCTAssertEqual(Double(settled.width), Double(drawn.width), accuracy: 1e-6)
@@ -288,22 +328,18 @@ final class CropOverlayTests: XCTestCase {
     /// rectangle drawn has to be the shrunk one.
     @MainActor
     func testAStraightenedCropIsBroughtInsideThePhotographAndNotJustTheFrame() throws {
-        let store = try XCTUnwrap(SessionStore())
-        store.openTestChart(width: 1024, height: 768)
-        store.setGeometry(
+        let store = try Self.opened(
             GeometryValue(
                 centre: .zero, size: CGSize(width: 0.6, height: 0.6), angle: 20, turns: 0,
-                flipH: false, flipV: false, aspect: .free))
-        XCTAssertNil(store.problem)
+                flipH: false, flipV: false, aspect: .free),
+            cropping: true)
 
-        let source = CGSize(width: 1024, height: 768)
-        let model = CropFrame(crop: store.geometry, source: source)
         // The whole frame, which at twenty degrees includes four blank corners.
         let asked = CGRect(x: 0, y: 0, width: 1, height: 1)
         store.beginInteraction("Crop")
-        store.setGeometry(model.proposing(asked))
+        store.setCropRect(asked)
         XCTAssertNil(store.problem)
-        let drawn = CropFrame(crop: store.geometry, source: source).rect
+        let drawn = store.cropRect
         defer { store.endInteraction() }
         XCTAssertGreaterThan(
             Double(drawn.minX), 0,
@@ -321,20 +357,22 @@ final class CropOverlayTests: XCTestCase {
     /// a frame that is not itself square is not the same as a square in uv.
     @MainActor
     func testASquareLockComesBackSquareOnScreen() throws {
-        let store = try XCTUnwrap(SessionStore())
-        store.openTestChart(width: 1024, height: 768)
-        store.setGeometry(
+        let store = try Self.opened(
             GeometryValue(
                 centre: .zero, size: CGSize(width: 0.8, height: 0.4), angle: 0, turns: 0,
-                flipH: false, flipV: false, aspect: .ratio(w: 1, h: 1)))
-        XCTAssertNil(store.problem)
+                flipH: false, flipV: false, aspect: .ratio(w: 1, h: 1)),
+            cropping: true)
 
-        let source = CGSize(width: 1024, height: 768)
-        let model = CropFrame(crop: store.geometry, source: source)
-        let r = model.rect
+        let r = store.cropRect
         // The frame is the whole 1024x768 source, so a square crop is 4:3 of it.
         let onScreen = (Double(r.width) * 1024) / (Double(r.height) * 768)
         XCTAssertEqual(onScreen, 1, accuracy: 0.01, "a square lock drew \(onScreen):1")
+        // And the hint a locked drag holds is that same rectangle's shape, so
+        // the corner stays under the pointer rather than the engine and the
+        // overlay disagreeing about what square means.
+        XCTAssertEqual(
+            try XCTUnwrap(CropOverlay.screenRatio(of: store.geometry.aspect, showing: r)),
+            Double(r.width / r.height), accuracy: 1e-9)
     }
 
     // ---- what it draws ----------------------------------------------------

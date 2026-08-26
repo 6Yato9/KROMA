@@ -123,6 +123,11 @@ struct Gpu {
     source: Option<ImageTexture>,
     working: Option<ImageTexture>,
     working_size: (u32, u32),
+    /// The geometry the working texture was built *from* — the framing, which
+    /// is the document's crop or, while the crop tool is open, the enclosing
+    /// frame. Holding the framing rather than the document's own is what makes
+    /// `Session::set_cropping` invalidate this guard, and only when the two
+    /// frames actually differ.
     working_geometry: Option<Geometry>,
     /// The rectangle of the frame the working texture was built for. A texture
     /// built for one rectangle is the wrong picture for another, so this sits
@@ -148,6 +153,11 @@ pub struct Session {
     /// window rather than of the document: two windows on one photograph would
     /// disagree about it and both be right.
     view: Region,
+    /// Whether the viewer is showing the whole straightened source rather than
+    /// the crop. See [`Session::set_cropping`]. A property of the window like
+    /// `view`, not of the document: it changes what is drawn and nothing about
+    /// what would be exported.
+    cropping: bool,
     watcher: autosave::Watcher,
     /// Bumped by every mutation, so a shell can ask "is this still what I last
     /// saw?" with one integer instead of a JSON parse.
@@ -181,6 +191,7 @@ impl Session {
             export_settings: export::Export::default(),
             open_set: Vec::new(),
             view: Region::FULL,
+            cropping: false,
             watcher: autosave::Watcher::new(),
             snapshot_version: 0,
             interaction: None,
@@ -270,6 +281,109 @@ impl Session {
 
         self.edit("Crop", move |doc| doc.geometry = g)?;
         Ok(g)
+    }
+
+    /// Show the whole straightened source rather than the crop.
+    ///
+    /// While the crop tool is open the viewer has to show what is being cut
+    /// away, or there is nothing to drag back into. [`Geometry::enclosing`] is
+    /// what that frame is, and it is computed here rather than passed in so no
+    /// shell has to know how — `apps/windows` passes the frame itself, and the
+    /// two shells would then hold two copies of the same rule.
+    ///
+    /// A property of the window, not of the document: it is not an edit, it is
+    /// not in the history, and [`Session::export_current`] renders the document
+    /// either way — it does not go through the framing at all.
+    ///
+    /// [`Session::measure_scopes`] does, because it reads back the same graded
+    /// frame, so while this is on the counts are the enclosing frame's rather
+    /// than the crop's — the blank corners included. That is what "the scopes
+    /// describe what was just drawn" means here, and it is where `apps/windows`
+    /// differs: it keeps a second texture for the scopes and measures the
+    /// document's crop through it. Worth revisiting when the two panels are
+    /// open together often enough for anyone to mind.
+    pub fn set_cropping(&mut self, cropping: bool) {
+        if self.cropping == cropping {
+            return;
+        }
+        self.cropping = cropping;
+        // The working texture is guarded on the geometry it was *built from*,
+        // which is the framing rather than the document's crop — so the flag
+        // invalidates that guard by itself, and only when the two frames
+        // actually differ. `needs_render` is the other half: without it no
+        // frame is asked for at all, and the viewer would sit on the old
+        // picture until something else moved.
+        self.needs_render = true;
+    }
+
+    /// Whether the viewer is showing the whole straightened source.
+    pub fn cropping(&self) -> bool {
+        self.cropping
+    }
+
+    /// The geometry the *viewer* is showing, which is normally the document's
+    /// own, or `None` when nothing is open.
+    ///
+    /// The counterpart of `framing` in `apps/windows/src/preview.rs::render`,
+    /// except that this is derived from [`Session::set_cropping`] rather than
+    /// handed in.
+    pub fn framing(&self) -> Option<Geometry> {
+        let photo = self.photo.as_ref()?;
+        Some(Self::framing_of(
+            photo.history.document().geometry,
+            self.cropping,
+            photo.image.width,
+            photo.image.height,
+        ))
+    }
+
+    /// The one place the flag turns into a frame. Everything that renders, and
+    /// everything that answers where the crop is, goes through it.
+    fn framing_of(geometry: Geometry, cropping: bool, source_w: u32, source_h: u32) -> Geometry {
+        if cropping {
+            geometry.enclosing(source_w, source_h)
+        } else {
+            geometry
+        }
+    }
+
+    /// Where the crop sits inside the frame the viewer is showing, as min x,
+    /// min y, max x, max y in that frame's uv.
+    ///
+    /// [`Geometry::crop_uv_in`] against [`Session::framing`]. It exists so no
+    /// shell has to hold a second copy of it: with the tool closed the crop
+    /// *is* the frame and the answer is the whole of it, and with the tool open
+    /// it is the rectangle the overlay draws.
+    pub fn crop_in_frame(&self) -> Result<[f32; 4], SessionError> {
+        let photo = self.photo.as_ref().ok_or(SessionError::NothingOpen)?;
+        let (w, h) = (photo.image.width, photo.image.height);
+        let geometry = photo.history.document().geometry;
+        Ok(geometry.crop_uv_in(&Self::framing_of(geometry, self.cropping, w, h), w, h))
+    }
+
+    /// Move the crop to a rectangle of the frame being shown, and answer where
+    /// it actually landed.
+    ///
+    /// [`Geometry::set_crop_uv_in`] followed by [`Session::set_geometry`], so
+    /// the same corrections apply — a locked aspect re-shapes it, and it is
+    /// slid, then shrunk, back inside the straightened source. **What comes
+    /// back is frequently not the rectangle passed in, and that is the point:**
+    /// it is where the crop now is, in the same frame it was read from, so a
+    /// shell can draw the answer rather than its own proposal.
+    pub fn set_crop_in_frame(&mut self, rect: [f32; 4]) -> Result<[f32; 4], SessionError> {
+        let photo = self.photo.as_ref().ok_or(SessionError::NothingOpen)?;
+        let (w, h) = (photo.image.width, photo.image.height);
+        let geometry = photo.history.document().geometry;
+        let mut want = geometry;
+        want.set_crop_uv_in(&Self::framing_of(geometry, self.cropping, w, h), w, h, rect);
+        let got = self.set_geometry(want)?;
+        // Against the frame as it is *after* the edit, so this answers exactly
+        // what `crop_in_frame` would now answer. Nothing a crop drag changes
+        // moves the enclosing frame — it turns on the angle, the turns and the
+        // flips, and none of those is being set here — but reading it back
+        // rather than reusing the old one is what makes that a fact about the
+        // code instead of a fact about this comment.
+        Ok(got.crop_uv_in(&Self::framing_of(got, self.cropping, w, h), w, h))
     }
 
     pub fn undo_label(&self) -> Option<String> {
@@ -826,6 +940,9 @@ impl Session {
         region: Region,
     ) -> Result<wgpu::TextureView, SessionError> {
         self.context()?;
+        // Read before the borrows below, so the framing can be worked out
+        // without holding all of `self` while `self.gpu` is being written.
+        let cropping = self.cropping;
         let gpu = self.gpu.context.as_ref().expect("context built above");
         let photo = self.photo.as_ref().ok_or(SessionError::NothingOpen)?;
         let doc = photo.history.document();
@@ -853,7 +970,17 @@ impl Session {
         // a resample, and — because the stage cache is keyed on the frame's
         // size and geometry — throws away every cached row with it. That is
         // the whole of `last_passes` reading 1 rather than the stack depth.
-        let geometry = doc.geometry;
+        //
+        // The framing rather than `doc.geometry`, so that opening the crop tool
+        // rebuilds the texture for the enclosing frame and closing it rebuilds
+        // for the crop. Storing the framing below is what makes the flag
+        // invalidate this guard without a field of its own.
+        let geometry = Self::framing_of(
+            doc.geometry,
+            cropping,
+            photo.image.width,
+            photo.image.height,
+        );
         if self.gpu.working_size != (width, height)
             || self.gpu.working_geometry != Some(geometry)
             || self.gpu.working_region != Some(region)
@@ -2092,5 +2219,243 @@ mod tests {
         assert!(s.can_undo());
         s.undo().unwrap();
         assert!(s.geometry().unwrap().is_identity());
+    }
+
+    // ---- the frame the viewer shows -------------------------------------
+
+    /// The crop the tool is opened on below: half the frame, off to one side,
+    /// and straightened, so the enclosing frame differs from it in size, in
+    /// position and in shape at once.
+    fn a_crop() -> pe_core::Geometry {
+        pe_core::Geometry {
+            centre: [0.1, -0.05],
+            size: [0.5, 0.4],
+            angle: 8.0,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_viewer_shows_the_crop_until_the_tool_is_opened() {
+        let mut s = chart_session();
+        assert!(
+            !s.cropping(),
+            "the crop tool is open on a session nobody opened it on"
+        );
+        s.set_geometry(a_crop()).unwrap();
+        assert_eq!(
+            s.framing(),
+            s.geometry(),
+            "the viewer is showing something other than the document's crop"
+        );
+        // And with the crop as the frame, the crop fills it — which is what
+        // makes one call answer both states.
+        let r = s.crop_in_frame().unwrap();
+        for (got, want) in r.iter().zip([0.0, 0.0, 1.0, 1.0]) {
+            assert!(
+                (got - want).abs() < 1e-4,
+                "the crop does not fill its own frame: {r:?}"
+            );
+        }
+    }
+
+    /// The property the whole tool rests on: with the tool open the viewer
+    /// shows the whole straightened source, so there is something outside the
+    /// rectangle to see and to drag back into.
+    #[test]
+    fn opening_the_crop_tool_shows_the_whole_straightened_source() {
+        let mut s = chart_session();
+        let (w, h) = s.image_size();
+        let stored = s.set_geometry(a_crop()).unwrap();
+        let cropped = s.framing().unwrap().output_size(w, h);
+
+        s.set_cropping(true);
+        assert_eq!(s.framing().unwrap(), stored.enclosing(w, h));
+        let showing = s.framing().unwrap().output_size(w, h);
+        assert_eq!(showing, stored.enclosing(w, h).output_size(w, h));
+        assert_ne!(showing, cropped, "the viewer is still framed on the crop");
+        assert_eq!(
+            s.geometry().unwrap(),
+            stored,
+            "opening the crop tool edited the document"
+        );
+    }
+
+    #[test]
+    fn closing_the_crop_tool_puts_the_crop_back() {
+        let mut s = chart_session();
+        let stored = s.set_geometry(a_crop()).unwrap();
+        s.set_cropping(true);
+        s.set_cropping(false);
+        assert!(!s.cropping());
+        assert_eq!(s.framing().unwrap(), stored);
+    }
+
+    /// The guard. The working texture is built for one frame, and a flag that
+    /// changes the frame without invalidating it would leave the viewer showing
+    /// the cropped picture with a rectangle drawn over it — which is the bug
+    /// this whole task exists to fix, and it is invisible to anything that only
+    /// reads `framing`.
+    #[test]
+    fn opening_the_crop_tool_repaints_the_viewer() {
+        let mut s = chart_session();
+        s.set_geometry(a_crop()).unwrap();
+        let cropped = s.render_offscreen(64, 64).unwrap();
+        assert!(!s.needs_render(), "a frame was just drawn");
+
+        s.set_cropping(true);
+        assert!(
+            s.needs_render(),
+            "opening the crop tool did not ask for a frame"
+        );
+        let whole = s.render_offscreen(64, 64).unwrap();
+        assert_ne!(
+            whole, cropped,
+            "the viewer drew the cropped picture again: the working texture was not rebuilt"
+        );
+
+        s.set_cropping(false);
+        assert!(
+            s.needs_render(),
+            "closing the crop tool did not ask for a frame"
+        );
+        assert_eq!(
+            s.render_offscreen(64, 64).unwrap(),
+            cropped,
+            "closing the crop tool did not put the crop back on screen"
+        );
+    }
+
+    /// Where the rectangle goes, on a case somebody can check by hand: half the
+    /// frame, dead centre, unstraightened. The enclosing frame is then the whole
+    /// source, so the crop is the middle half of it.
+    #[test]
+    fn a_centred_half_crop_is_the_middle_of_the_frame_it_is_drawn_in() {
+        let mut s = chart_session();
+        s.set_geometry(pe_core::Geometry {
+            size: [0.5, 0.5],
+            ..Default::default()
+        })
+        .unwrap();
+        s.set_cropping(true);
+        let r = s.crop_in_frame().unwrap();
+        for (got, want) in r.iter().zip([0.25, 0.25, 0.75, 0.75]) {
+            assert!((got - want).abs() < 2e-3, "{r:?}");
+        }
+    }
+
+    /// A drag that does not move the pointer must not move the crop. Read the
+    /// rectangle out, write the same one back, and the document is where it
+    /// was — through every turn and flip, which is the permutation that looks
+    /// entirely plausible when it is wrong.
+    #[test]
+    fn putting_the_crop_back_where_it_is_moves_nothing() {
+        for (name, want) in [
+            ("plain", a_crop()),
+            (
+                "one quarter-turn",
+                pe_core::Geometry {
+                    turns: 1,
+                    ..a_crop()
+                },
+            ),
+            (
+                "one quarter-turn, flipped horizontally",
+                pe_core::Geometry {
+                    turns: 1,
+                    flip_h: true,
+                    ..a_crop()
+                },
+            ),
+            (
+                "three quarter-turns, flipped vertically",
+                pe_core::Geometry {
+                    turns: 3,
+                    flip_v: true,
+                    ..a_crop()
+                },
+            ),
+            (
+                "two quarter-turns, both flips, the other way round",
+                pe_core::Geometry {
+                    angle: -20.0,
+                    turns: 2,
+                    flip_h: true,
+                    flip_v: true,
+                    ..a_crop()
+                },
+            ),
+        ] {
+            let mut s = chart_session();
+            // The stored value rather than the proposal: it is legal by
+            // construction, so anything that moves below was moved by the round
+            // trip and not by the correction.
+            let stored = s.set_geometry(want).unwrap();
+            s.set_cropping(true);
+
+            let rect = s.crop_in_frame().unwrap();
+            let back = s.set_crop_in_frame(rect).unwrap();
+            for i in 0..4 {
+                assert!(
+                    (back[i] - rect[i]).abs() < 2e-3,
+                    "{name}: {rect:?} came back as {back:?}"
+                );
+            }
+            let now = s.geometry().unwrap();
+            assert!(
+                (now.centre[0] - stored.centre[0]).abs() < 2e-3
+                    && (now.centre[1] - stored.centre[1]).abs() < 2e-3
+                    && (now.size[0] - stored.size[0]).abs() < 2e-3
+                    && (now.size[1] - stored.size[1]).abs() < 2e-3,
+                "{name}: the crop crawled from {stored:?} to {now:?}"
+            );
+            assert_eq!(now.angle, stored.angle, "{name}: the angle moved");
+            assert_eq!(now.turns, stored.turns, "{name}: the turn moved");
+            assert_eq!(now.flip_h, stored.flip_h, "{name}: a flip moved");
+            assert_eq!(now.flip_v, stored.flip_v, "{name}: a flip moved");
+        }
+    }
+
+    /// And a rectangle dragged off the frame is corrected, with the corrected
+    /// one handed back — so the overlay has something true to draw rather than
+    /// its own proposal.
+    #[test]
+    fn a_crop_dragged_off_the_frame_comes_back_inside_it() {
+        let mut s = chart_session();
+        s.set_geometry(pe_core::Geometry {
+            size: [0.5, 0.5],
+            ..Default::default()
+        })
+        .unwrap();
+        s.set_cropping(true);
+
+        let asked = [-0.4, -0.4, 0.1, 0.1];
+        let got = s.set_crop_in_frame(asked).unwrap();
+        assert!(
+            got[0] >= -1e-3 && got[1] >= -1e-3,
+            "the crop still hangs off the frame: {got:?}"
+        );
+        assert_ne!(got, asked, "nothing was corrected");
+        assert_eq!(
+            got,
+            s.crop_in_frame().unwrap(),
+            "what came back is not what can be read back"
+        );
+        // Slid, not shrunk: a move does not resize.
+        assert!(
+            (got[2] - got[0] - 0.5).abs() < 2e-3 && (got[3] - got[1] - 0.5).abs() < 2e-3,
+            "the move resized the crop: {got:?}"
+        );
+    }
+
+    #[test]
+    fn a_crop_in_the_frame_with_nothing_open_is_refused() {
+        let mut s = Session::new();
+        assert!(s.framing().is_none());
+        assert!(s.crop_in_frame().is_err());
+        assert!(s.set_crop_in_frame([0.0, 0.0, 1.0, 1.0]).is_err());
+        // The flag is a property of the window, so it needs nothing open.
+        s.set_cropping(true);
+        assert!(s.cropping());
     }
 }

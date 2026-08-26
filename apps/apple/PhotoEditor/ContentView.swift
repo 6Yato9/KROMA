@@ -209,6 +209,13 @@ struct ContentView: View {
             Toggle("Crop", isOn: $cropping)
                 .toggleStyle(KromaToggleButtonStyle())
                 .help("Crop, straighten and flip")
+                // The engine frames the viewer on the whole straightened source
+                // while the tool is open, so there is something outside the
+                // rectangle to see and to drag back into. Driven from here
+                // rather than from the overlay's `onAppear`, because the flag
+                // decides what the *viewer* draws and the overlay is only what
+                // goes on top of it.
+                .onChange(of: cropping) { _, on in store.setCropping(on) }
             Toggle("Scopes", isOn: $showScopes)
                 .toggleStyle(KromaToggleButtonStyle())
                 .help("Waveform, parade, vectorscope and histogram")

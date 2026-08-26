@@ -2,189 +2,6 @@ import CoreGraphics
 import SwiftUI
 
 // -----------------------------------------------------------------------------
-// Where the crop sits in the frame the viewer is showing
-// -----------------------------------------------------------------------------
-
-/// The crop rectangle, expressed in the frame the viewer is drawing.
-///
-/// The tool's frame is the **enclosing** one — the whole source, straightened —
-/// rather than the cropped result. That is what makes the rectangle draggable:
-/// the user can see what is outside the crop and pull it back in, and because
-/// the enclosing frame carries the same angle, turn and flips as the crop, the
-/// rectangle stays axis-aligned on screen at any angle. `apps/windows/src/crop.rs`
-/// says the same thing at the top of the file, and this is its counterpart.
-///
-/// **This is a second copy of arithmetic that lives in `pe_core::geometry`,
-/// and that is a deliberate, reluctant exception.** `Geometry::enclosing`,
-/// `crop_uv_in` and `set_crop_uv_in` are what the Windows shell calls; the C
-/// ABI carries only the seven scalar fields of a `Geometry` (nine in, seven
-/// out — see `pe_session_set_geometry`), so there is no call that would answer
-/// the question this side has to ask sixty times a second. Everything about
-/// what makes a geometry *legal* — `apply_aspect`, `slide_to_fit`,
-/// `shrink_to_fit` — stays in Rust, is never reimplemented here, and reaches
-/// this file only as the value `Session.setGeometry` hands back.
-///
-/// The copy is pinned in `CropOverlayTests` against numbers taken from
-/// `pe_core`'s own `crop_uv_in`, including a quarter-turn and both flips: the
-/// permutation is the part that looks entirely plausible when it is wrong.
-public struct CropFrame: Equatable, Sendable {
-    /// The crop being edited — the document's geometry.
-    public let crop: GeometryValue
-    /// The geometry the viewer is showing, which for this tool is
-    /// ``CropFrame/enclosing(_:source:)`` of the crop.
-    ///
-    /// The two must share an angle, a turn and both flips; the enclosing frame
-    /// keeps all four, which is the only reason the crop is an axis-aligned
-    /// rectangle in the frame's own coordinates.
-    public let frame: GeometryValue
-    /// The source photograph, in pixels.
-    public let source: CGSize
-
-    public init(crop: GeometryValue, frame: GeometryValue, source: CGSize) {
-        self.crop = crop
-        self.frame = frame
-        self.source = source
-    }
-
-    /// The crop against the frame the tool shows it in.
-    public init(crop: GeometryValue, source: CGSize) {
-        self.init(crop: crop, frame: Self.enclosing(crop, source: source), source: source)
-    }
-
-    /// The frame the crop tool shows: the whole source, straightened.
-    ///
-    /// `pe_core::Geometry::enclosing`. Big enough to hold the rotated picture,
-    /// so the blank corners are visible and the user can see exactly what
-    /// straightening is costing them. Keeps the turns and the flips; drops the
-    /// aspect lock, which constrains the crop and not the frame around it.
-    public static func enclosing(_ g: GeometryValue, source: CGSize) -> GeometryValue {
-        let sw = max(source.width, 1)
-        let sh = max(source.height, 1)
-        let r = g.angle * .pi / 180
-        let (s, c) = (abs(sin(r)), abs(cos(r)))
-        return GeometryValue(
-            centre: .zero,
-            size: CGSize(width: (sw * c + sh * s) / sw, height: (sw * s + sh * c) / sh),
-            angle: g.angle, turns: g.turns, flipH: g.flipH, flipV: g.flipV,
-            aspect: .free
-        )
-    }
-
-    /// Pixel size of a geometry's result — `pe_core::Geometry::output_size`.
-    ///
-    /// Rounded to whole pixels, because that is what the engine stores and a
-    /// rectangle drawn from unrounded sizes would sit a fraction of a pixel
-    /// away from the crop it is drawing.
-    static func outputSize(_ g: GeometryValue, source: CGSize) -> CGSize {
-        let w = max((abs(g.size.width) * source.width).rounded(), 1)
-        let h = max((abs(g.size.height) * source.height).rounded(), 1)
-        return turns(g) % 2 == 1 ? CGSize(width: h, height: w) : CGSize(width: w, height: h)
-    }
-
-    /// Quarter-turns, brought into 0…3 the way the engine does.
-    static func turns(_ g: GeometryValue) -> Int { ((g.turns % 4) + 4) % 4 }
-
-    /// One quarter-turn of a vector, `pe_core::Geometry::sampling`'s `quarter`.
-    static func quarter(_ v: CGPoint, _ turns: Int) -> CGPoint {
-        switch ((turns % 4) + 4) % 4 {
-        case 0: CGPoint(x: v.x, y: v.y)
-        case 1: CGPoint(x: v.y, y: -v.x)
-        case 2: CGPoint(x: -v.x, y: -v.y)
-        default: CGPoint(x: -v.y, y: v.x)
-        }
-    }
-
-    /// The flips, which act on the output and are their own inverse.
-    static func flipped(_ v: CGPoint, h: Bool, v flipV: Bool) -> CGPoint {
-        CGPoint(x: h ? -v.x : v.x, y: flipV ? -v.y : v.y)
-    }
-
-    /// Where the crop sits inside the frame, as a rectangle in the frame's own
-    /// uv — `pe_core::Geometry::crop_uv_in`, for the case this tool has.
-    ///
-    /// Both geometries map their output uv into the source through the same
-    /// straightening, the same turn and the same flips, so all of that cancels
-    /// and what is left is the crop's own pixel size against the frame's, and
-    /// the offset between the two centres carried back through the turn and the
-    /// flips.
-    public var rect: CGRect {
-        let f = Self.outputSize(frame, source: source)
-        let c = Self.outputSize(crop, source: source)
-        let offset = CGPoint(
-            x: (crop.centre.x - frame.centre.x) * source.width,
-            y: (crop.centre.y - frame.centre.y) * source.height
-        )
-        let e = Self.flipped(
-            Self.quarter(offset, 4 - Self.turns(crop)), h: crop.flipH, v: crop.flipV)
-        return CGRect(
-            x: 0.5 + (e.x - c.width / 2) / f.width,
-            y: 0.5 + (e.y - c.height / 2) / f.height,
-            width: c.width / f.width,
-            height: c.height / f.height
-        )
-    }
-
-    /// The geometry that would put the crop at `rect` — the inverse of
-    /// ``CropFrame/rect``, and `pe_core::Geometry::set_crop_uv_in`.
-    ///
-    /// A *proposal*. It is what goes into `SessionStore.setGeometry`, and what
-    /// comes back out is what gets drawn: the engine re-shapes it to a locked
-    /// aspect, slides it back inside the straightened source and shrinks it if
-    /// it still will not fit. Drawing this value would put a rectangle on
-    /// screen that the renderer does not produce, and it would jump to the real
-    /// one the moment the drag ended.
-    public func proposing(_ rect: CGRect) -> GeometryValue {
-        let f = Self.outputSize(frame, source: source)
-        let (ow, oh) = (rect.width * f.width, rect.height * f.height)
-        // Undo the quarter-turn's swap: the document stores the crop before it
-        // is turned, so an odd turn means the on-screen width is the stored
-        // height.
-        let size =
-            Self.turns(crop) % 2 == 1
-            ? CGSize(width: oh / max(source.width, 1), height: ow / max(source.height, 1))
-            : CGSize(width: ow / max(source.width, 1), height: oh / max(source.height, 1))
-        let e = CGPoint(x: (rect.midX - 0.5) * f.width, y: (rect.midY - 0.5) * f.height)
-        let offset = Self.quarter(
-            Self.flipped(e, h: crop.flipH, v: crop.flipV), Self.turns(crop))
-        return GeometryValue(
-            centre: CGPoint(
-                x: frame.centre.x + offset.x / max(source.width, 1),
-                y: frame.centre.y + offset.y / max(source.height, 1)
-            ),
-            size: size,
-            angle: crop.angle, turns: crop.turns,
-            flipH: crop.flipH, flipV: crop.flipV,
-            aspect: crop.aspect
-        )
-    }
-
-    /// The ratio the rectangle holds *on screen*, if it holds one.
-    ///
-    /// The lock is a property of the picture and is measured in pixels, while
-    /// the rectangle here is a fraction of a frame whose two sides are
-    /// different numbers of pixels — so the lock has to be carried into the
-    /// frame's own proportions before a drag can honour it. A quarter-turn
-    /// inverts it, because a 16:9 crop turned on its side is 9:16 on screen.
-    ///
-    /// Only a hint: `apply_aspect` in the engine is what actually decides, and
-    /// the corrected value is what is drawn. Getting this slightly wrong would
-    /// let the corner drift out from under the pointer, not produce a crop the
-    /// document does not hold.
-    ///
-    /// Which is why `Original` answers nil rather than the source's own
-    /// proportions. `AspectLock.widthOverHeight` leaves that arm to the engine
-    /// on purpose, and a lock with no hint still holds — the corner simply does
-    /// not track the pointer quite as closely on the way there.
-    public var screenRatio: Double? {
-        guard let ratio = crop.aspect.widthOverHeight, ratio > 0 else { return nil }
-        let f = Self.outputSize(frame, source: source)
-        guard f.width > 0, f.height > 0 else { return nil }
-        let inPixels = Self.turns(crop) % 2 == 1 ? 1 / ratio : ratio
-        return inPixels * Double(f.height / f.width)
-    }
-}
-
-// -----------------------------------------------------------------------------
 // What a drag has hold of
 // -----------------------------------------------------------------------------
 
@@ -280,12 +97,17 @@ public enum CropGrip: Equatable, Sendable {
 
 /// The crop rectangle over the photograph, and the drag that moves it.
 ///
+/// The tool's frame is the **enclosing** one — the whole source, straightened —
+/// rather than the cropped result, which is what makes the rectangle draggable:
+/// the user can see what is outside the crop and pull it back in. The engine
+/// draws that frame while `SessionStore.setCropping` is on, and answers where
+/// the crop sits inside it; nothing on this side works out either.
+///
 /// **Everything drawn here is the value the engine gave back**, never the one
-/// that was proposed. Each frame of a drag works out a rectangle, turns it into
-/// a geometry, hands it to `SessionStore.setGeometry` and reads
-/// `store.geometry` — which mid-drag is the engine's corrected answer rather
-/// than the snapshot's copy of it, because the snapshot is deliberately behind
-/// until the gesture ends.
+/// that was proposed. Each frame of a drag works out a rectangle, hands it to
+/// `SessionStore.setCropRect` and reads `store.cropRect` — which mid-drag is
+/// the engine's corrected answer rather than the snapshot's copy of it, because
+/// the snapshot is deliberately behind until the gesture ends.
 ///
 /// The in-flight rectangle is not held here for the same reason: it is not this
 /// side's to decide. `CurveEditor` and `WarpEditor` keep a local value between
@@ -298,27 +120,37 @@ public struct CropOverlay: View {
     /// pointer.
     @State private var held: CropGrip?
     /// The rectangle as it was when the drag started, in the frame's uv, and
-    /// the model that produced it. Both are fixed for the length of a gesture:
+    /// the ratio it has to keep. Both are fixed for the length of a gesture:
     /// the deltas are measured from here.
-    @State private var start: (model: CropFrame, rect: CGRect)?
+    @State private var start: (rect: CGRect, ratio: Double?)?
 
     public init(store: SessionStore) {
         self.store = store
     }
 
-    /// The crop, against the frame the tool shows it in.
-    private var model: CropFrame {
-        CropFrame(
-            crop: store.geometry,
-            source: CGSize(
-                width: CGFloat(max(store.snapshot.width, 1)),
-                height: CGFloat(max(store.snapshot.height, 1))))
+    /// The ratio the rectangle has to hold *on screen*, if it holds one.
+    ///
+    /// The lock is a property of the picture and is measured in pixels, while
+    /// the rectangle here is a fraction of a frame whose two sides are
+    /// different numbers of pixels — so the lock has to be carried into the
+    /// frame's own proportions before a drag can honour it. It does not have to
+    /// be carried by hand: the engine has already applied the lock to the crop
+    /// it handed back, so the shape of that rectangle *is* the shape to keep.
+    /// A quarter-turn and a source that is not square are both already in it.
+    ///
+    /// Only a hint. `apply_aspect` in the engine is what actually decides, and
+    /// the corrected value is what is drawn; getting this wrong would let the
+    /// corner drift out from under the pointer, not produce a crop the document
+    /// does not hold.
+    static func screenRatio(of aspect: AspectLock, showing rect: CGRect) -> Double? {
+        guard aspect != .free, rect.width > 0, rect.height > 0 else { return nil }
+        return Double(rect.width / rect.height)
     }
 
     public var body: some View {
         GeometryReader { geo in
             let target = CGRect(origin: .zero, size: geo.size)
-            let rect = Self.place(model.rect, in: target, showing: store.view.region)
+            let rect = Self.place(store.cropRect, in: target, showing: store.view.region)
             CropOverlayCanvas(rect: rect, showsThirds: held != nil)
                 // The whole viewer, not just the rectangle: a drag that starts
                 // a few points outside a corner is a drag on that corner, and
@@ -354,14 +186,17 @@ public struct CropOverlay: View {
             .onChanged { gesture in
                 let visible = store.view.region
                 if held == nil {
-                    let current = model
-                    let onScreen = Self.place(current.rect, in: target, showing: visible)
+                    let current = store.cropRect
+                    let onScreen = Self.place(current, in: target, showing: visible)
                     guard let grip = CropGrip.at(gesture.startLocation, in: onScreen) else {
                         return
                     }
                     store.beginInteraction("Crop")
                     held = grip
-                    start = (current, current.rect)
+                    start = (
+                        current,
+                        Self.screenRatio(of: store.geometry.aspect, showing: current)
+                    )
                 }
                 guard let grip = held, let start else { return }
                 // Screen points into the frame's uv. Zoomed in, a point on
@@ -372,8 +207,8 @@ public struct CropOverlay: View {
                     height: gesture.translation.height / max(target.height, 1e-4) * visible.height
                 )
                 let next = CropGrip.dragged(
-                    start.rect, grip: grip, by: delta, ratio: start.model.screenRatio)
-                store.setGeometry(start.model.proposing(next))
+                    start.rect, grip: grip, by: delta, ratio: start.ratio)
+                store.setCropRect(next)
             }
             .onEnded { _ in
                 if held != nil { store.endInteraction() }

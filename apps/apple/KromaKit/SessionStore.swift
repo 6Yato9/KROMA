@@ -275,6 +275,57 @@ public final class SessionStore {
         refresh()
     }
 
+    /// Whether the viewer is showing the whole straightened source rather than
+    /// the crop. See ``SessionStore/setCropping(_:)``.
+    public private(set) var cropping = false
+
+    /// Open or close the crop tool's view of the photograph.
+    ///
+    /// The engine renders the enclosing frame while this is on, so the overlay
+    /// has something outside the rectangle to draw over and the user has
+    /// something to drag back into. Nothing about the document changes, so
+    /// there is no edit and nothing to undo.
+    public func setCropping(_ cropping: Bool) {
+        run { try session.setCropping(cropping) }
+        self.cropping = cropping
+        // The frame changed, so where the crop sits in it changed with it.
+        refreshCropRect()
+    }
+
+    /// Where the crop sits inside the frame the viewer is showing, in that
+    /// frame's own uv — the engine's answer, never this side's.
+    ///
+    /// Mid-drag this is what the engine wrote back to the last proposal, which
+    /// is what the overlay draws; between drags it is re-read after every edit.
+    /// The whole frame is the answer with nothing open and with the tool
+    /// closed, which is also what makes it a harmless default.
+    public private(set) var cropRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+
+    /// Propose a rectangle of the frame being shown, and keep the corrected one.
+    ///
+    /// The overlay then draws ``SessionStore/cropRect``, which is what the
+    /// engine **stored** — not what was proposed. Like `setFloat`, this does
+    /// not refresh the snapshot mid-drag; the rectangle above is what the
+    /// overlay reads until the gesture ends.
+    public func setCropRect(_ rect: CGRect) {
+        run { cropRect = try session.setCropInFrame(rect) }
+        if !dragging { refresh() }
+    }
+
+    /// Re-read where the crop is. One C call and four floats — cheap enough to
+    /// do after every edit, which is what keeps it from going stale behind an
+    /// undo or a panel.
+    ///
+    /// A refusal here is "nothing is open", which is not something to put in
+    /// the status bar: there is no photograph to draw a rectangle on, and the
+    /// whole frame is the honest answer for one that has no crop.
+    private func refreshCropRect() {
+        let rect = (try? session.cropInFrame()) ?? CGRect(x: 0, y: 0, width: 1, height: 1)
+        // Only written when it is actually changing: assigning an equal value
+        // would tell every observing view to run its body again for nothing.
+        if rect != cropRect { cropRect = rect }
+    }
+
     public func setBool(row: UInt64, key: String, value: Bool) {
         run { try session.setBool(row: row, key: key, value: value) }
         refresh()
@@ -440,6 +491,12 @@ public final class SessionStore {
         // changing: assigning nil over nil would tell every observing view to
         // run its body again for nothing.
         if corrected != nil { corrected = nil }
+        // Before the version check, not after it. Where the crop sits is
+        // measured against the frame the *viewer* is showing, and that frame is
+        // not in the snapshot — the version tracks the document alone, so a
+        // rectangle refreshed only when the version moved would be one the
+        // engine had already stopped agreeing with.
+        refreshCropRect()
         guard session.snapshotVersion != snapshot.version else { return }
         do {
             snapshot = try session.snapshot()

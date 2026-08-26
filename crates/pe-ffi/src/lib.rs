@@ -890,6 +890,129 @@ pub unsafe extern "C" fn pe_session_reset_geometry(s: *mut PeSession) -> i32 {
     })
 }
 
+/// Show the whole straightened source in the viewer rather than the crop.
+///
+/// While the crop tool is open the viewer has to show what is being cut away,
+/// or there is nothing to see outside the rectangle and nothing to drag back
+/// into. A flag rather than a frame: the frame is `Geometry::enclosing` and the
+/// engine computes it, so no shell has to know how — and so the two shells
+/// cannot disagree about what "the whole straightened source" means.
+///
+/// Not an edit. It is not in the history, the document is untouched, and an
+/// export renders the document either way.
+///
+/// Returns 0, or `-1` for a null handle. Nothing needs to be open: a flag about
+/// the window outlives whichever photograph is in it.
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_set_cropping(s: *mut PeSession, cropping: bool) -> i32 {
+    status(s, move |s| {
+        s.set_cropping(cropping);
+        Ok(())
+    })
+}
+
+/// Where the crop sits inside the frame the viewer is showing, as `u0`, `v0`,
+/// `u1`, `v1` — min x, min y, max x, max y in that frame's uv.
+///
+/// This is `Geometry::crop_uv_in` against the frame
+/// [`pe_session_set_cropping`] selects, and it exists so no shell has to hold a
+/// second copy of it. With the crop tool closed the crop *is* the frame and the
+/// answer is the whole of it; with the tool open it is the rectangle the
+/// overlay draws.
+///
+/// Every out-pointer may be null. Returns 0, `-1` for a null handle, or `-2`
+/// with nothing open.
+///
+/// # Safety
+/// `s` must be valid or null; each non-null out-pointer must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_crop_in_frame(
+    s: *mut PeSession,
+    out_u0: *mut f32,
+    out_v0: *mut f32,
+    out_u1: *mut f32,
+    out_v1: *mut f32,
+) -> i32 {
+    with(s, -1, move |s| match s.inner.crop_in_frame() {
+        Ok(rect) => {
+            s.last_error = None;
+            unsafe { write_rect(rect, out_u0, out_v0, out_u1, out_v1) };
+            0
+        }
+        Err(e) => {
+            s.last_error = Some(e.to_string());
+            -2
+        }
+    })
+}
+
+/// Move the crop to a rectangle of the frame being shown, and write back where
+/// it actually landed.
+///
+/// **The values written back are frequently not the ones passed in, and that is
+/// the point of this function** — the same contract [`pe_session_set_geometry`]
+/// has, and the same corrections: a locked aspect re-shapes the crop, and it is
+/// slid, then shrunk, back inside the straightened source. A caller that
+/// ignores the out-parameters and goes on drawing what it asked for is drawing a
+/// rectangle the renderer does not produce.
+///
+/// The rectangle goes in and comes back in the frame [`pe_session_crop_in_frame`]
+/// reads, so a drag is: read once, then propose and draw the answer.
+///
+/// Every out-pointer may be null. Returns 0, `-1` for a null handle, or `-2`
+/// with nothing open.
+///
+/// # Safety
+/// `s` must be valid or null; each non-null out-pointer must be writable.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn pe_session_set_crop_in_frame(
+    s: *mut PeSession,
+    u0: f32,
+    v0: f32,
+    u1: f32,
+    v1: f32,
+    out_u0: *mut f32,
+    out_v0: *mut f32,
+    out_u1: *mut f32,
+    out_v1: *mut f32,
+) -> i32 {
+    with(s, -1, move |s| {
+        match s.inner.set_crop_in_frame([u0, v0, u1, v1]) {
+            Ok(rect) => {
+                s.last_error = None;
+                unsafe { write_rect(rect, out_u0, out_v0, out_u1, out_v1) };
+                0
+            }
+            Err(e) => {
+                s.last_error = Some(e.to_string());
+                -2
+            }
+        }
+    })
+}
+
+/// The four out-parameters the two crop-in-frame calls share.
+///
+/// # Safety
+/// Each non-null pointer must be writable.
+unsafe fn write_rect(
+    rect: [f32; 4],
+    out_u0: *mut f32,
+    out_v0: *mut f32,
+    out_u1: *mut f32,
+    out_v1: *mut f32,
+) {
+    for (out, value) in [out_u0, out_v0, out_u1, out_v1].into_iter().zip(rect) {
+        if !out.is_null() {
+            unsafe { out.write(value) };
+        }
+    }
+}
+
 // ---- history --------------------------------------------------------------
 
 /// Bracket a drag so it becomes one undo step rather than three hundred.
@@ -2093,6 +2216,224 @@ mod tests {
         );
         assert_eq!(o.w, 0.0, "a refused call wrote to the caller's memory");
         assert_eq!(unsafe { pe_session_reset_geometry(ptr::null_mut()) }, -1);
+    }
+
+    /// The four out-parameters of the two crop-in-frame calls, read back.
+    #[derive(Default)]
+    struct Rect {
+        u0: f32,
+        v0: f32,
+        u1: f32,
+        v1: f32,
+    }
+
+    impl Rect {
+        fn read(s: *mut PeSession) -> (i32, Rect) {
+            let mut r = Rect::default();
+            let code =
+                unsafe { pe_session_crop_in_frame(s, &mut r.u0, &mut r.v0, &mut r.u1, &mut r.v1) };
+            (code, r)
+        }
+
+        fn set(s: *mut PeSession, want: [f32; 4]) -> (i32, Rect) {
+            let mut r = Rect::default();
+            let code = unsafe {
+                pe_session_set_crop_in_frame(
+                    s, want[0], want[1], want[2], want[3], &mut r.u0, &mut r.v0, &mut r.u1,
+                    &mut r.v1,
+                )
+            };
+            (code, r)
+        }
+
+        fn is(&self, want: [f32; 4], slop: f32) -> bool {
+            (self.u0 - want[0]).abs() < slop
+                && (self.v0 - want[1]).abs() < slop
+                && (self.u1 - want[2]).abs() < slop
+                && (self.v1 - want[3]).abs() < slop
+        }
+    }
+
+    /// The question the ABI could not answer before: where is the crop in the
+    /// frame you are showing me. Closed, the crop is the frame; open, it is the
+    /// middle half of the whole source.
+    #[test]
+    fn the_crop_crosses_as_a_rectangle_of_the_frame_being_shown() {
+        let s = pe_session_new();
+        unsafe { pe_session_open_test_chart(s, 64, 64) };
+        assert_eq!(
+            unsafe {
+                pe_session_set_geometry(
+                    s,
+                    0.0,
+                    0.0,
+                    0.5,
+                    0.5,
+                    0.0,
+                    0,
+                    false,
+                    false,
+                    0.0,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                )
+            },
+            0
+        );
+
+        let (code, r) = Rect::read(s);
+        assert_eq!(code, 0);
+        assert!(
+            r.is([0.0, 0.0, 1.0, 1.0], 1e-3),
+            "with the tool closed the crop does not fill the frame it is shown in"
+        );
+
+        assert_eq!(unsafe { pe_session_set_cropping(s, true) }, 0);
+        let (code, r) = Rect::read(s);
+        assert_eq!(code, 0);
+        assert!(
+            r.is([0.25, 0.25, 0.75, 0.75], 2e-3),
+            "a centred half crop is not the middle of the whole source"
+        );
+
+        assert_eq!(unsafe { pe_session_set_cropping(s, false) }, 0);
+        let (_, r) = Rect::read(s);
+        assert!(
+            r.is([0.0, 0.0, 1.0, 1.0], 1e-3),
+            "closing the tool left the frame open"
+        );
+
+        unsafe { pe_session_free(s) };
+    }
+
+    /// And the correction contract, on this call as on `set_geometry`: what
+    /// comes back is where the crop landed, not what was asked for.
+    #[test]
+    fn a_crop_set_in_the_frame_comes_back_corrected() {
+        let s = pe_session_new();
+        unsafe { pe_session_open_test_chart(s, 64, 64) };
+        assert_eq!(
+            unsafe {
+                pe_session_set_geometry(
+                    s,
+                    0.0,
+                    0.0,
+                    0.5,
+                    0.5,
+                    0.0,
+                    0,
+                    false,
+                    false,
+                    0.0,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                )
+            },
+            0
+        );
+        assert_eq!(unsafe { pe_session_set_cropping(s, true) }, 0);
+
+        // Dragged off the top left corner of the frame, which is a crop the
+        // renderer cannot produce.
+        let (code, r) = Rect::set(s, [-0.4, -0.4, 0.1, 0.1]);
+        assert_eq!(code, 0);
+        assert!(
+            r.u0 >= -1e-3 && r.v0 >= -1e-3,
+            "the crop was left hanging off the frame: {} {}",
+            r.u0,
+            r.v0
+        );
+        assert!(
+            r.is([0.0, 0.0, 0.5, 0.5], 2e-3),
+            "slid back to the corner is [0, 0, 0.5, 0.5]; got {} {} {} {}",
+            r.u0,
+            r.v0,
+            r.u1,
+            r.v1
+        );
+
+        // And it is what the reading call now answers.
+        let (_, again) = Rect::read(s);
+        assert!(
+            again.is([r.u0, r.v0, r.u1, r.v1], 1e-6),
+            "the answer written back is not the answer that can be read back"
+        );
+        // It is an edit, so it is in the history like any other crop.
+        let g = geometry_of(s);
+        assert!(unsafe { pe_session_can_undo(s) });
+        let width = g["size"][0].as_f64().unwrap() as f32;
+        assert!(
+            (width - 0.5).abs() < 2e-3,
+            "the move resized the crop: {width}"
+        );
+
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn a_crop_in_the_frame_with_nothing_open_is_refused_and_a_null_handle_is_told_apart() {
+        // Nothing open: -2, with a message. The flag itself is not refused —
+        // it is a property of the window, not of a photograph.
+        let s = pe_session_new();
+        assert_eq!(unsafe { pe_session_set_cropping(s, true) }, 0);
+        assert_eq!(Rect::read(s).0, -2);
+        assert_eq!(Rect::set(s, [0.0, 0.0, 1.0, 1.0]).0, -2);
+        let err = unsafe { pe_session_last_error(s) };
+        assert!(
+            !err.is_null(),
+            "-2 without a message is a bug report nobody can write"
+        );
+        unsafe { pe_string_free(err) };
+        unsafe { pe_session_free(s) };
+
+        // A null handle: -1, and nothing written to the caller's memory.
+        let mut r = Rect {
+            u1: 1.0,
+            ..Default::default()
+        };
+        assert_eq!(
+            unsafe {
+                pe_session_crop_in_frame(
+                    ptr::null_mut(),
+                    &mut r.u0,
+                    &mut r.v0,
+                    &mut r.u1,
+                    &mut r.v1,
+                )
+            },
+            -1
+        );
+        assert_eq!(
+            unsafe {
+                pe_session_set_crop_in_frame(
+                    ptr::null_mut(),
+                    0.0,
+                    0.0,
+                    1.0,
+                    1.0,
+                    &mut r.u0,
+                    &mut r.v0,
+                    &mut r.u1,
+                    &mut r.v1,
+                )
+            },
+            -1
+        );
+        assert_eq!(r.u1, 1.0, "a refused call wrote to the caller's memory");
+        assert_eq!(
+            unsafe { pe_session_set_cropping(ptr::null_mut(), true) },
+            -1
+        );
     }
 
     #[test]

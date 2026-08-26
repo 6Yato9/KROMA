@@ -357,6 +357,68 @@ public final class Session {
         try check(pe_session_reset_geometry(handle))
     }
 
+    /// Show the whole straightened source in the viewer rather than the crop.
+    ///
+    /// While the crop tool is open the viewer has to show what is being cut
+    /// away, or there is nothing outside the rectangle to see and nothing to
+    /// drag back into. A flag rather than a frame: `Geometry::enclosing` is
+    /// what the frame is and the engine computes it, so this side never holds a
+    /// copy of that rule.
+    ///
+    /// Not an edit. The document is untouched, it is not in the history, and an
+    /// export renders the document either way.
+    public func setCropping(_ cropping: Bool) throws {
+        try check(pe_session_set_cropping(handle, cropping))
+    }
+
+    /// Where the crop sits inside the frame the viewer is showing, in that
+    /// frame's own uv.
+    ///
+    /// With the crop tool closed the crop *is* the frame and this is the whole
+    /// of it; with the tool open it is the rectangle the overlay draws.
+    public func cropInFrame() throws -> CGRect {
+        var u0: Float = 0
+        var v0: Float = 0
+        var u1: Float = 0
+        var v1: Float = 0
+        try check(pe_session_crop_in_frame(handle, &u0, &v0, &u1, &v1))
+        return Self.rect(u0, v0, u1, v1)
+    }
+
+    /// Move the crop to a rectangle of the frame being shown, and take back the
+    /// rectangle it actually landed on.
+    ///
+    /// **What comes back is frequently not what was passed in, and that is the
+    /// point of this call** — the same contract `setGeometry` has, and the same
+    /// corrections. Deliberately not `@discardableResult`: drawing the proposal
+    /// instead of the answer puts a rectangle on screen the renderer does not
+    /// produce, so throwing the correction away has to be written down.
+    ///
+    /// One C call per frame of a drag: four floats in, four out, and nothing
+    /// decoded.
+    public func setCropInFrame(_ rect: CGRect) throws -> CGRect {
+        var u0: Float = 0
+        var v0: Float = 0
+        var u1: Float = 0
+        var v1: Float = 0
+        try check(
+            pe_session_set_crop_in_frame(
+                handle,
+                Float(rect.minX), Float(rect.minY), Float(rect.maxX), Float(rect.maxY),
+                &u0, &v0, &u1, &v1
+            )
+        )
+        return Self.rect(u0, v0, u1, v1)
+    }
+
+    /// The engine's four edges as a rectangle. Built from the corners rather
+    /// than from a width and a height, because that is what crosses.
+    private static func rect(_ u0: Float, _ v0: Float, _ u1: Float, _ v1: Float) -> CGRect {
+        CGRect(
+            x: CGFloat(u0), y: CGFloat(v0),
+            width: CGFloat(u1 - u0), height: CGFloat(v1 - v0))
+    }
+
     // ---- history ------------------------------------------------------------
 
     /// Bracket a drag so it collapses into one undo step rather than three
