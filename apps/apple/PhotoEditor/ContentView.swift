@@ -8,6 +8,20 @@ struct ContentView: View {
     /// for it should not be paying for it.
     @AppStorage("showScopes") private var showScopes = false
 
+    /// Which tool the inspector is showing, remembered between launches — the
+    /// panel you were grading in is the panel you want back.
+    ///
+    /// Stored as the name rather than as a `Tool`, and resolved here, so a
+    /// preference written by an older build that named a tool this one no
+    /// longer has opens on Basic instead of on nothing.
+    @AppStorage("tool") private var toolName = Tool.basic.rawValue
+
+    private var tool: Tool { Tool(rawValue: toolName) ?? .basic }
+
+    private var chosenTool: Binding<Tool> {
+        Binding(get: { tool }, set: { toolName = $0.rawValue })
+    }
+
     var body: some View {
         HSplitView {
             VStack(spacing: 0) {
@@ -67,39 +81,77 @@ struct ContentView: View {
             .background(Palette.viewer.color)
     }
 
-    /// The pinned panels, then everything that has been added, then the button
-    /// that adds more.
+    /// The strip, and under it the one tool it has chosen.
+    ///
+    /// Eleven pinned panels used to stack in this one column, which meant
+    /// reaching the warper by scrolling past a hundred and thirty controls.
+    /// Now the strip is the header and the column below it is whichever tool
+    /// is showing — the panels still fold, because folding is what makes one
+    /// effect's thirty parameters navigable and the strip is about the other
+    /// ten effects entirely.
     private var inspector: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(store.snapshot.rows.enumerated()), id: \.element.id) { index, row in
-                    if let effect = store.registry.effect(row.effect) {
-                        if !row.pinned {
-                            StackRowView(
-                                effect: effect,
-                                row: row,
-                                index: index,
-                                count: store.snapshot.rows.count,
-                                floor: store.snapshot.rows.filter(\.pinned).count,
-                                store: store
-                            )
-                        }
-                        InspectorPanel(
-                            effect: effect, row: row, store: store,
-                            // An added row's name is already drawn by the
-                            // header above it, beside the box that bypasses it.
-                            showsTitle: row.pinned
-                        )
-                        Hairline()
+        VStack(spacing: 0) {
+            ToolStrip(chosen: chosenTool)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if tool == .effects {
+                        addedRows
+                        // The browser belongs to this tool now rather than
+                        // sitting under every panel, and it is directly under
+                        // the rows it adds to — so an added effect appears
+                        // where the reader is already looking.
+                        EffectBrowser(registry: store.registry, store: store)
+                            .padding(.vertical, 8)
+                    } else {
+                        pinnedPanels
                     }
                 }
-
-                EffectBrowser(registry: store.registry, store: store)
-                    .padding(.vertical, 8)
+                .padding(.horizontal, RowMetrics.inset)
             }
-            .padding(.horizontal, RowMetrics.inset)
         }
         .background(Palette.panel.color)
+    }
+
+    /// The chosen tool's fixed panels, in the order the tool lists them.
+    ///
+    /// `Tool.draws` is what decides, here and in `ToolStripTests` both, so the
+    /// property the test asserts — every row of the document is drawn by
+    /// exactly one of the six tools — is a property of what this view actually
+    /// draws rather than of a second copy of the rule.
+    @ViewBuilder
+    private var pinnedPanels: some View {
+        ForEach(tool.draws(store.snapshot.rows)) { drawn in
+            if let effect = store.registry.effect(drawn.row.effect) {
+                InspectorPanel(effect: effect, row: drawn.row, store: store)
+                Hairline()
+            }
+        }
+    }
+
+    /// Everything the user added, as the stack rows they are.
+    ///
+    /// `drawn.index` is the row's place in the whole document, not in this
+    /// list: the reorder arrows move rows within the stack, and numbering a
+    /// filtered list from zero would move the wrong one.
+    @ViewBuilder
+    private var addedRows: some View {
+        ForEach(Tool.effects.draws(store.snapshot.rows)) { drawn in
+            if let effect = store.registry.effect(drawn.row.effect) {
+                StackRowView(
+                    effect: effect,
+                    row: drawn.row,
+                    index: drawn.index,
+                    count: store.snapshot.rows.count,
+                    floor: store.snapshot.rows.filter(\.pinned).count,
+                    store: store
+                )
+                // An added row's name is already drawn by the header above it,
+                // beside the box that bypasses it.
+                InspectorPanel(
+                    effect: effect, row: drawn.row, store: store, showsTitle: false)
+                Hairline()
+            }
+        }
     }
 
     /// `~/Library/Application Support/Kroma`, which is where a Mac application
