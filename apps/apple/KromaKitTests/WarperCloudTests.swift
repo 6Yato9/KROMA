@@ -580,16 +580,16 @@ final class WarperCloudTests: XCTestCase {
 
     /// The plot's own rectangle, found rather than assumed.
     ///
-    /// `PinsEditor` fills it with `WELL` and nothing else in the view is that
-    /// colour. Where the plot sits depends on how the stack under it lays out,
-    /// and a rect guessed wrong reads every position off by the difference —
-    /// which is this test's own version of the bug it is looking for.
+    /// Where the plot sits depends on how the stack under it lays out, and a
+    /// rect guessed wrong reads every position off by the difference — which is
+    /// this test's own version of the bug it is looking for.
     ///
-    /// The fill was spelled out here as "near-black at an alpha of about
-    /// seventy", which was `.black.opacity(0.28)` written down a second time.
-    /// It is now asked of ``Palette`` — the plot's well is one of the four
-    /// greys, and a test that carries its own copy of a colour is a test that
-    /// fails the next time the colour is named properly.
+    /// It used to be found by its fill: the plot was `WELL` and nothing else in
+    /// the view was. It is now the spectral locus field, which covers that fill
+    /// edge to edge, so what identifies it is that it is the one *opaque* thing
+    /// in the view and that it is a field rather than a fill — its two top
+    /// corners are two quite different colours. `LocusTests` is what holds the
+    /// field itself to the engine; this only has to find the square.
     private static func plotRect(_ image: [UInt8], width: Int, height: Int) -> CGRect {
         // The stack is centred in whatever frame it is given, so the plot's
         // top is the first row with any ink in it at all.
@@ -600,19 +600,14 @@ final class WarperCloudTests: XCTestCase {
         guard top < height else { return .zero }
         // Full width and square, which is what `aspectRatio(1, .fit)` in a
         // stack this narrow gives it. Checked rather than assumed: both of the
-        // plot's own top corners have to be the fill, and the row below its
-        // foot has to be clear of it.
-        let well = Palette.well.rgb
-        let fill = { (x: Int, y: Int) -> Bool in
-            let p = pixel(image, x: x, y: y, width: width)
-            return p.a > 250
-                && abs(Int(p.r) - Int(well.r)) < 6
-                && abs(Int(p.g) - Int(well.g)) < 6
-                && abs(Int(p.b) - Int(well.b)) < 6
-        }
-        guard fill(6, top + 6), fill(width - 7, top + 6), !fill(6, top + width + 3) else {
-            return .zero
-        }
+        // plot's own top corners have to be opaque and unlike each other, and
+        // the row below its foot has to be clear.
+        let left = pixel(image, x: 6, y: top + 6, width: width)
+        let right = pixel(image, x: width - 7, y: top + 6, width: width)
+        let apart = abs(Int(left.r) - Int(right.r)) + abs(Int(left.b) - Int(right.b))
+        guard left.a > 250, right.a > 250, apart > 30,
+            pixel(image, x: 6, y: top + width + 3, width: width).a == 0
+        else { return .zero }
         return CGRect(x: 0, y: top, width: width, height: width)
     }
 

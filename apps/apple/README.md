@@ -271,15 +271,25 @@ PE_UPDATE_FIXTURES=1 cargo test -p pe-session --test fixtures
 
 ## What is deliberately absent
 
-No spectral locus on the chromaticity plot. That is a drawing of the visible
-gamut rather than a measurement of the photograph — the Windows shell has a
-`locus` module for it and there is no Mac equivalent yet. The plot draws its
-frame, its gridlines and the white point, which is enough to place a pin
-against.
+Everything that used to be listed here is now drawn: the tone histogram behind
+the curve editor, the hue and saturation spreads behind the secondaries, the
+colour cloud on all three of the warper's plots, and the spectral locus on the
+chromaticity plot.
 
-Everything else that used to be listed here is now drawn: the tone histogram
-behind the curve editor, the hue and saturation spreads behind the secondaries,
-and the colour cloud on all three of the warper's plots.
+The locus is the boundary of colour itself — every real colour is a mixture of
+spectral lights, so every real colour sits inside the curve those lights trace.
+A chromaticity plot that draws a triangle instead is drawing one display's gamut
+and calling it the world. What is *outside* the horseshoe is dimmed rather than
+blackened: a black surround makes the plot a shape floating in nothing, where a
+dimmed one makes it a bright region of a continuous field, which is what a gamut
+actually is.
+
+It lives in `pe-color` with the rest of the colour science, and it derives its
+XYZ→sRGB matrix from `primaries::SRGB` rather than carrying a copy. The
+published four-decimal constants became a test instead — which turned out to be
+worth more than the constant was: they disagree with the exact inverse by 3.7e-4,
+because the published figures were obtained by inverting the *rounded* forward
+matrix rather than by rounding the exact inverse.
 
 No image processing, no colour maths, no shaders — and no workflow rules
 either. Where a file may be written, what an export is called and when work in

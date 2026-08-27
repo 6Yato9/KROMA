@@ -228,8 +228,16 @@ pub fn colour_at(x: f32, y: f32) -> Option<[f32; 3]> {
         rgb[i] = row[0] * xyz[0] + row[1] * xyz[1] + row[2] * xyz[2];
     }
     // Clipped towards white rather than per channel: taking a negative to zero
-    // on its own shifts the hue, and a plot whose greens turn cyan at the edge
-    // is worse than one whose greens go pale.
+    // on its own shifts the hue, and a plot that changes the colour of a
+    // wavelength is worse than one that shows it pale.
+    //
+    // The deep greens are where it is worst, and worth measuring rather than
+    // guessing at: at 510 nm a per-channel clamp moves the hue angle 26°, from
+    // 150° towards pure green at 124°, because the negative it flattens is the
+    // blue. So the failure is a green that loses its cyan lean, not one that
+    // gains it. Clipping towards white holds the angle exactly and pays for it
+    // in saturation, which is the trade this plot wants: a chromaticity
+    // diagram whose whole job is to say *which* colour is where.
     let low = rgb.iter().cloned().fold(0.0f32, f32::min);
     if low < 0.0 {
         for c in &mut rgb {

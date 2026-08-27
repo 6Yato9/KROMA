@@ -59,7 +59,7 @@ spectral locus is a smooth closed curve and overshoot there is invisible;
 - Modify: `crates/pe-session/tests/fixtures.rs`
 - Create: `apps/apple/Fixtures/locus.json`
 
-- [ ] **Step 1: Move it**
+- [x] **Step 1: Move it**
 
 Every doc comment comes too — they carry the reasoning about why the whole
 plane is answered, why the clip is towards white rather than per channel ("a
@@ -72,7 +72,7 @@ published numbers as the test described above.
 `apps/windows/src/locus.rs` becomes a re-export, or its two call sites in
 `warper.rs` point at `pe_color::locus` — whichever leaves less behind. Say which.
 
-- [ ] **Step 2: The tests it already has, plus the ones it does not**
+- [x] **Step 2: The tests it already has, plus the ones it does not**
 
 It has an anchors test; keep it. Add:
 
@@ -107,12 +107,12 @@ That last one is the interesting assertion: take a chromaticity well outside
 sRGB's triangle but inside the horseshoe, and check the drawn colour's **hue**
 is close to what a per-channel clip would have shifted it away from.
 
-- [ ] **Step 3: The fixture**
+- [x] **Step 3: The fixture**
 
 `curve()` sampled, `inside` at a set of probes, and `colour_at` at the same
 probes. Swift asserts against it, as every other reimplementation here does.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Baseline **777 Rust passed, 0 failed, 1 ignored**. Report the real number.
 Run `cargo check --workspace --all-targets --exclude pe-windows --target x86_64-unknown-linux-gnu` and `cargo clippy --workspace --all-targets`.
@@ -126,13 +126,13 @@ Run `cargo check --workspace --all-targets --exclude pe-windows --target x86_64-
 - Modify: `apps/apple/KromaKit/Controls/PinsEditor.swift`
 - Create: `apps/apple/KromaKitTests/LocusTests.swift`
 
-- [ ] **Step 1: Mirror and check**
+- [x] **Step 1: Mirror and check**
 
 `Locus.curve`, `Locus.inside(_:_:)`, `Locus.colour(at:)`, all asserted against
 `locus.json`. Exact equality where the arithmetic allows it; say where it does
 not and why.
 
-- [ ] **Step 2: Draw it**
+- [x] **Step 2: Draw it**
 
 The chromaticity plot in `PinsEditor` currently draws its frame, its gridlines
 and the white point. It gains the field: **the whole square coloured, dimmed
@@ -149,7 +149,7 @@ reason `WarperCloud` and the scopes do.
 `PinGeometry` already maps chromaticity to the plot; use it rather than a second
 mapping.
 
-- [ ] **Step 3: Test what a render can show**
+- [x] **Step 3: Test what a render can show**
 
 Use the `ImageRenderer` approach and **prove each test discriminates**. Worth
 pinning: a point inside the horseshoe is brighter than one outside; the greenest

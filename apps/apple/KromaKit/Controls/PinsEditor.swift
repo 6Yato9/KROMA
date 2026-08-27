@@ -10,12 +10,12 @@ import SwiftUI
 /// a sibling of `WarpEditor` rather than a third pair of axes inside it.
 ///
 /// Resolve draws the spectral locus and the photograph's own colour cloud over
-/// this plot. The cloud is here, binned over this plot's own range so it and
-/// the pins agree about where a colour is. The locus is not: a decorative
-/// approximation of it would be worse than none, because it would be a
-/// boundary that looks authoritative and is not, and pins are placed *against*
-/// that boundary. The cloud is a measurement and answers the same question
-/// honestly — these are the colours the photograph actually has.
+/// this plot, and so does this. Both are binned or mapped over this plot's own
+/// range, so they and the pins agree about where a colour is. Neither is a
+/// decoration: the cloud is a measurement — these are the colours the
+/// photograph actually has — and the locus is the CIE's own table rather than
+/// an approximation of it, which matters because pins are placed *against*
+/// that boundary.
 ///
 /// The in-flight pin is held here and the snapshot is not refreshed mid-drag,
 /// for the reason `ScalarRow`, `CurveEditor` and `WarpEditor` do the same.
@@ -106,6 +106,9 @@ public struct PinsEditor: View {
         let g = PinGeometry(pins: pins, rect: rect)
         return ZStack {
             background(rect)
+            field(rect)
+            horseshoe(g)
+            border(rect)
             cloud(rect)
             grid(rect)
             neutral(g)
@@ -115,17 +118,75 @@ public struct PinsEditor: View {
         .gesture(drag(g))
     }
 
+    /// The ground the plot is drawn on.
+    ///
+    /// The field covers all of it, so this shows only if the image could not be
+    /// built at all. Kept because that is the one case where a plot with no
+    /// ground would be a hole in the panel rather than a plot: the inside of a
+    /// graph, the same `WELL` the curve editor and the scope wells are.
     private func background(_ rect: CGRect) -> some View {
         RoundedRectangle(cornerRadius: 3)
-            // The inside of a graph: the same `WELL` the curve editor and the
-            // scope wells are.
             .fill(Palette.well.color)
-            .overlay(
-                RoundedRectangle(cornerRadius: 3)
-                    .strokeBorder(Palette.rule.color, lineWidth: 1)
-            )
             .frame(width: rect.width, height: rect.height)
             .position(x: rect.midX, y: rect.midY)
+    }
+
+    /// The plot's frame. Drawn over the field rather than under it, because the
+    /// field fills the square and a border beneath it is a border nobody sees.
+    private func border(_ rect: CGRect) -> some View {
+        RoundedRectangle(cornerRadius: 3)
+            .strokeBorder(Palette.rule.color, lineWidth: 1)
+            .frame(width: rect.width, height: rect.height)
+            .position(x: rect.midX, y: rect.midY)
+    }
+
+    /// Colour itself, as the ground the pins are placed on.
+    ///
+    /// The whole square is coloured and what is *outside* the horseshoe is
+    /// dimmed rather than blacked out — `Locus.field` builds it and carries the
+    /// argument. This is one of the few places an absolute colour is right:
+    /// it is a depiction of colour, not a piece of interface painted in one.
+    ///
+    /// Nothing here is `Palette`, and nothing here should be. The palette is
+    /// the four greys and the one accent this application's *chrome* is made
+    /// of; the plot underneath is the CIE diagram, and a diagram of colour
+    /// drawn in the interface's colours would be a diagram of the interface.
+    @ViewBuilder
+    private func field(_ rect: CGRect) -> some View {
+        if let image = Locus.field {
+            Image(decorative: image, scale: 1)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: rect.width, height: rect.height)
+                // The same rounded corners the well has, so the field sits in
+                // the frame rather than over it.
+                .clipShape(RoundedRectangle(cornerRadius: 3))
+                .position(x: rect.midX, y: rect.midY)
+                .allowsHitTesting(false)
+        }
+    }
+
+    /// The boundary of colour, traced.
+    ///
+    /// The one line on this plot that means something on its own. Without it
+    /// the boundary is only wherever the dimming happens to start — an edge you
+    /// can see and not one you can aim a pin at.
+    ///
+    /// Closed, because the path from 700 nm back to 380 nm is the line of
+    /// purples — real colours with no wavelength, and the half of the boundary
+    /// a horseshoe drawn from the table alone would leave open.
+    private func horseshoe(_ g: PinGeometry) -> some View {
+        Path { p in
+            for (i, q) in Locus.curve.enumerated() {
+                let at = g.screen(of: CGPoint(x: Double(q.x), y: Double(q.y)))
+                if i == 0 { p.move(to: at) } else { p.addLine(to: at) }
+            }
+            p.closeSubpath()
+        }
+        // The Windows shell's `from_white_alpha(60)`: present enough to read as
+        // a boundary, faint enough that the colours either side of it are still
+        // what you are looking at.
+        .stroke(.white.opacity(0.24), lineWidth: 1)
     }
 
     /// Where this photograph's own colours are, over the space they sit in.
