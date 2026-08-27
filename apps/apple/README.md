@@ -175,6 +175,36 @@ abandon the other sixty-five, and the summary says how many missed.
 A finished run keeps its counts until it is dismissed. A run that stopped
 silently is indistinguishable from one that crashed.
 
+## What is remembered, and where
+
+Two stores, and the line between them is what the thing belongs to.
+
+**The shell remembers how it was arranged** — which tool is showing, whether the
+scopes are open, which panels are folded — in `@AppStorage`. That is UI state,
+it is nobody else's business, and it should not follow you to another machine or
+another shell.
+
+**The engine remembers the work**: the effects you have starred, the set that was
+open and which photograph was showing, and how you export. Those are the same
+question in both shells and the answer should not depend on which you happened
+to open, so they live in `pe_session::Settings` beside the autosave, in the
+support directory the host hands over rather than one the engine guesses at.
+
+Two properties there are worth knowing because nobody notices them working. A
+settings file that will not parse **costs you your stars, not your session** —
+every error is swallowed and the defaults stand. And anything a newer build
+wrote is **kept and written back**, so running an older version does not quietly
+discard it.
+
+Reopening is more careful than it looks. Which photograph was showing is
+remembered **by name**, not by index: drop one from the front and an index slides
+onto its neighbour, so the application would reopen confidently on the wrong
+picture. A file that has gone is skipped. A file that is still there and will not
+decode is dropped and the rest retried — `open_paths` only decodes the first, so
+a set of sixty whose first frame is corrupt opens on the second — and if nothing
+opens at all you get the test chart rather than a launch you cannot recover from
+without finding and deleting a settings file.
+
 ## The set of photographs
 
 Opening a folder gives a set, and the filmstrip down the left moves between
