@@ -25,6 +25,11 @@ use crate::{Settings, Support, autosave, export};
 pub enum SessionError {
     #[error("nothing is open")]
     NothingOpen,
+    /// Distinct from [`SessionError::NothingOpen`] on purpose: a shell that
+    /// greyed its Paste correctly should never see this, and one that did not
+    /// should be told which of the two it got wrong.
+    #[error("no grade has been copied")]
+    NothingCopied,
     #[error("no GPU: {0}")]
     NoGpu(String),
     #[error("could not read {path}: {message}")]
@@ -244,6 +249,17 @@ pub struct Session {
     /// built-in chart has no set either: there is no file for a filmstrip to be
     /// a strip of.
     library: Option<Library>,
+    /// The grade copied off a photograph, waiting to be put on another.
+    ///
+    /// On the session rather than in a shell, which is where it was: two shells
+    /// would otherwise each keep their own, and the one thing a clipboard must
+    /// not be is two clipboards. It is not persisted — a grade in hand belongs
+    /// to the sitting you copied it in.
+    ///
+    /// The *stack* and nothing else. A crop is about the frame it was drawn on,
+    /// and carrying one onto a photograph of another shape is almost never what
+    /// anybody meant; see [`Library::paste_stack_to_all`], which says the same.
+    clipboard: Option<pe_core::Stack>,
     support: Support,
     /// What this person keeps between runs: the effects they have starred,
     /// the set they had open, and how they export.
@@ -310,6 +326,7 @@ impl Session {
             gpu: Gpu::default(),
             photo: None,
             library: None,
+            clipboard: None,
             support: Support::default(),
             settings: Settings::default(),
             batch: None,
@@ -843,6 +860,54 @@ impl Session {
             doc.stack.push(row);
         })?;
         Ok(id)
+    }
+
+    // ---- the grade in hand -------------------------------------------------
+
+    /// Take a copy of this photograph's grade.
+    ///
+    /// The whole stack, pinned rows included: the eleven that every document
+    /// starts with are as much of the grade as the ones that were added, and a
+    /// copy that left the exposure behind would not be the look you copied.
+    pub fn copy_grade(&mut self) -> Result<(), SessionError> {
+        let photo = self.photo.as_ref().ok_or(SessionError::NothingOpen)?;
+        self.clipboard = Some(photo.history.document().stack.clone());
+        Ok(())
+    }
+
+    /// Whether there is a grade to paste.
+    ///
+    /// What the shells grey the Paste items by. Asked rather than inferred,
+    /// because "nothing has been copied" and "the copy was empty" are two
+    /// different things and only the first should disable a menu.
+    pub fn has_grade(&self) -> bool {
+        self.clipboard.is_some()
+    }
+
+    /// Put the copied grade on this photograph, as one undo step.
+    pub fn paste_grade(&mut self) -> Result<(), SessionError> {
+        let stack = self.clipboard.clone().ok_or(SessionError::NothingCopied)?;
+        self.edit("Paste Grade", move |doc| doc.stack = stack)?;
+        // The pasted rows carry the ids they had on the photograph they came
+        // from, and this photograph's generator has never issued them. Without
+        // this the next effect added would be handed an id a pasted row already
+        // holds — two rows with one id, and every lookup finding whichever came
+        // first.
+        let photo = self.photo.as_mut().expect("edit would have refused");
+        photo.ids = RowIdGenerator::resuming(photo.history.document());
+        Ok(())
+    }
+
+    /// Put the copied grade on every *other* photograph in the set, and say how
+    /// many took it.
+    ///
+    /// Not this one: it is the one you are looking at, and
+    /// [`Session::paste_grade`] is how it gets the grade. Pasting to both from
+    /// one command would make the count a lie and the undo step a surprise.
+    pub fn paste_grade_to_all(&mut self) -> Result<usize, SessionError> {
+        let stack = self.clipboard.clone().ok_or(SessionError::NothingCopied)?;
+        let library = self.library.as_mut().ok_or(SessionError::NothingOpen)?;
+        Ok(library.paste_stack_to_all(&stack))
     }
 
     pub fn remove_row(&mut self, id: RowId) -> Result<(), SessionError> {
@@ -4383,5 +4448,149 @@ mod tests {
         );
         // None of which reached a file, because there is no file to reach.
         assert!(Support::default().settings_path().is_none());
+    }
+
+    // ---- the grade in hand -------------------------------------------------
+
+    #[test]
+    fn a_grade_is_copied_whole_and_pasted_onto_another_photograph() {
+        let mut a = Session::new();
+        a.open_test_chart(32, 32).unwrap();
+        let id = a.add_effect("sharpen").unwrap();
+        a.copy_grade().unwrap();
+
+        // A second session standing in for a second photograph: the clipboard
+        // is the session's, so this is the honest way to show what travels.
+        let stack = a.clipboard.clone().unwrap();
+        let mut b = Session::new();
+        b.open_test_chart(32, 32).unwrap();
+        assert!(
+            b.document()
+                .unwrap()
+                .stack
+                .find_by_effect("sharpen")
+                .is_none(),
+            "the second document already had one"
+        );
+        b.clipboard = Some(stack);
+        b.paste_grade().unwrap();
+
+        let pasted = b.document().unwrap();
+        assert!(
+            pasted.stack.find_by_effect("sharpen").is_some(),
+            "the added row did not travel"
+        );
+        // And the pinned rows came with it. A grade that left the exposure
+        // behind is not the look that was copied.
+        assert!(pasted.stack.find_by_effect("exposure").is_some());
+        assert_eq!(pasted.stack.len(), a.document().unwrap().stack.len());
+        let _ = id;
+    }
+
+    /// The mistake the paste invites, and the reason it re-seeds the generator.
+    ///
+    /// The pasted rows carry ids issued by *another* document. A generator that
+    /// carried on from where this one had got to would hand the next added row
+    /// an id a pasted row already holds — two rows with one id, and every
+    /// lookup finding whichever comes first.
+    ///
+    /// In a debug build `Stack::push`'s own `debug_assert` fires first, at the
+    /// point the duplicate is made rather than where it is felt, so that is
+    /// what this test trips on. The explicit checks below are what would catch
+    /// it in a release build, where that assertion is compiled out and the
+    /// second row simply becomes one you can see and cannot touch.
+    #[test]
+    fn an_effect_added_after_a_paste_does_not_collide_with_a_pasted_row() {
+        let mut source = Session::new();
+        source.open_test_chart(32, 32).unwrap();
+        // Several, so the source's ids run well past a fresh document's.
+        for _ in 0..5 {
+            source.add_effect("sharpen").unwrap();
+        }
+        source.copy_grade().unwrap();
+        let stack = source.clipboard.clone().unwrap();
+
+        let mut target = Session::new();
+        target.open_test_chart(32, 32).unwrap();
+        target.clipboard = Some(stack);
+        target.paste_grade().unwrap();
+
+        let fresh = target.add_effect("dehaze").unwrap();
+        let doc = target.document().unwrap();
+        let ids: Vec<_> = doc.stack.iter().map(|r| r.id).collect();
+        let mut sorted = ids.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            ids.len(),
+            "two rows share an id after a paste"
+        );
+        assert_eq!(
+            doc.stack.iter().filter(|r| r.id == fresh).count(),
+            1,
+            "the row just added has a pasted row's id"
+        );
+    }
+
+    #[test]
+    fn a_paste_is_one_undo_step_back_to_what_was_there() {
+        let mut s = Session::new();
+        s.open_test_chart(32, 32).unwrap();
+        s.copy_grade().unwrap();
+        let before = s.document().unwrap().stack.len();
+
+        s.add_effect("sharpen").unwrap();
+        s.paste_grade().unwrap();
+        assert_eq!(
+            s.document().unwrap().stack.len(),
+            before,
+            "the paste did not replace"
+        );
+
+        s.undo().unwrap();
+        assert_eq!(
+            s.document().unwrap().stack.len(),
+            before + 1,
+            "one undo did not put the added row back"
+        );
+        assert_eq!(s.undo_label().as_deref(), Some("Add Sharpen"));
+    }
+
+    #[test]
+    fn pasting_with_nothing_copied_is_refused_and_says_so() {
+        let mut s = Session::new();
+        s.open_test_chart(32, 32).unwrap();
+        assert!(!s.has_grade());
+        let e = s.paste_grade().unwrap_err();
+        assert!(matches!(e, SessionError::NothingCopied), "{e}");
+        assert_eq!(e.to_string(), "no grade has been copied");
+
+        s.copy_grade().unwrap();
+        assert!(s.has_grade());
+        assert!(s.paste_grade().is_ok());
+    }
+
+    #[test]
+    fn copying_with_nothing_open_is_refused() {
+        let mut s = Session::new();
+        assert!(matches!(
+            s.copy_grade().unwrap_err(),
+            SessionError::NothingOpen
+        ));
+        assert!(!s.has_grade());
+    }
+
+    /// And pasting to a set that is not open is refused rather than silently
+    /// doing nothing — a "pasted to 0 photos" would read as success.
+    #[test]
+    fn pasting_to_all_with_no_set_open_is_refused() {
+        let mut s = Session::new();
+        s.open_test_chart(32, 32).unwrap();
+        s.copy_grade().unwrap();
+        assert!(matches!(
+            s.paste_grade_to_all().unwrap_err(),
+            SessionError::NothingOpen
+        ));
     }
 }

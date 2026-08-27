@@ -306,6 +306,13 @@ struct ContentView: View {
                     .foregroundStyle(Palette.error.color)
                     .lineLimit(1)
                     .help(problem)
+            } else if let notice = store.notice {
+                // Ahead of the name and size, in the same place a problem
+                // would be: it is the answer to something just asked for, and
+                // the file's name is not going anywhere.
+                Text(notice)
+                    .foregroundStyle(Palette.label.color)
+                    .lineLimit(1)
             } else if store.snapshot.isOpen {
                 Text(store.snapshot.name ?? "test chart")
                     .foregroundStyle(Palette.label.color)

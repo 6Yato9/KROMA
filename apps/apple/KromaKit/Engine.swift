@@ -813,6 +813,36 @@ public final class Session {
         try check(pe_session_flush_autosave(handle))
     }
 
+    // ---- the grade in hand -------------------------------------------------
+
+    /// Copy this photograph's grade — the whole stack, pinned rows included.
+    public func copyGrade() throws {
+        try check(pe_session_copy_grade(handle))
+    }
+
+    /// Whether a grade has been copied, which is what the Paste items are
+    /// greyed by. Never throws: "no session" and "nothing copied" both mean
+    /// there is nothing to paste, and a menu has one way to say that.
+    public var hasGrade: Bool {
+        pe_session_has_grade(handle) != 0
+    }
+
+    /// Put the copied grade on this photograph, as one undo step.
+    public func pasteGrade() throws {
+        try check(pe_session_paste_grade(handle))
+    }
+
+    /// Put it on every *other* photograph in the set, returning how many took
+    /// it. Zero is a real answer for a set of one.
+    @discardableResult
+    public func pasteGradeToAll() throws -> Int {
+        let n = pe_session_paste_grade_to_all(handle)
+        guard n >= 0 else {
+            throw EngineError(code: n, message: lastError ?? "no reason given")
+        }
+        return Int(n)
+    }
+
     public func setExport(format: String, quality: UInt8) throws {
         try check(format.withCString {
             pe_session_set_export(handle, $0, quality)

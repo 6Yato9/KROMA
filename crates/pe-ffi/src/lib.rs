@@ -1548,6 +1548,77 @@ pub unsafe extern "C" fn pe_session_flush_autosave(s: *mut PeSession) -> i32 {
     status(s, |s| s.write_autosave())
 }
 
+// The grade in hand: copy a look off one photograph and put it on another.
+//
+// The clipboard is the session's, not a shell's, so what crosses here is three
+// verbs and a question — never the stack itself. A stack on the wire would be a
+// second copy of the document's own shape, in JSON, that both sides would have
+// to keep agreeing about.
+
+/// Copy this photograph's grade.
+///
+/// Returns 0; `-1` for a null handle; `-2` with nothing open, the reason on
+/// [`pe_session_last_error`].
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_copy_grade(s: *mut PeSession) -> i32 {
+    status(s, |s| s.copy_grade())
+}
+
+/// Whether a grade has been copied, which is what a Paste item is greyed by.
+///
+/// `1` yes, `0` no — and `0` for a null handle too, because a session that is
+/// not there has copied nothing. There is nothing here a caller could do
+/// differently for the two, which is why this one is not a status code.
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_has_grade(s: *mut PeSession) -> i32 {
+    with(s, 0, |s| i32::from(s.inner.has_grade()))
+}
+
+/// Put the copied grade on this photograph, as one undo step.
+///
+/// Returns 0; `-1` for a null handle; `-2` with nothing open or nothing
+/// copied — the two read differently on [`pe_session_last_error`].
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_paste_grade(s: *mut PeSession) -> i32 {
+    status(s, |s| s.paste_grade())
+}
+
+/// Put the copied grade on every *other* photograph in the set.
+///
+/// Returns how many took it, which a shell says out loud — `0` is a real
+/// answer for a set of one. `-1` for a null handle; `-2` with no set open or
+/// nothing copied, the reason on [`pe_session_last_error`].
+///
+/// Not this photograph: [`pe_session_paste_grade`] is how it gets the grade,
+/// and doing both from one call would make the count a lie.
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_paste_grade_to_all(s: *mut PeSession) -> i32 {
+    with(s, -1, |s| match s.inner.paste_grade_to_all() {
+        Ok(n) => {
+            s.last_error = None;
+            // A set larger than two billion photographs is not a thing, and a
+            // saturating cast is a smaller lie than a wrapped one.
+            i32::try_from(n).unwrap_or(i32::MAX)
+        }
+        Err(e) => {
+            s.last_error = Some(e.to_string());
+            -2
+        }
+    })
+}
+
 /// # Safety
 /// `s` and `format` must be valid or null. `format` is one of `jpeg`, `png`,
 /// `png16`.

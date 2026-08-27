@@ -38,6 +38,23 @@ struct PhotoEditorApp: App {
                     .keyboardShortcut("z", modifiers: [.command, .shift])
                     .disabled(!(store?.canRedo ?? false))
             }
+            // The Grade menu, which `main.rs` has beside File and Export.
+            //
+            // Its own menu rather than items under Edit: copying a *grade* and
+            // copying a *selection* are different verbs, and putting them on
+            // the same Cmd-C would mean the shortcut did different things
+            // depending on where the pointer happened to be.
+            CommandMenu("Grade") {
+                Button("Copy") { store?.copyGrade() }
+                    .disabled(!(store?.snapshot.isOpen ?? false))
+                Button("Paste") { store?.pasteGrade() }
+                    .disabled(!(store?.hasGrade ?? false))
+                Button("Paste to All…") { store?.pasteGradeToAll() }
+                    // The set, not the photograph: with nothing else open
+                    // there is nothing for this to paste onto.
+                    .disabled(!(store?.hasGrade ?? false) || (store?.library.count ?? 0) < 2)
+                    .help("The grade only — a crop belongs to the frame it was drawn on")
+            }
             CommandGroup(replacing: .saveItem) {
                 Button("Export") { store?.export() }
                     .keyboardShortcut("e", modifiers: .command)

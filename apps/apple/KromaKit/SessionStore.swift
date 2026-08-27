@@ -22,6 +22,18 @@ public final class SessionStore {
     /// call that succeeds.
     public private(set) var problem: String?
 
+    /// The last thing that went *right* and is worth saying out loud.
+    ///
+    /// A separate channel from ``problem`` because the status bar draws that
+    /// one in the error colour, and "grade pasted to 3 photos" is not an error.
+    /// `status.done` in `main.rs` is the same idea.
+    ///
+    /// Only for work whose result is otherwise invisible. Pasting to the *other*
+    /// photographs in a set changes nothing on screen, so without this the
+    /// command looks like it did nothing at all. An ordinary edit needs no
+    /// notice: the picture is the notice.
+    public private(set) var notice: String?
+
     @ObservationIgnored private let session: Session
     /// Set while a drag is in flight. The snapshot is not refreshed until it
     /// ends: the control holds the in-flight value locally, so the cost per
@@ -971,6 +983,10 @@ public final class SessionStore {
     /// former before decoding the latter is what makes mirroring cheap enough
     /// to do after every structural edit.
     private func refresh() {
+        // An edit supersedes whatever the last command had to say. Here rather
+        // than in `run`, which the render loop also goes through — a notice
+        // cleared on the next frame would never be read.
+        notice = nil
         // Any edit throws the measurement away, and this is where the store
         // hears about an edit. Two integers and a pointer test, not a copy.
         syncScopes()
@@ -1008,6 +1024,40 @@ public final class SessionStore {
             problem = nil
         } catch {
             problem = String(describing: error)
+            // A refusal is not a result. Leaving the last success on screen
+            // beside a fresh failure reads as though both just happened.
+            notice = nil
         }
+    }
+
+    // ---- the grade in hand -------------------------------------------------
+
+    /// Copy this photograph's grade, to put on another.
+    public func copyGrade() {
+        run { try session.copyGrade() }
+        if problem == nil { notice = "grade copied" }
+    }
+
+    /// Whether there is a grade to paste, which the Paste items are greyed by.
+    public var hasGrade: Bool { session.hasGrade }
+
+    /// Put the copied grade on this photograph.
+    ///
+    /// No notice: the picture changes, and that is the notice.
+    public func pasteGrade() {
+        run { try session.pasteGrade() }
+        refresh()
+    }
+
+    /// Put it on every *other* photograph in the set.
+    ///
+    /// This one does say so. Nothing on screen changes — the photograph in hand
+    /// is deliberately not one of them — so silence would be indistinguishable
+    /// from the command having failed.
+    public func pasteGradeToAll() {
+        var count = 0
+        run { count = try session.pasteGradeToAll() }
+        guard problem == nil else { return }
+        notice = count == 1 ? "grade pasted to 1 photo" : "grade pasted to \(count) photos"
     }
 }
