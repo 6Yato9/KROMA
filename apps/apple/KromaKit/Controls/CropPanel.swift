@@ -99,7 +99,7 @@ public struct CropPanel: View {
     /// Anticlockwise and clockwise quarter-turns, and the two flips.
     ///
     /// **A name the system does not have renders as nothing**, exactly as in
-    /// `ToolStrip`, and a blank button on a row of four is one nobody can
+    /// `TabRow`, and a blank button on a row of four is one nobody can
     /// identify — so `CropPanelTests` asks `NSImage` for each of these rather
     /// than assuming. `rotate.left` and `rotate.right` are the drawings that
     /// say "quarter-turn" most plainly and are **not** used: they are SF

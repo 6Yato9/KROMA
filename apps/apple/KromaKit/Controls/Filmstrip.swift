@@ -322,7 +322,7 @@ struct FilmstripCell: View {
     /// `SELECT` for the one on screen, and deliberately not `ACCENT`: "this is
     /// chosen" and "this is doing something" are different facts, and the
     /// accent is spent on the effect being worked in. The chosen tool in
-    /// `ToolStrip` is marked the same way for the same reason.
+    /// `TabRow` is marked the same way for the same reason.
     private var backing: Color {
         if current { return Palette.select.color }
         return hovering ? Palette.controlHot.color : Palette.panel.color

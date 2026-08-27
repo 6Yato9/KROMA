@@ -18,12 +18,25 @@ targets:
     sources:
       - path: PhotoEditor
       - path: KromaKit
+    # Hand-written now rather than generated, because an exported uniform type
+    # is an array of dictionaries and there is no `INFOPLIST_KEY_` for that.
+    #
+    # `com.kroma.effect-key` is what an effect dragged out of the shelf is
+    # carried as. Declared so the system knows the identifier: an undeclared
+    # one works inside a single process and fails between two, which is what a
+    # drag between windows is.
+    info:
+      path: PhotoEditor/Info.plist
+      properties:
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.kroma.effect-key
+            UTTypeDescription: Kroma effect
+            UTTypeConformsTo:
+              - public.data
+            UTTypeTagSpecification: {}
     settings:
       base:
         SWIFT_OBJC_BRIDGING_HEADER: PhotoEditor/PhotoEditor-Bridging-Header.h
-        # Xcode refuses to code-sign an app bundle without one, and there is
-        # nothing in it worth hand-maintaining yet.
-        GENERATE_INFOPLIST_FILE: "YES"
         # Points at the universal library build-engine.sh produces.
         LIBRARY_SEARCH_PATHS: $(SRCROOT)/../../target/universal/$(CONFIGURATION:lower)
         OTHER_LDFLAGS: -lpe_ffi

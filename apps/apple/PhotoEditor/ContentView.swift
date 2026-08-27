@@ -8,18 +8,23 @@ struct ContentView: View {
     /// for it should not be paying for it.
     @AppStorage("showScopes") private var showScopes = false
 
-    /// Which tool the inspector is showing, remembered between launches — the
-    /// panel you were grading in is the panel you want back.
+    /// Which tab the inspector is showing, remembered between launches — the
+    /// page you were grading in is the page you want back.
     ///
-    /// Stored as the name rather than as a `Tool`, and resolved here, so a
-    /// preference written by an older build that named a tool this one no
-    /// longer has opens on Basic instead of on nothing.
-    @AppStorage("tool") private var toolName = Tool.basic.rawValue
+    /// Stored as the name rather than as a `Tab`, and resolved here, so a
+    /// preference written by an older build naming something this one no longer
+    /// has opens on Colour instead of on nothing.
+    ///
+    /// A *new* key, and deliberately: `"tool"` holds names like
+    /// `"Colour Wheels"`, which are sections of the Colour tab now rather than
+    /// pages of their own. Reusing the key would open every existing install on
+    /// a fallback instead of on what it was left showing.
+    @AppStorage("tab") private var tabName = Tab.colour.rawValue
 
-    private var tool: Tool { Tool(rawValue: toolName) ?? .basic }
+    private var tab: Tab { Tab(rawValue: tabName) ?? .colour }
 
-    private var chosenTool: Binding<Tool> {
-        Binding(get: { tool }, set: { toolName = $0.rawValue })
+    private var chosenTab: Binding<Tab> {
+        Binding(get: { tab }, set: { tabName = $0.rawValue })
     }
 
     var body: some View {
@@ -70,21 +75,21 @@ struct ContentView: View {
             // policy is written down and where a refusal is turned into
             // something the status bar can say.
             store.openRemembered()
-            // The tool is remembered between launches, so this may already be
-            // Crop — in which case the viewer has to open on the enclosing
+            // The tab is remembered between launches, so this may already be
+            // Image — in which case the viewer has to open on the enclosing
             // frame rather than waiting for a change that never comes.
-            store.setCropping(tool.showsWholeFrame)
+            store.setCropping(tab.showsWholeFrame)
         }
         // The engine frames the viewer on the whole straightened source while
-        // the crop tool is showing, so there is something outside the rectangle
+        // the Image tab is showing, so there is something outside the rectangle
         // to see and to drag back into — and, just as importantly, it is turned
-        // off again on the way out. Left on, every other tool would be grading
+        // off again on the way out. Left on, every other tab would be grading
         // a picture with the cut-away parts still in it.
         //
         // Driven from here rather than from `CropOverlay`'s `onAppear`, because
         // the flag decides what the *viewer* draws and the overlay is only what
         // goes on top of it.
-        .onChange(of: tool) { _, chosen in
+        .onChange(of: tab) { _, chosen in
             store.setCropping(chosen.showsWholeFrame)
         }
     }
@@ -125,44 +130,79 @@ struct ContentView: View {
     /// the reason `ViewerDrag` sets out.
     ///
     /// The comparison is unconditional and the crop overlay is not, because the
-    /// comparison is a property of the window that survives changing tools
-    /// while the crop rectangle is the crop tool's own. Off, the comparison
+    /// comparison is a property of the window that survives changing tabs
+    /// while the crop rectangle is the Image tab's own. Off, the comparison
     /// draws nothing at all.
     private var viewer: some View {
         MetalViewer(store: store)
             .background(Palette.viewer.color)
             .overlay {
                 ZStack {
-                    if tool.showsWholeFrame { CropOverlay(store: store) }
+                    if tab.showsWholeFrame { CropOverlay(store: store) }
                     CompareOverlay(store: store)
                 }
             }
+            // An effect dropped on the picture is added, which is `main.rs`'s
+            // "the picture is the larger target — which matters when the thing
+            // you are deciding about is what the picture will look like".
+            //
+            // A dragging destination, not a mouse handler: the wheel, the pan
+            // and the double-click still belong to `MetalViewerView`. That
+            // separation is the thing to check by hand — the crop overlay
+            // silently took all three once.
+            .dropDestination(for: DraggedEffect.self) { dropped, _ in
+                dropped.forEach { store.addEffect($0.key) }
+                return !dropped.isEmpty
+            }
     }
 
-    /// The strip, and under it the one tool it has chosen.
+    /// The header, the tab row, and under them the one tab that is chosen.
     ///
     /// Eleven pinned panels used to stack in this one column, which meant
     /// reaching the warper by scrolling past a hundred and thirty controls.
-    /// Now the strip is the header and the column below it is whichever tool
-    /// is showing — the panels still fold, because folding is what makes one
-    /// effect's thirty parameters navigable and the strip is about the other
-    /// ten effects entirely.
+    /// `main.rs`'s answer, and now this one: four tabs, with the whole grade
+    /// under the first of them divided into five collapsing sections. The
+    /// panels inside a section still fold, because folding is what makes one
+    /// effect's thirty parameters navigable and the sections are about the
+    /// other ten effects entirely.
     private var inspector: some View {
         VStack(spacing: 0) {
-            ToolStrip(chosen: chosenTool)
+            InspectorHeader(store: store)
+            TabRow(chosen: chosenTab)
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    switch tool {
+                    switch tab {
+                    case .colour:
+                        colourSections
                     case .effects:
-                        addedRows
-                        // The browser belongs to this tool now rather than
-                        // sitting under every panel, and it is directly under
-                        // the rows it adds to — so an added effect appears
-                        // where the reader is already looking.
+                        // The whole list is the target rather than the gap
+                        // between two rows: choosing a position on the way in
+                        // would need an insertion indicator and a
+                        // scroll-while-dragging story, and the reorder arrows
+                        // already move a row once it is there. `take_drop` in
+                        // `inspector.rs` says the same.
+                        //
+                        // The floor is so there is something to drop on before
+                        // the first effect is added: an empty list has no
+                        // height, and a target with no area is not one.
+                        VStack(alignment: .leading, spacing: 0) { addedRows }
+                            .frame(
+                                maxWidth: .infinity, minHeight: 44,
+                                alignment: .topLeading
+                            )
+                            .contentShape(Rectangle())
+                            .dropDestination(for: DraggedEffect.self) { dropped, _ in
+                                dropped.forEach { store.addEffect($0.key) }
+                                return !dropped.isEmpty
+                            }
+                        // The browser is directly under the rows it adds to, so
+                        // an added effect appears where the reader is already
+                        // looking. `main.rs` puts its shelf above the list; the
+                        // order is this shell's own and the reason is stated.
                         EffectBrowser(registry: store.registry, store: store)
                             .padding(.vertical, 8)
-                    case .crop:
-                        // The one tool with no rows behind it: it edits the
+                    case .image:
+                        // The one tab with no rows behind it: it edits the
                         // document's geometry, which is a value on the document
                         // rather than an entry in its stack.
                         CropPanel(store: store)
@@ -171,8 +211,6 @@ struct ContentView: View {
                         // settings the next export will be written with,
                         // neither of which is an entry in the document's stack.
                         FilePanel(store: store)
-                    default:
-                        pinnedPanels
                     }
                 }
                 .padding(.horizontal, RowMetrics.inset)
@@ -181,26 +219,45 @@ struct ContentView: View {
         .background(Palette.panel.color)
     }
 
-    /// The chosen tool's fixed panels, in the order the tool lists them.
+    /// The Colour tab: five collapsing sections, in the engine's order.
     ///
-    /// `Tool.draws` is what decides, here and in `ToolStripTests` both, so the
+    /// `Section.draws` is what decides, here and in `TabRowTests` both, so the
     /// property the test asserts — every row of the document is drawn by
-    /// exactly one of the eight tools — is a property of what this view
-    /// actually draws rather than of a second copy of the rule.
+    /// exactly one of the five sections or by the Effects tab — is a property
+    /// of what this view actually draws rather than of a second copy of the
+    /// rule.
+    ///
+    /// **Nothing here is accented.** The section heading already names the
+    /// effect, so accenting the panel's own title would be the same word twice
+    /// in the same colour — and every heading accented at once says exactly as
+    /// little as none of them being.
     @ViewBuilder
-    private var pinnedPanels: some View {
-        ForEach(tool.draws(store.snapshot.rows)) { drawn in
-            if let effect = store.registry.effect(drawn.row.effect) {
-                InspectorPanel(
-                    effect: effect,
-                    row: drawn.row,
-                    store: store,
-                    // Accented only where the effect *is* the tool. Basic draws
-                    // six of these and six accented names is no more use than
-                    // none.
-                    namesTheTool: tool.effects.count == 1
-                )
-                Hairline()
+    private var colourSections: some View {
+        ForEach(Section.allCases, id: \.self) { section in
+            InspectorSection(
+                // Keyed by the tab as well as the section, so a section folded
+                // here says nothing about a parameter group of the same name
+                // inside some effect.
+                effect: "colour",
+                title: section.title,
+                startsOpen: section.startsOpen
+            ) {
+                ForEach(section.draws(store.snapshot.rows)) { drawn in
+                    if let effect = store.registry.effect(drawn.row.effect) {
+                        InspectorPanel(
+                            effect: effect,
+                            row: drawn.row,
+                            store: store,
+                            // A section that *is* one effect has already said
+                            // its name: "Curves" inside "Curves" is the same
+                            // word twice with a fold between them. `main.rs`
+                            // does the same — its one-effect headers open
+                            // straight onto the controls.
+                            showsTitle: section.effects.count > 1
+                        )
+                        Hairline()
+                    }
+                }
             }
         }
     }
@@ -212,7 +269,7 @@ struct ContentView: View {
     /// filtered list from zero would move the wrong one.
     @ViewBuilder
     private var addedRows: some View {
-        ForEach(Tool.effects.draws(store.snapshot.rows)) { drawn in
+        ForEach(Tab.added(store.snapshot.rows)) { drawn in
             if let effect = store.registry.effect(drawn.row.effect) {
                 StackRowView(
                     effect: effect,

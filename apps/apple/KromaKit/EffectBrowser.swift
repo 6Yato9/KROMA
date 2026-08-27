@@ -9,6 +9,14 @@ import SwiftUI
 /// cannot be added to a stack, because nothing draws a heading for it. The same
 /// property holds on this side by generating the shelf from `registry.groups`.
 ///
+/// **Always on screen, not behind a button.** `apps/windows/src/inspector.rs`
+/// gives the reason: "always visible rather than hidden behind a menu … A menu
+/// is the right shape for a command you already know the name of. This is a
+/// shelf you browse, and browsing is what you are doing when the question is
+/// 'what would look good here'." It was a popover here for a while, which is
+/// the menu shape that comment argues against — and a popover cannot be dragged
+/// out of, which is the other half of what a shelf is for.
+///
 /// A shelf and not a menu, since the star arrived. A menu item is one target:
 /// everywhere you can press is "add this", and there is nowhere to put a
 /// second gesture that means "keep this at the top and do not add it". The
@@ -24,42 +32,25 @@ public struct EffectBrowser: View {
         self.store = store
     }
 
-    @State private var hovering = false
-    @State private var showing = false
-
     public var body: some View {
-        Button {
-            showing.toggle()
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "plus")
-                    .imageScale(.small)
-                    .foregroundStyle(Palette.icon.color)
-                Text("Add effect")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Palette.label.color)
-            }
-            .modifier(ControlFace(hot: hovering))
-        }
-        .buttonStyle(.plain)
-        .fixedSize()
-        .onHover { hovering = $0 }
-        .opacity(store.snapshot.isOpen ? 1 : ScalarRow.dimmed)
-        .disabled(!store.snapshot.isOpen)
-        .popover(isPresented: $showing) {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Add effect")
+                .font(.system(size: 10))
+                .foregroundStyle(Palette.dim.color)
+                .padding(.bottom, 2)
             EffectShelf(
                 sections: Self.sections(in: registry, starred: store.favourites),
                 isStarred: store.isFavourite,
-                add: { key in
-                    store.addEffect(key)
-                    // The shelf is a list of things to do once. Leaving it open
-                    // after one of them has been done means the next click
-                    // lands on a panel that is no longer the one in front.
-                    showing = false
-                },
+                // Wrapped rather than passed: `addEffect` hands back the new
+                // row's id, and the shelf has no use for it. A click on a tile
+                // adds and says nothing more.
+                add: { store.addEffect($0) },
                 star: store.toggleFavourite
             )
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .opacity(store.snapshot.isOpen ? 1 : ScalarRow.dimmed)
+        .disabled(!store.snapshot.isOpen)
     }
 
     /// What the shelf shows, in the order it shows it.
@@ -123,8 +114,16 @@ struct EffectShelf: View {
             EffectShelfList(sections: sections, isStarred: isStarred, add: add, star: star)
                 .padding(EffectShelfList.inset)
         }
-        .frame(width: EffectShelfList.width, height: EffectShelfList.height)
-        .background(Palette.panel.color)
+        // The inspector's width rather than its own, now that it sits in the
+        // column instead of floating over it. The height is still capped: the
+        // shelf is a shelf and the rows above it are the document.
+        .frame(minWidth: EffectShelfList.width, maxWidth: .infinity)
+        .frame(height: EffectShelfList.height)
+        .background(Palette.well.color)
+        .overlay {
+            RoundedRectangle(cornerRadius: 3)
+                .strokeBorder(Palette.rule.color, lineWidth: 1)
+        }
     }
 }
 
@@ -135,10 +134,20 @@ struct EffectShelfList: View {
     let add: (String) -> Void
     let star: (String) -> Void
 
-    /// How wide the shelf is, and how much of it is on screen before it
-    /// scrolls. The Windows shelf's `BROWSER_HEIGHT`, in points.
+    /// The narrowest the shelf is drawn, which is also the width the star
+    /// tests render it at. The inspector is wider than this and the shelf grows
+    /// into it; below it the tiles would truncate names that need not be
+    /// truncated.
     static let width: CGFloat = 240
-    static let height: CGFloat = 420
+
+    /// How much of the shelf is on screen before it scrolls:
+    /// `inspector.rs`'s `BROWSER_HEIGHT`, in points.
+    ///
+    /// It was 420 while this was a popover, which could be as tall as it liked
+    /// because it floated over everything. In the column it is sharing the
+    /// height with the document's own rows, and Windows' number is the one that
+    /// was chosen against exactly that constraint.
+    static let height: CGFloat = 250
     static let inset: CGFloat = 6
 
     /// One tile, and the gap under it.
@@ -204,6 +213,19 @@ struct EffectTile: View {
         .frame(height: EffectShelfList.tileHeight)
         .contentShape(Rectangle())
         .onTapGesture(perform: add)
+        // Both gestures, and they do not collide: a press that moves is a
+        // drag, one that does not is a tap. Clicking a tile still adds it —
+        // dragging is the second way, not the replacement.
+        .draggable(DraggedEffect(key: effect.key)) {
+            // What follows the pointer. The tile itself is a slab the width of
+            // the panel; the name alone is what identifies it.
+            Text(effect.name)
+                .font(.system(size: 11.5))
+                .foregroundStyle(Palette.title.color)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Palette.control.color)
+        }
         .onHover { hovering = $0 }
         .overlay(alignment: .trailing) {
             // Over the tile and after it, so the star's own hit area wins: a

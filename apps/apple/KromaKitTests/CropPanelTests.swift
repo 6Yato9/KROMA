@@ -10,7 +10,7 @@ import XCTest
 /// screen either until somebody notices something missing.
 ///
 /// The glyphs are *strings* handed to the system, so a name the system does not
-/// have is a button that draws nothing — the same hazard `ToolStripTests` asks
+/// have is a button that draws nothing — the same hazard `TabRowTests` asks
 /// about for the strip.
 ///
 /// The aspect names are a table read in both directions, and the lock they name
@@ -215,40 +215,40 @@ final class CropPanelTests: XCTestCase {
 
     // ---- the tool turning the viewer on and off ---------------------------
 
-    /// Choosing the tool frames the viewer on the enclosing rectangle, and
-    /// choosing any other tool puts it back.
+    /// Choosing the Image tab frames the viewer on the enclosing rectangle, and
+    /// choosing any other tab puts it back.
     ///
-    /// The rule is `Tool.showsWholeFrame`, which is what `ContentView` hands to
-    /// `setCropping` on every change of tool — so this drives the same value
+    /// The rule is `Tab.showsWholeFrame`, which is what `ContentView` hands to
+    /// `setCropping` on every change of tab — so this drives the same value
     /// through the same call the interface makes. What stays unverified on this
     /// side is SwiftUI's `onChange` actually firing; what is checked is that
-    /// the tools answer the question correctly and that the store does the
-    /// right thing with both answers.
+    /// the tabs answer the question correctly and that the store does the right
+    /// thing with both answers.
     ///
-    /// Left on after switching away, every other tool would be graded against a
+    /// Left on after switching away, every other tab would be graded against a
     /// picture with the cut-away parts still in it.
     @MainActor
-    func testSwitchingToCropFramesTheWholeSourceAndSwitchingAwayPutsItBack() throws {
+    func testSwitchingToImageFramesTheWholeSourceAndSwitchingAwayPutsItBack() throws {
         let store = try opened()
         store.setGeometry(
             GeometryValue(
                 centre: .zero, size: CGSize(width: 0.5, height: 0.5), angle: 0, turns: 0,
                 flipH: false, flipV: false, aspect: .free))
 
-        store.setCropping(Tool.crop.showsWholeFrame)
-        XCTAssertTrue(store.cropping, "the crop tool did not open the enclosing frame")
+        store.setCropping(Tab.image.showsWholeFrame)
+        XCTAssertTrue(store.cropping, "the Image tab did not open the enclosing frame")
         XCTAssertEqual(Double(store.cropRect.width), 0.5, accuracy: 2e-3)
         XCTAssertEqual(Double(store.cropRect.height), 0.5, accuracy: 2e-3)
 
-        for tool in Tool.allCases where tool != .crop {
-            store.setCropping(tool.showsWholeFrame)
+        for tab in Tab.allCases where tab != .image {
+            store.setCropping(tab.showsWholeFrame)
             XCTAssertFalse(
                 store.cropping,
-                "\(tool.name) left the viewer showing what the crop cuts away")
+                "\(tab.name) left the viewer showing what the crop cuts away")
             // The viewer is showing the crop itself again, so the crop fills it.
-            XCTAssertEqual(Double(store.cropRect.width), 1, accuracy: 1e-3, tool.name)
-            XCTAssertEqual(Double(store.cropRect.height), 1, accuracy: 1e-3, tool.name)
-            store.setCropping(Tool.crop.showsWholeFrame)
+            XCTAssertEqual(Double(store.cropRect.width), 1, accuracy: 1e-3, tab.name)
+            XCTAssertEqual(Double(store.cropRect.height), 1, accuracy: 1e-3, tab.name)
+            store.setCropping(Tab.image.showsWholeFrame)
         }
 
         // And none of that was an edit: the framing is a property of the
