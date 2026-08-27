@@ -277,6 +277,7 @@ impl Preview {
             &self.scope_display.view,
             &space::ACESCG,
             &doc.color.pipeline().output,
+            pe_render::Placement::WHOLE,
         );
         self.gpu.queue.submit([encoder.finish()]);
 
@@ -362,6 +363,7 @@ impl Preview {
             &display.view,
             &space::ACESCG,
             &doc.color.pipeline().output,
+            pe_render::Placement::WHOLE,
         );
         self.gpu.queue.submit([encoder.finish()]);
 
@@ -384,6 +386,7 @@ impl Preview {
                 &before.view,
                 &space::ACESCG,
                 &doc.color.pipeline().output,
+                pe_render::Placement::WHOLE,
             );
             self.gpu.queue.submit([encoder.finish()]);
         }

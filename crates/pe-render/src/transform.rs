@@ -20,6 +20,75 @@ struct TransformUniform {
     origin: [f32; 4],
 }
 
+/// A rectangle of a render target, in pixels, with the origin top left.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Rect {
+    /// Whether this rectangle has no area.
+    ///
+    /// Worth asking, because a wipe dragged to either end asks for exactly
+    /// that and wgpu does not stop it: `set_viewport` is refused only for a
+    /// negative or oversized rectangle, so a zero-sized one goes on to the
+    /// driver, and Vulkan requires a viewport wider than nothing. See
+    /// [`TransformPass::encode`].
+    pub const fn is_empty(self) -> bool {
+        self.width == 0 || self.height == 0
+    }
+}
+
+/// Which part of its target a pass draws in, and how the picture gets there.
+///
+/// The two are different operations and the difference is the difference
+/// between the comparison modes. A wipe's halves are one picture with a seam,
+/// so neither may be moved or resized by so much as a pixel; a side by side's
+/// are two pictures, so both are shrunk to fit where one did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Part {
+    /// Squeeze the whole picture into this rectangle: `set_viewport`.
+    Into(Rect),
+    /// Draw the picture where it would have gone anyway and let only this
+    /// rectangle of it through: `set_scissor_rect`.
+    Through(Rect),
+}
+
+impl Part {
+    pub const fn rect(self) -> Rect {
+        match self {
+            Part::Into(r) | Part::Through(r) => r,
+        }
+    }
+}
+
+/// Where in its target a transform pass draws, and what happens to the rest.
+///
+/// [`Placement::WHOLE`] is what every pass in the pipeline wants but the second
+/// one of a comparison: all of the target, cleared first, one picture. A
+/// comparison is two passes into one target, and the second must not erase the
+/// first — which is the only reason the clear is a value here rather than the
+/// fixed black it used to be.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Placement {
+    /// The part of the target to draw in. `None` is all of it.
+    pub part: Option<Part>,
+    /// What the whole target becomes before the draw. `None` keeps what is
+    /// already there.
+    pub clear: Option<wgpu::Color>,
+}
+
+impl Placement {
+    /// All of the target, over black.
+    pub const WHOLE: Placement = Placement {
+        part: None,
+        clear: Some(wgpu::Color::BLACK),
+    };
+}
+
 /// Renders one texture into another, rotating the gamut on the way.
 pub struct TransformPass {
     /// How the next `encode` reads its source. Reset to the whole frame after
@@ -197,6 +266,21 @@ impl TransformPass {
     ///
     /// Only the gamut is handled here; the transfer functions belong to the
     /// texture formats. See `shaders/transform.wgsl`.
+    ///
+    /// `at` is [`Placement::WHOLE`] for every pass that is the only thing
+    /// drawing into its target. It is one parameter rather than a second entry
+    /// point because a comparison's two halves must not diverge from the plain
+    /// path or from each other, and a duplicated body is where they would.
+    ///
+    /// **An empty [`Rect`] draws nothing rather than reaching the driver.** A
+    /// wipe at 0.0 is a place a user will drag to, and wgpu's own validation
+    /// lets a zero-sized viewport through to a backend that may not — see
+    /// [`Rect::is_empty`]. The clear, if there is one, still happens: the
+    /// surround has to be painted whatever ends up on it.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one pass, described: the two textures, the two spaces and where it lands"
+    )]
     pub fn encode(
         &self,
         gpu: &GpuContext,
@@ -205,7 +289,12 @@ impl TransformPass {
         dst_view: &wgpu::TextureView,
         from: &ColorSpace,
         to: &ColorSpace,
+        at: Placement,
     ) {
+        let empty = at.part.is_some_and(|p| p.rect().is_empty());
+        if empty && at.clear.is_none() {
+            return;
+        }
         let (device, queue) = (&gpu.device, &gpu.queue);
         let gamut = if from.primaries == to.primaries {
             Mat3::IDENTITY
@@ -262,7 +351,10 @@ impl TransformPass {
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    load: match at.clear {
+                        Some(colour) => wgpu::LoadOp::Clear(colour),
+                        None => wgpu::LoadOp::Load,
+                    },
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -270,6 +362,21 @@ impl TransformPass {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
+        if empty {
+            return;
+        }
+        match at.part {
+            Some(Part::Into(r)) => pass.set_viewport(
+                r.x as f32,
+                r.y as f32,
+                r.width as f32,
+                r.height as f32,
+                0.0,
+                1.0,
+            ),
+            Some(Part::Through(r)) => pass.set_scissor_rect(r.x, r.y, r.width, r.height),
+            None => {}
+        }
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
         pass.draw(0..3, 0..1);
@@ -314,6 +421,7 @@ impl TransformPass {
             &dst.view,
             source_space,
             &space::ACESCG,
+            Placement::WHOLE,
         );
         gpu.queue.submit([encoder.finish()]);
         dst

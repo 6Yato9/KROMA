@@ -26,7 +26,7 @@ pub use export::render_full;
 pub use readback::{read_rgba8, read_rgba16f};
 pub use texture::padded_bytes_per_row;
 pub use texture::{ImageTexture, SOURCE_FORMAT, WORKING_FORMAT};
-pub use transform::TransformPass;
+pub use transform::{Part, Placement, Rect, TransformPass};
 
 /// Which rectangle of the whole frame a pass renders, in frame uv.
 ///

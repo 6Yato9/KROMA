@@ -20,6 +20,6 @@ pub mod surface;
 
 pub use library::{Library, Thumbnail};
 pub use scopes::Scopes;
-pub use session::{Session, SessionError};
+pub use session::{Compare, Session, SessionError};
 pub use support::Support;
 pub use surface::Attached;

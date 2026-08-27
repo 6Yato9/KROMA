@@ -11,7 +11,10 @@ use std::path::{Path, PathBuf};
 use pe_color::space;
 use pe_core::{Document, Geometry, History, ParamValue, RowId, RowIdGenerator, StackRow};
 use pe_io::DecodedImage;
-use pe_render::{EffectRenderer, GpuContext, ImageTexture, Region, Sampling, TransformPass};
+use pe_render::{
+    EffectRenderer, GpuContext, ImageTexture, Part, Placement, Rect, Region, Sampling,
+    TransformPass,
+};
 
 use crate::library::{self, Library};
 use crate::scopes::Scopes;
@@ -91,6 +94,94 @@ const WARP_DIVISIONS: &[(&str, &[&str], Axis)] = &[
 enum Axis {
     Cols,
     Rows,
+}
+
+/// How the graded picture is being held up against the ungraded one.
+///
+/// Both modes exist because they answer different questions. A wipe is for
+/// "did that move go too far" — the eye reads a discontinuity across a seam far
+/// more finely than it reads two pictures a hand's width apart. Side by side is
+/// for "which of these do I prefer", where a seam would fuse the two into one
+/// image and stop you seeing either.
+///
+/// That argument decides the shapes: a wipe has **no gap and no scaling
+/// difference** between its halves, because they are one picture with a seam,
+/// and a side by side has a real gap. See [`Session::set_compare`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Compare {
+    /// The default, and the one the cycling button starts and returns to.
+    #[default]
+    Off,
+    Wipe,
+    Side,
+}
+
+impl Compare {
+    /// The next mode round, so one button can be the whole control.
+    ///
+    /// Off is in the cycle rather than being a separate way out: a comparison
+    /// you cannot turn off with the button that turned it on is a control that
+    /// only works in one direction.
+    pub fn next(self) -> Self {
+        match self {
+            Compare::Off => Compare::Wipe,
+            Compare::Wipe => Compare::Side,
+            Compare::Side => Compare::Off,
+        }
+    }
+
+    /// Whether anything is being compared at all.
+    pub fn on(self) -> bool {
+        self != Compare::Off
+    }
+}
+
+/// The gap between the two halves of a side by side, in pixels.
+const SIDE_GAP: u32 = 8;
+
+/// Where the two half-size pictures sit in a target that size: before, after.
+///
+/// Half the width each less the gap, with the height brought down by the same
+/// factor so neither picture is stretched, and both centred vertically. The gap
+/// is the whole point of the mode — two pictures that touch fuse into one — and
+/// it is bounded by a quarter of the frame so that a very small target still
+/// gets two pictures rather than a gap with slivers either side.
+fn side_rects(width: u32, height: u32) -> (Rect, Rect) {
+    let gap = SIDE_GAP.min(width / 4);
+    let w = (width - gap) / 2;
+    let h = (u64::from(height) * u64::from(w) / u64::from(width.max(1))) as u32;
+    let y = (height - h) / 2;
+    (
+        Rect {
+            x: 0,
+            y,
+            width: w,
+            height: h,
+        },
+        Rect {
+            x: width - w,
+            y,
+            width: w,
+            height: h,
+        },
+    )
+}
+
+/// The viewer's surround, as a clear value.
+///
+/// Read from the one palette both shells read, so a side by side does not sit
+/// on a different grey depending on which of them drew it. Linear, because a
+/// clear value is: the transfer function belongs to the render target's format,
+/// which is the same rule the transform pass is built on.
+fn surround() -> wgpu::Color {
+    let linear = |v: u8| pe_color::TransferFn::Srgb.decode(f64::from(v) / 255.0);
+    let c = pe_theme::colour::VIEWER;
+    wgpu::Color {
+        r: linear(c.r),
+        g: linear(c.g),
+        b: linear(c.b),
+        a: 1.0,
+    }
 }
 
 /// The photograph that is open, and its edit.
@@ -178,6 +269,12 @@ pub struct Session {
     /// `view`, not of the document: it changes what is drawn and nothing about
     /// what would be exported.
     cropping: bool,
+    /// Which comparison the viewer is showing, and where its seam sits as a
+    /// fraction of the frame's width. A property of the window like `view` and
+    /// `cropping`: it changes what is drawn and nothing about what would be
+    /// exported.
+    compare: Compare,
+    wipe: f32,
     watcher: autosave::Watcher,
     /// Bumped by every mutation, so a shell can ask "is this still what I last
     /// saw?" with one integer instead of a JSON parse.
@@ -214,6 +311,8 @@ impl Session {
             open_set: Vec::new(),
             view: Region::FULL,
             cropping: false,
+            compare: Compare::default(),
+            wipe: 0.5,
             watcher: autosave::Watcher::new(),
             snapshot_version: 0,
             interaction: None,
@@ -347,6 +446,50 @@ impl Session {
     /// Whether the viewer is showing the whole straightened source.
     pub fn cropping(&self) -> bool {
         self.cropping
+    }
+
+    /// Hold the graded picture up against the ungraded one, or stop.
+    ///
+    /// `wipe` is where the seam sits, as a fraction of the frame's width from
+    /// the left, and it is kept while the mode is [`Compare::Off`] so that
+    /// cycling back round into a wipe puts the seam where the user left it. It
+    /// is clamped here, so a shell dragging past an edge gets the edge and the
+    /// scissor arithmetic never sees anything it cannot use.
+    ///
+    /// A property of the window, not of the document: it is not an edit, it is
+    /// not in the history, and [`Session::export_current`] renders the document
+    /// either way — the export path does not go through this at all.
+    ///
+    /// [`Session::measure_scopes`] does, because it reads back the composited
+    /// frame, so while a comparison is on the counts describe what is on screen,
+    /// both halves of it. That is the same bargain [`Session::set_cropping`]
+    /// makes, and for the same reason: the scopes describe what was drawn.
+    pub fn set_compare(&mut self, mode: Compare, wipe: f32) {
+        let wipe = if wipe.is_nan() {
+            0.0
+        } else {
+            wipe.clamp(0.0, 1.0)
+        };
+        if self.compare == mode && self.wipe == wipe {
+            return;
+        }
+        self.compare = mode;
+        self.wipe = wipe;
+        // Nothing here invalidates the working texture — the ungraded frame
+        // *is* the working texture — so this is the whole of the invalidation.
+        // Without it no frame is asked for at all, and the viewer would sit on
+        // the uncompared picture until something else moved.
+        self.needs_render = true;
+    }
+
+    /// Which comparison the viewer is showing, if any.
+    pub fn compare(&self) -> Compare {
+        self.compare
+    }
+
+    /// Where a wipe's seam sits, as a fraction of the frame's width.
+    pub fn wipe(&self) -> f32 {
+        self.wipe
     }
 
     /// The geometry the *viewer* is showing, which is normally the document's
@@ -1196,6 +1339,102 @@ impl Session {
         Ok(view)
     }
 
+    /// Draw the graded frame into `target`, and — when a comparison is on —
+    /// the ungraded one over or beside it.
+    ///
+    /// The one place [`Compare`] becomes GPU work, shared by the offscreen
+    /// read-back and the attached layer, so what a test measures is what a
+    /// screen shows. That is the whole reason the compositing is here and not
+    /// in a shell: the engine owns the textures, and a comparison assembled
+    /// twice is a comparison that will differ.
+    ///
+    /// Two submissions rather than two passes in one encoder: `encode` writes
+    /// its uniform through the queue, and two writes to one buffer before a
+    /// single submit would both land before either pass ran.
+    fn composite(
+        &self,
+        pass: &TransformPass,
+        graded: &wgpu::TextureView,
+        target: &wgpu::TextureView,
+        size: (u32, u32),
+        output: &pe_color::ColorSpace,
+    ) {
+        let (width, height) = size;
+        let gpu = self.gpu.context.as_ref().expect("a frame was just graded");
+        let (before, after) = side_rects(width, height);
+
+        // Side by side is the only mode that does not cover its target: two
+        // half-size pictures leave the surround showing, and without painting
+        // it the full-size after frame would still be there behind them.
+        let placement = match self.compare {
+            Compare::Side => Placement {
+                part: Some(Part::Into(after)),
+                clear: Some(surround()),
+            },
+            _ => Placement::WHOLE,
+        };
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("composite-after"),
+            });
+        pass.encode(
+            gpu,
+            &mut encoder,
+            graded,
+            target,
+            &space::ACESCG,
+            output,
+            placement,
+        );
+        gpu.queue.submit([encoder.finish()]);
+
+        // The ungraded frame is the *working* texture — the frame after crop
+        // and geometry, before any effect — through the same display
+        // transform. One pass, no effects, cheap enough not to bother caching,
+        // and **not run at all when nothing is comparing**: a comparison
+        // nobody asked for should cost nothing.
+        //
+        // Emphatically not the file re-decoded. The question is "what did my
+        // grade do", not "what did the crop do".
+        if !self.compare.on() {
+            return;
+        }
+        let Some(working) = self.gpu.working.as_ref() else {
+            return;
+        };
+        let part = match self.compare {
+            // The after frame is already there, whole; this is the same
+            // picture at the same size over the left of it. One seam, no gap,
+            // no scaling difference — which is the entire point of a wipe.
+            Compare::Wipe => Part::Through(Rect {
+                x: 0,
+                y: 0,
+                width: ((self.wipe * width as f32).round() as u32).min(width),
+                height,
+            }),
+            _ => Part::Into(before),
+        };
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("composite-before"),
+            });
+        pass.encode(
+            gpu,
+            &mut encoder,
+            &working.view,
+            target,
+            &space::ACESCG,
+            output,
+            Placement {
+                part: Some(part),
+                clear: None,
+            },
+        );
+        gpu.queue.submit([encoder.finish()]);
+    }
+
     /// Render at `width`×`height` and read the result back as RGBA8.
     ///
     /// Used by the tests and, later, by the thumbnail path. The interactive
@@ -1206,7 +1445,6 @@ impl Session {
         // be on screen. Passing the viewer's rectangle here would write out a
         // crop of the file that nobody asked for.
         let graded_view = self.graded(width, height, Region::FULL)?;
-        let gpu = self.gpu.context.as_ref().expect("built by graded");
         let output = self
             .photo
             .as_ref()
@@ -1217,33 +1455,26 @@ impl Session {
             .pipeline()
             .output;
 
-        let target = ImageTexture::new(
-            &gpu.device,
-            width,
-            height,
-            pe_render::SOURCE_FORMAT,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            "offscreen",
+        let target = {
+            let gpu = self.gpu.context.as_ref().expect("built by graded");
+            ImageTexture::new(
+                &gpu.device,
+                width,
+                height,
+                pe_render::SOURCE_FORMAT,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                "offscreen",
+            )
+        };
+        self.composite(
+            self.gpu.to_display.as_ref().expect("built by graded"),
+            &graded_view,
+            &target.view,
+            (width, height),
+            &output,
         );
-        let mut encoder = gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("offscreen"),
-            });
-        self.gpu
-            .to_display
-            .as_ref()
-            .expect("built by graded")
-            .encode(
-                gpu,
-                &mut encoder,
-                &graded_view,
-                &target.view,
-                &space::ACESCG,
-                &output,
-            );
-        gpu.queue.submit([encoder.finish()]);
         self.needs_render = false;
+        let gpu = self.gpu.context.as_ref().expect("built by graded");
         pe_render::read_rgba8(gpu, &target).map_err(|e| SessionError::Render(e.to_string()))
     }
 
@@ -1406,20 +1637,13 @@ impl Session {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("present"),
-            });
-        self.gpu.to_screen.as_ref().expect("built above").encode(
-            gpu,
-            &mut encoder,
+        self.composite(
+            self.gpu.to_screen.as_ref().expect("built above"),
             &graded_view,
             &view,
-            &space::ACESCG,
+            (width, height),
             &output,
         );
-        gpu.queue.submit([encoder.finish()]);
         frame.present();
         self.needs_render = false;
         Ok(())
@@ -3517,5 +3741,337 @@ mod tests {
             narrow_out.pixels, wide_out.pixels,
             "the wide photograph was exported as though its file had said nothing"
         );
+    }
+
+    // ---- comparing ---------------------------------------------------------
+
+    /// The frame the comparison tests read back. Small: every assertion below
+    /// is about bands of it, not about detail.
+    const W: u32 = 64;
+    const H: u32 = 64;
+
+    /// A chart with an edit that is obvious in bytes.
+    fn graded() -> (Session, RowId) {
+        let mut s = chart_session();
+        let row = s
+            .add_effect("exposure")
+            .expect("exposure is a registered effect");
+        s.set_float(row, "ev", 3.0).unwrap();
+        (s, row)
+    }
+
+    /// Columns `range` of a `W`-wide RGBA8 frame, every row of them.
+    fn cols(pixels: &[u8], range: Range<u32>) -> Vec<u8> {
+        let stride = W as usize * 4;
+        let (from, to) = (range.start as usize * 4, range.end as usize * 4);
+        pixels
+            .chunks_exact(stride)
+            .flat_map(|row| row[from..to].iter().copied())
+            .collect()
+    }
+
+    fn pixel(pixels: &[u8], x: u32, y: u32) -> [u8; 4] {
+        let i = ((y * W + x) * 4) as usize;
+        [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
+    }
+
+    /// The mean colour channel over one rectangle of a frame.
+    fn rect_mean(pixels: &[u8], r: Rect) -> f32 {
+        let mut sum = 0.0;
+        for y in r.y..r.y + r.height {
+            for x in r.x..r.x + r.width {
+                let p = pixel(pixels, x, y);
+                sum += f32::from(p[0]) + f32::from(p[1]) + f32::from(p[2]);
+            }
+        }
+        sum / (r.width * r.height * 3) as f32
+    }
+
+    #[test]
+    fn the_cycle_comes_back_to_off() {
+        assert_eq!(Compare::default(), Compare::Off);
+        // One button, three presses, back where it started. A comparison you
+        // cannot turn off with the control that turned it on is a control that
+        // works in one direction only.
+        let mut mode = Compare::Off;
+        let seen: Vec<Compare> = (0..3)
+            .map(|_| {
+                mode = mode.next();
+                mode
+            })
+            .collect();
+        assert_eq!(seen, vec![Compare::Wipe, Compare::Side, Compare::Off]);
+        assert!(!Compare::Off.on());
+        assert!(Compare::Wipe.on() && Compare::Side.on());
+    }
+
+    #[test]
+    fn a_wipe_shows_the_ungraded_frame_on_the_left_and_the_graded_one_on_the_right() {
+        let (mut s, _) = graded();
+        let after = s.render_offscreen(W, H).unwrap();
+        s.set_compare(Compare::Wipe, 1.0);
+        let ungraded = s.render_offscreen(W, H).unwrap();
+
+        s.set_compare(Compare::Wipe, 0.5);
+        let wiped = s.render_offscreen(W, H).unwrap();
+
+        // The two halves are one picture with a seam: each is exactly what the
+        // whole of it would have been there. **No gap and no scaling
+        // difference** — squeeze the before into half the target instead of
+        // scissoring it and both of these fail, which is the difference between
+        // this mode and the other one.
+        assert_eq!(
+            cols(&wiped, W / 2..W),
+            cols(&after, W / 2..W),
+            "the right of the seam is not the graded frame, where it was"
+        );
+        assert_eq!(
+            cols(&wiped, 0..W / 2),
+            cols(&ungraded, 0..W / 2),
+            "the left of the seam is not the ungraded frame, where it was"
+        );
+        // And what that difference amounts to: three stops.
+        let (left, was) = (mean(&cols(&wiped, 0..W / 2)), mean(&cols(&after, 0..W / 2)));
+        assert!(
+            left < was - 20.0,
+            "the left of the seam is still graded: {left} against {was}"
+        );
+    }
+
+    /// And the seam moves when the wipe does.
+    #[test]
+    fn the_seam_sits_where_the_wipe_says() {
+        let (mut s, _) = graded();
+        let after = s.render_offscreen(W, H).unwrap();
+
+        for fraction in [0.25_f32, 0.4, 0.5, 0.75] {
+            s.set_compare(Compare::Wipe, fraction);
+            let wiped = s.render_offscreen(W, H).unwrap();
+            let seam = (fraction * W as f32).round() as u32;
+            assert_eq!(
+                cols(&wiped, seam..W),
+                cols(&after, seam..W),
+                "at {fraction} the graded frame does not begin at column {seam}"
+            );
+            assert_ne!(
+                cols(&wiped, seam - 1..seam),
+                cols(&after, seam - 1..seam),
+                "at {fraction} the column before the seam is already graded"
+            );
+        }
+    }
+
+    /// At either end a wipe is all of one picture, and neither end draws a
+    /// scissor of nothing — 0.0 is somewhere a user will drag to.
+    #[test]
+    fn a_wipe_at_nothing_is_the_graded_frame_and_at_everything_is_the_ungraded_one() {
+        let (mut s, row) = graded();
+        let after = s.render_offscreen(W, H).unwrap();
+
+        s.set_compare(Compare::Wipe, 0.0);
+        assert_eq!(
+            s.render_offscreen(W, H).unwrap(),
+            after,
+            "a wipe at nothing hid some of the grade"
+        );
+
+        s.set_compare(Compare::Wipe, 1.0);
+        let all_before = s.render_offscreen(W, H).unwrap();
+        assert_ne!(all_before, after, "a wipe at everything is still the grade");
+
+        // And what it shows is the ungraded frame exactly: the working texture
+        // through the display transform, which is what the stack renders when
+        // every row of it is inert.
+        s.set_compare(Compare::Off, 0.0);
+        s.set_row_enabled(row, false).unwrap();
+        assert_eq!(
+            all_before,
+            s.render_offscreen(W, H).unwrap(),
+            "the before is not the frame the stack starts from"
+        );
+    }
+
+    #[test]
+    fn a_wipe_cannot_be_dragged_off_the_frame() {
+        // Each of these renders as well as being read back: past either end the
+        // scissor would be wider than the target or negative, and wgpu rejects
+        // both rather than shrugging.
+        let (mut s, _) = graded();
+        for (asked, want) in [(-3.0, 0.0), (4.0, 1.0), (f32::NAN, 0.0)] {
+            s.set_compare(Compare::Wipe, asked);
+            assert_eq!(s.wipe(), want, "a wipe of {asked} landed at {}", s.wipe());
+            s.render_offscreen(W, H).unwrap();
+        }
+    }
+
+    #[test]
+    fn side_by_side_puts_a_gap_between_two_half_size_pictures() {
+        let (mut s, _) = graded();
+        s.set_compare(Compare::Side, 0.5);
+        let side = s.render_offscreen(W, H).unwrap();
+        let (before, after) = side_rects(W, H);
+        assert!(before.width * 2 < W, "the two pictures leave no gap");
+        assert!(before.height < H, "the pictures are not half size");
+
+        // The surround, taken from a corner no picture reaches rather than from
+        // a constant, so what this asserts is "one colour behind both" and not
+        // "this exact grey".
+        let surround = pixel(&side, 0, 0);
+        assert!(
+            surround[0] < 60,
+            "the surround is not the dark one the viewer paints: {surround:?}"
+        );
+        // The full-size after frame is not still showing behind the halves.
+        for x in 0..W {
+            assert_eq!(
+                pixel(&side, x, 0),
+                surround,
+                "the top row still has the full-size frame in it at column {x}"
+            );
+        }
+        for x in before.width..after.x {
+            for y in 0..H {
+                assert_eq!(
+                    pixel(&side, x, y),
+                    surround,
+                    "the gap has a picture in it at {x}, {y}"
+                );
+            }
+        }
+        // Two pictures, and the ungraded one is on the left.
+        let (l, r) = (rect_mean(&side, before), rect_mean(&side, after));
+        assert!(
+            l < r - 20.0,
+            "the graded picture is not the one on the right: {l} against {r}"
+        );
+    }
+
+    /// Off costs nothing: the before pass does not run.
+    #[test]
+    fn comparing_nothing_renders_exactly_what_it_did_before() {
+        let (mut s, _) = graded();
+        let plain = s.render_offscreen(W, H).unwrap();
+
+        // What "the pass does not run" looks like from outside: no part of the
+        // frame is the ungraded picture. Held against a wipe at nothing, which
+        // draws no before either — by the same arithmetic that would make a
+        // zero-width scissor a validation error — because a frame compared with
+        // itself is the only reference an Off frame has.
+        s.set_compare(Compare::Wipe, 0.0);
+        assert_eq!(
+            s.render_offscreen(W, H).unwrap(),
+            plain,
+            "the before pass ran with nothing comparing"
+        );
+
+        // And the mode gates it, not the seam: a position remembered from the
+        // last time the user was in a wipe must still draw nothing.
+        s.set_compare(Compare::Off, 0.5);
+        assert_eq!(
+            s.render_offscreen(W, H).unwrap(),
+            plain,
+            "the remembered seam drew a before with the comparison off"
+        );
+        assert_eq!(s.compare(), Compare::Off);
+        assert_eq!(s.wipe(), 0.5, "the seam was not kept for next time");
+    }
+
+    /// The before is the frame before the *effects*, not before the crop.
+    ///
+    /// The one that catches the tempting wrong implementation — re-decoding the
+    /// file — which would put the whole frame on one side of the seam and the
+    /// crop on the other.
+    #[test]
+    fn the_ungraded_half_is_still_cropped() {
+        let (mut s, row) = graded();
+        // The right half of the chart. Its top band is a ramp from black to
+        // white across the source, so which half is showing is a fact about
+        // bytes: cropped, the left edge is halfway up the ramp; re-decoded from
+        // the file, it is black.
+        s.set_geometry(Geometry {
+            centre: [0.25, 0.0],
+            size: [0.5, 1.0],
+            ..Default::default()
+        })
+        .unwrap();
+
+        s.set_compare(Compare::Wipe, 1.0);
+        let all_before = s.render_offscreen(W, H).unwrap();
+
+        s.set_compare(Compare::Off, 0.0);
+        s.set_row_enabled(row, false).unwrap();
+        assert_eq!(
+            all_before,
+            s.render_offscreen(W, H).unwrap(),
+            "the ungraded half is not the ungraded crop"
+        );
+
+        s.set_geometry(Geometry::default()).unwrap();
+        let whole = s.render_offscreen(W, H).unwrap();
+        assert_ne!(
+            all_before, whole,
+            "the ungraded half is the whole file: the crop was undone on the way"
+        );
+        let (cropped_edge, file_edge) = (mean(&cols(&all_before, 0..2)), mean(&cols(&whole, 0..2)));
+        assert!(
+            cropped_edge > file_edge + 20.0,
+            "the ungraded half begins where the file begins, not where the crop does: \
+             {cropped_edge} against {file_edge}"
+        );
+    }
+
+    /// Where the arithmetic runs out. A one-pixel target leaves each half of a
+    /// side by side no width at all, and wgpu hands a zero-sized viewport
+    /// straight to the driver — Vulkan rejects one — rather than treating it as
+    /// a draw of nothing. A window dragged to nothing is not a crash.
+    #[test]
+    fn a_comparison_survives_a_target_too_small_to_halve() {
+        let (mut s, _) = graded();
+        for mode in [Compare::Wipe, Compare::Side] {
+            for seam in [0.0, 0.5, 1.0] {
+                s.set_compare(mode, seam);
+                for (w, h) in [(1, 1), (2, 2), (3, 7)] {
+                    s.render_offscreen(w, h).unwrap();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn turning_a_comparison_on_asks_for_a_frame() {
+        let (mut s, _) = graded();
+        s.render_offscreen(W, H).unwrap();
+        assert!(!s.needs_render(), "a frame was just drawn");
+
+        s.set_compare(Compare::Wipe, 0.5);
+        assert!(s.needs_render(), "a comparison did not ask for a frame");
+        s.render_offscreen(W, H).unwrap();
+
+        s.set_compare(Compare::Wipe, 0.5);
+        assert!(!s.needs_render(), "saying it twice asked for another frame");
+        s.set_compare(Compare::Wipe, 0.6);
+        assert!(
+            s.needs_render(),
+            "dragging the seam did not ask for a frame"
+        );
+    }
+
+    /// A comparison is a property of the window. It must not reach a file.
+    #[test]
+    fn an_export_is_not_a_comparison() {
+        let tmp = tempfile::tempdir().unwrap();
+        let photo = tmp.path().join("sunset.png");
+        pe_io::save_png(&pe_io::test_chart(64, 64), &photo, &pe_color::space::SRGB).unwrap();
+
+        let mut s = Session::new();
+        s.open_path(&photo).unwrap();
+        s.set_export(export::Format::Png, 95);
+        let row = s.add_effect("exposure").unwrap();
+        s.set_float(row, "ev", 3.0).unwrap();
+
+        let plain = std::fs::read(s.export_current().unwrap()).unwrap();
+        s.set_compare(Compare::Side, 0.5);
+        let compared = std::fs::read(s.export_current().unwrap()).unwrap();
+        assert_eq!(plain, compared, "the comparison was written to the file");
     }
 }

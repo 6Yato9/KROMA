@@ -13,6 +13,10 @@ pe-effects = { version = "0.0.1", path = "../pe-effects" }
 pe-io = { version = "0.0.1", path = "../pe-io" }
 pe-render = { version = "0.0.1", path = "../pe-render" }
 pe-scopes = { version = "0.0.1", path = "../pe-scopes" }
+# The palette. The engine composites a side by side, so it has to know what
+# colour the surround behind the two pictures is, and there is one answer to
+# that for both shells.
+pe-theme = { version = "0.0.1", path = "../pe-theme" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2.0.20"
@@ -20,5 +24,4 @@ wgpu = "27"
 pollster = "0.4"
 
 [dev-dependencies]
-pe-theme = { version = "0.0.1", path = "../pe-theme" }
 tempfile = "3"

@@ -87,6 +87,7 @@ impl Harness {
             &self.out.view,
             &space::ACESCG,
             &space::SRGB,
+            pe_render::Placement::WHOLE,
         );
         self.gpu.queue.submit([encoder.finish()]);
 

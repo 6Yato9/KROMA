@@ -81,6 +81,7 @@ fn round_trip_on_gpu(gpu: &GpuContext, src: &DecodedImage) -> DecodedImage {
         &out.view,
         &space::ACESCG,
         &space::SRGB,
+        pe_render::Placement::WHOLE,
     );
     gpu.queue.submit([encoder.finish()]);
 

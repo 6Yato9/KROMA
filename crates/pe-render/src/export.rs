@@ -213,6 +213,7 @@ fn to_output(
         &out.view,
         &space::ACESCG,
         &pipeline.output,
+        crate::Placement::WHOLE,
     );
     gpu.queue.submit([encoder.finish()]);
     out
