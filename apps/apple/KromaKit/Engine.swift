@@ -833,6 +833,78 @@ public final class Session {
         return URL(fileURLWithPath: String(cString: raw))
     }
 
+    // ---- what is remembered between runs -------------------------------------
+    //
+    // The handful of things that belong to the person rather than to any one
+    // picture: the effects they have starred and the set that was open. They
+    // live in the engine and not in `@AppStorage` because a star means the same
+    // thing in both shells, and so does the set you left open — an answer that
+    // depends on which application you happened to open is an answer given
+    // twice. What stays in `@AppStorage` is per-window interface state: which
+    // tool is showing, whether the scopes are open.
+
+    /// Whether an effect is starred.
+    ///
+    /// Not throwing: a key the engine has never heard of is not starred, which
+    /// is an answer rather than a failure, and the one remaining `-1` is a null
+    /// handle that a session cannot have.
+    public func isFavourite(_ key: String) -> Bool {
+        key.withCString { pe_session_is_favourite(handle, $0) == 1 }
+    }
+
+    /// Star or unstar an effect, and write the change out.
+    ///
+    /// Written immediately rather than on the way out, because a window can be
+    /// closed by the operating system, by a crash, or by somebody who does not
+    /// think of starring as something that needs committing.
+    public func toggleFavourite(_ key: String) throws {
+        try check(key.withCString { pe_session_toggle_favourite(handle, $0) })
+    }
+
+    /// Every starred effect, in the order they were starred.
+    ///
+    /// A list rather than a question per effect: the browser asks about all
+    /// thirty, and thirty calls to answer one question is thirty crossings of
+    /// the boundary for a list the engine already holds.
+    public func favourites() throws -> [String] {
+        guard let raw = pe_session_favourites_json(handle) else {
+            throw EngineError(code: -1, message: "the engine produced no favourites")
+        }
+        defer { pe_string_free(raw) }
+        return try JSONDecoder().decode([String].self, from: Data(String(cString: raw).utf8))
+    }
+
+    /// The set that was open when this last ran, and which one was showing.
+    ///
+    /// **Only the photographs that are still there.** One that has been moved,
+    /// renamed, or left on a volume that is not mounted is dropped, and which
+    /// one was showing is looked up again by name in what survived — so losing
+    /// one from the front of the set does not slide the answer onto its
+    /// neighbour.
+    ///
+    /// An empty set with an index of nought is a first run, and also a set
+    /// whose files have all gone. The index is not a position in it.
+    ///
+    /// **What this does not promise is that the photographs will decode.** They
+    /// exist; that is all the engine can say without opening every one of them
+    /// at launch. See ``SessionStore/openRemembered()``, which is where this
+    /// shell decides what to do about the one that will not.
+    public func rememberedSession() throws -> (paths: [URL], index: Int) {
+        guard let raw = pe_session_remembered_session_json(handle) else {
+            throw EngineError(code: -1, message: "the engine remembered no session")
+        }
+        defer { pe_string_free(raw) }
+        let remembered = try JSONDecoder().decode(
+            Remembered.self, from: Data(String(cString: raw).utf8))
+        return (remembered.paths.map { URL(fileURLWithPath: $0) }, remembered.index)
+    }
+
+    /// The shape `pe_session_remembered_session_json` writes.
+    private struct Remembered: Decodable {
+        let paths: [String]
+        let index: Int
+    }
+
     // ---- a batch ------------------------------------------------------------
     //
     // Every photograph in the set, each with its own edit, into one folder

@@ -59,7 +59,17 @@ struct ContentView: View {
         .background(Palette.panel.color)
         .onAppear {
             store.setSupportDirectory(Self.supportDirectory)
-            store.openTestChart()
+            // Before this line, and it matters: the engine reads the settings
+            // file as part of being told where the support directory is, so
+            // there is nothing to reopen until it has been.
+            //
+            // The chart is the fallback rather than the default. A first run
+            // and a set whose files have all gone both land on it, and so does
+            // a set none of whose photographs will decode — see
+            // `SessionStore.openRemembered`, which is where the whole of that
+            // policy is written down and where a refusal is turned into
+            // something the status bar can say.
+            store.openRemembered()
             // The tool is remembered between launches, so this may already be
             // Crop — in which case the viewer has to open on the enclosing
             // frame rather than waiting for a change that never comes.

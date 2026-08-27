@@ -112,6 +112,10 @@ public final class SessionStore {
 
     public func setSupportDirectory(_ url: URL) {
         run { try session.setSupportDirectory(url) }
+        // Being told where the support directory is *is* how the engine comes
+        // to read a settings file, so this is the first moment in a launch at
+        // which there are any stars to know about.
+        refreshFavourites()
     }
 
     public func openTestChart(width: UInt32 = 1024, height: UInt32 = 768) {
@@ -273,6 +277,123 @@ public final class SessionStore {
         if thumbnails.contains(where: { !kept.contains($0.key) }) {
             thumbnails = thumbnails.filter { kept.contains($0.key) }
         }
+    }
+
+    // ---- what is remembered between runs ----------------------------------
+    //
+    // The stars and the set that was open, which live in the engine rather than
+    // in `@AppStorage` because they mean the same thing in both shells. What
+    // stays in `@AppStorage` is per-window interface state: which tool is
+    // showing, whether the scopes are open.
+
+    /// The effects that have been starred.
+    ///
+    /// A stored property, so a browser's `body` reads a value rather than
+    /// walking the ABI once per effect — the shelf asks about all thirty every
+    /// time it is drawn. Written when the support directory is named, which is
+    /// when the engine reads the settings file, and again after every toggle.
+    public private(set) var favourites: [String] = []
+
+    public func isFavourite(_ key: String) -> Bool {
+        favourites.contains(key)
+    }
+
+    /// Star or unstar an effect. Written out by the engine as it happens.
+    public func toggleFavourite(_ key: String) {
+        run { try session.toggleFavourite(key) }
+        refreshFavourites()
+    }
+
+    /// Pull the stars across, and write them only when they have moved.
+    ///
+    /// A refusal here is a null handle, which the store's own session cannot
+    /// be, so there is nothing to put in the status bar.
+    private func refreshFavourites() {
+        guard let starred = try? session.favourites() else { return }
+        if starred != favourites { favourites = starred }
+    }
+
+    /// Open the set that was open when this last ran, or the built-in chart.
+    ///
+    /// **This is the whole of the Mac's launch policy, and it exists because
+    /// the engine cannot have one.** `Engine.rememberedSession` drops the
+    /// photographs that are no longer there, which is as far as `is_file` can
+    /// go: a file that is still there and will *not decode* comes back in the
+    /// list, and opening it is a refusal. Somebody whose launch died on that
+    /// refusal would have a window that never appears and no way out but
+    /// finding and deleting a settings file — so:
+    ///
+    /// - Nothing remembered, or nothing left of it, opens the chart. That is a
+    ///   first run and it is also a folder that has been tidied up.
+    /// - A set opens whole if it can. Only the first photograph is decoded, so
+    ///   only the first can refuse; if it does, it is dropped and the rest are
+    ///   tried, and so on. A set of sixty whose first frame is corrupt opens on
+    ///   the second, which is what `apps/windows/src/main.rs` does.
+    /// - Nothing in the set opening at all falls back to the chart, with the
+    ///   first refusal in the status bar.
+    /// - Then the photograph that was showing is focused. If *it* is the one
+    ///   that will not decode, the set stays where it opened and says so. A bad
+    ///   photograph costs its own place in the set and nothing else.
+    ///
+    /// Every refusal goes to `problem`, unlike in the engine, because by now
+    /// there is a window to say it in.
+    ///
+    /// Note what dropping means: the engine writes down what it actually
+    /// opened, so a photograph that would not decode is not in the set the
+    /// *next* launch tries either. That is the same outcome as one that was
+    /// deleted, and it is undone by opening the folder again.
+    public func openRemembered() {
+        var paths: [URL] = []
+        var showing = 0
+        do {
+            (paths, showing) = try session.rememberedSession()
+        } catch {
+            // A null handle, which this session cannot be. A launch is not the
+            // place to insist on it.
+            paths = []
+        }
+
+        // The first refusal rather than the last, because it is the one that
+        // names the photograph the person was actually on.
+        var trouble: String?
+        while !paths.isEmpty {
+            do {
+                try session.openPaths(paths)
+                break
+            } catch {
+                if trouble == nil { trouble = String(describing: error) }
+                paths.removeFirst()
+                // The remembered position counts from the front of the list
+                // that is shrinking under it. Past the front it slides down
+                // with everything else; at or before it, the photograph that
+                // was showing is one of the ones that would not open.
+                showing = showing > 0 ? showing - 1 : 0
+            }
+        }
+
+        guard !paths.isEmpty else {
+            openTestChart()
+            // After the chart, not before: opening one succeeds, and `run`
+            // clears `problem` on the way past.
+            if trouble != nil { problem = trouble }
+            return
+        }
+
+        if showing > 0 {
+            do {
+                try session.focus(showing)
+            } catch {
+                // The one that was showing will not decode. The set is still
+                // open on its first photograph, which is a launch rather than
+                // a failure to launch.
+                if trouble == nil { trouble = String(describing: error) }
+            }
+        }
+        refresh()
+        // Written only when there is something to say, so that a refusal
+        // `refresh` itself ran into is not quietly cleared by a launch that
+        // went well otherwise.
+        if trouble != nil { problem = trouble }
     }
 
     // ---- editing ---------------------------------------------------------
