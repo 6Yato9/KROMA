@@ -1067,11 +1067,23 @@ public final class SessionStore {
     /// Copy this photograph's grade, to put on another.
     public func copyGrade() {
         run { try session.copyGrade() }
-        if problem == nil { notice = "grade copied" }
+        guard problem == nil else { return }
+        hasGrade = true
+        notice = "grade copied"
     }
 
     /// Whether there is a grade to paste, which the Paste items are greyed by.
-    public var hasGrade: Bool { session.hasGrade }
+    ///
+    /// **Stored, not asked of the engine on every read.** `@Observable` tracks
+    /// stored properties; a computed one that reaches through to the session is
+    /// invisible to it, so a menu item bound to it keeps whatever enabled state
+    /// it was built with — Paste stayed grey after a copy, with the status bar
+    /// saying "grade copied" right beside it.
+    ///
+    /// Safe to mirror because [`copyGrade`] is the only thing that fills the
+    /// engine's clipboard, and nothing empties it: a grade in hand stays in
+    /// hand for the sitting.
+    public private(set) var hasGrade = false
 
     /// Put the copied grade on this photograph.
     ///

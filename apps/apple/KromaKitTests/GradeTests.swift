@@ -22,6 +22,31 @@ final class GradeTests: XCTestCase {
         XCTAssertFalse(store.hasGrade)
     }
 
+    /// `hasGrade` must be a *stored* property, because that is what SwiftUI's
+    /// `@Observable` tracks. Computed, and reaching through to the engine, it
+    /// was invisible to it: the Paste menu item stayed grey after a copy, with
+    /// "grade copied" written in the status bar beside it.
+    ///
+    /// A test cannot watch a menu redraw, so it checks the property that makes
+    /// the redraw possible. A stored property appears among a `Mirror`'s
+    /// children; a computed one does not — which is the difference the bug was.
+    func testHasGradeIsStoredSoThatItCanBeObserved() throws {
+        let store = try opened()
+        let stored = Mirror(reflecting: store).children.map(\.label)
+        XCTAssertTrue(
+            stored.contains("_hasGrade") || stored.contains("hasGrade"),
+            "hasGrade is computed, so @Observable cannot see it change and the "
+                + "Paste items keep whatever state they were built with")
+    }
+
+    /// And it follows the copy, which is the behaviour the menu is bound to.
+    func testHasGradeFollowsTheCopy() throws {
+        let store = try opened()
+        XCTAssertFalse(store.hasGrade)
+        store.copyGrade()
+        XCTAssertTrue(store.hasGrade)
+    }
+
     func testCopyingPutsAGradeInHand() throws {
         let store = try opened()
         store.copyGrade()

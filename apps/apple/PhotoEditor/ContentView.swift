@@ -346,7 +346,12 @@ struct ContentView: View {
                 .help("Double-click the picture")
             Button("100%") { store.zoomToActualPixels() }
                 .buttonStyle(KromaButtonStyle())
-                .disabled(store.viewScale == nil)
+                // Greyed by what is *open*, not by whether a scale can be
+                // measured. `viewScale` reaches through to the engine, and
+                // `@Observable` cannot see through that — a button bound to it
+                // would keep whatever state it was built with, which before
+                // the first frame is disabled and would stay disabled.
+                .disabled(!store.snapshot.isOpen)
                 .help("One image pixel to one screen pixel")
             Text(zoomReadout)
                 .foregroundStyle(Palette.label.color)
@@ -365,15 +370,21 @@ struct ContentView: View {
             // nobody opens. Absent until the first frame: the engine will not
             // acquire a device just to be named.
             if let gpu = store.gpuName {
-                Text(gpu)
-                    .font(.system(size: 10))
-                    .foregroundStyle(Palette.dim.color)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    // It may not fit, and it must never push the numbers left
-                    // — they are read constantly and this is not.
-                    .layoutPriority(-1)
-                    .help(gpu)
+                // Shown whole or not at all. Told to truncate it drew a bare
+                // "…" in a narrow window, which is worse than the space: an
+                // ellipsis says something is there and refuses to say what.
+                //
+                // It must also never push the numbers left — they are read
+                // constantly and this is not — which is what the fallback does.
+                ViewThatFits(in: .horizontal) {
+                    Text(gpu)
+                        .font(.system(size: 10))
+                        .foregroundStyle(Palette.dim.color)
+                        .lineLimit(1)
+                        .fixedSize()
+                    Color.clear.frame(width: 0, height: 0)
+                }
+                .help(gpu)
             }
         }
         .font(.system(size: 11))
