@@ -31,6 +31,7 @@
 //! emulation LUTs already target ACES.
 
 pub mod icc;
+pub mod locus;
 pub mod matrix;
 pub mod pipeline;
 pub mod primaries;

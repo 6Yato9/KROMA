@@ -500,3 +500,76 @@ fn the_strip_has_a_home_for_every_pinned_effect() {
     pinned.sort_unstable();
     assert_eq!(sorted, pinned, "the strip and the pinned rows disagree");
 }
+
+/// The spectral locus: the boundary drawn, and what sits at a chromaticity.
+///
+/// The Swift warper draws the horseshoe and fills the plot behind it by
+/// reimplementing `pe_color::locus`, exactly as the curve, lattice and pin
+/// editors reimplement their own geometry — a polyline and a per-texel colour
+/// are not worth a round trip through the engine, and the plot is rebuilt on
+/// every slider drag. This is what keeps the copy honest.
+///
+/// All three questions cross, because a reimplementation can get any one of
+/// them right and the others wrong in ways that look plausible on screen:
+///
+/// - `curve` is every drawn point, not a subsample. A Swift copy that
+///   subdivided fifteen times instead of sixteen, or that rounded the line of
+///   purples off with the rest of the spline, would still pass a fixture that
+///   only checked the tabulated points it interpolates *between*.
+/// - `inside` is the answer the plot dims by, and the probes below are picked
+///   at the places two plausible implementations disagree: either side of the
+///   line of purples, the greenest vertex, and the corners of the square that
+///   are no colour at all.
+/// - `colour` is `None` at y of zero and a colour everywhere else, including
+///   outside the horseshoe — a Swift copy that drew black there would give the
+///   plot a surround instead of a continuous field.
+#[test]
+fn the_locus_fixture_is_current() {
+    use pe_color::locus::{LOCUS, SUBDIVISIONS, colour_at, curve, inside};
+
+    // Named, so a failure says which question moved rather than which index.
+    let probes: Vec<(&str, [f32; 2])> = vec![
+        ("d65", [0.3127, 0.3290]),
+        ("equal_energy", [0.33, 0.33]),
+        ("srgb_red", [0.640, 0.330]),
+        ("srgb_green", [0.300, 0.600]),
+        ("srgb_blue", [0.150, 0.060]),
+        // Outside sRGB, inside the horseshoe: the clip-towards-white case.
+        ("wide_green", [0.10, 0.75]),
+        ("wide_cyan", [0.10, 0.40]),
+        // 520 nm, a hair inside its own vertex.
+        ("spectral_green", [0.0794, 0.8187]),
+        // Either side of the line of purples at x = 0.45, where the chord sits
+        // at y = 0.133.
+        ("magenta_above_purples", [0.45, 0.20]),
+        ("magenta_below_purples", [0.45, 0.10]),
+        // No colour, but still drawn.
+        ("far_corner", [0.8, 0.8]),
+        ("origin_corner", [0.05, 0.05]),
+        ("under_the_locus", [0.6, 0.05]),
+        ("negative_z", [0.5, 0.6]),
+        // And the one place there is nothing to answer.
+        ("no_luminance", [0.4, 0.0]),
+    ];
+
+    let probed: Vec<serde_json::Value> = probes
+        .iter()
+        .map(|(name, [x, y])| {
+            serde_json::json!({
+                "name": name,
+                "xy": [x, y],
+                "inside": inside(*x, *y),
+                "colour": colour_at(*x, *y),
+            })
+        })
+        .collect();
+
+    let json = serde_json::to_string_pretty(&serde_json::json!({
+        "locus": LOCUS.as_slice(),
+        "subdivisions": SUBDIVISIONS,
+        "curve": curve(),
+        "probes": probed,
+    }))
+    .unwrap();
+    check("locus.json", json);
+}

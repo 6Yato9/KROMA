@@ -614,8 +614,8 @@ fn plot_image(plot: Plot, seen: Option<&Distribution>) -> egui::ColorImage {
                 // and at full brightness the map wins.
                 Plot::Chromaticity => {
                     let (x, y) = (plot_value(u), plot_value(v));
-                    crate::locus::colour_at(x, y).map(|c| {
-                        let dim = if crate::locus::inside(x, y) {
+                    pe_color::locus::colour_at(x, y).map(|c| {
+                        let dim = if pe_color::locus::inside(x, y) {
                             0.62
                         } else {
                             0.16
@@ -656,7 +656,7 @@ fn plot_image(plot: Plot, seen: Option<&Distribution>) -> egui::ColorImage {
             // along the outside of the horseshoe — a cloud over a region that
             // has no colours in it by definition.
             let inside = match plot {
-                Plot::Chromaticity => crate::locus::inside(plot_value(u), plot_value(v)),
+                Plot::Chromaticity => pe_color::locus::inside(plot_value(u), plot_value(v)),
                 _ => base.is_some(),
             };
             let mut rgb = base.unwrap_or([0.03, 0.03, 0.035]);
@@ -789,7 +789,7 @@ fn draw_plot(ui: &mut egui::Ui, rect: egui::Rect, plot: Plot, seen: Option<&Dist
     // means something on its own, and without it the shape's edge is only
     // wherever the colour happens to stop.
     if plot == Plot::Chromaticity {
-        let curve = crate::locus::curve();
+        let curve = pe_color::locus::curve();
         let points: Vec<egui::Pos2> = curve
             .iter()
             .chain(curve.first())
