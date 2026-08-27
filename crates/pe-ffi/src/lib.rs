@@ -1303,6 +1303,128 @@ unsafe fn write_rect(
     }
 }
 
+// ---- comparing ------------------------------------------------------------
+
+/// No comparison: the graded picture, whole.
+///
+/// The three `mode` values [`pe_session_set_compare`] and
+/// [`pe_session_compare`] cross, named here — and in the generated header —
+/// rather than left as bare integers in somebody's comment. The numbering is
+/// part of the ABI: add to the end.
+pub const PE_COMPARE_OFF: u32 = 0;
+/// One picture with a seam: ungraded to the left of it, graded to the right.
+pub const PE_COMPARE_WIPE: u32 = 1;
+/// Two half-size pictures with a real gap: ungraded left, graded right.
+pub const PE_COMPARE_SIDE: u32 = 2;
+
+/// The comparison an integer names, or `None` for one this ABI has no mode
+/// for. The `None` is the whole reason this is a function and not a cast.
+fn compare_mode(mode: u32) -> Option<pe_session::Compare> {
+    match mode {
+        PE_COMPARE_OFF => Some(pe_session::Compare::Off),
+        PE_COMPARE_WIPE => Some(pe_session::Compare::Wipe),
+        PE_COMPARE_SIDE => Some(pe_session::Compare::Side),
+        _ => None,
+    }
+}
+
+/// And back again, for [`pe_session_compare`].
+fn compare_value(mode: pe_session::Compare) -> u32 {
+    match mode {
+        pe_session::Compare::Off => PE_COMPARE_OFF,
+        pe_session::Compare::Wipe => PE_COMPARE_WIPE,
+        pe_session::Compare::Side => PE_COMPARE_SIDE,
+    }
+}
+
+/// Hold the graded picture up against the ungraded one, or stop.
+///
+/// `mode` is **0 off, 1 wipe, 2 side** — [`PE_COMPARE_OFF`],
+/// [`PE_COMPARE_WIPE`], [`PE_COMPARE_SIDE`]. The engine composites the two
+/// pictures itself, because it owns the textures; the seam and the labels are
+/// the shell's to draw over the top.
+///
+/// **A value that is not one of the three is refused, not quietly treated as
+/// off.** A shell that grew a fourth way of comparing and sends `3` gets `-2`
+/// and a message saying so; showing no comparison instead would be
+/// indistinguishable, from the shell's side, from the feature being broken —
+/// and the one thing that could tell it otherwise is this return value.
+/// Nothing moves on a refusal: the mode and the seam are still where they
+/// were, and the next frame is the one that was already being drawn.
+///
+/// `wipe` is where the seam sits, as a fraction of the frame's width from the
+/// left, and only [`PE_COMPARE_WIPE`] draws it. Out of range it is clamped
+/// rather than refused: 0.0 and 1.0 are places a user drags to, and past
+/// either end is what dragging against the edge of a window produces.
+///
+/// **The fraction is kept whatever the mode is**, so that cycling
+/// off → wipe → side → off with one button puts the seam back where the user
+/// left it rather than at the left edge. It is also the one thing a caller can
+/// throw away here — pass 0 while turning a comparison off and the next wipe
+/// starts from nothing — so a cycling button reads [`pe_session_compare`] and
+/// hands back the fraction it gives.
+///
+/// Not an edit: it is not in the history, the document is untouched, and an
+/// export renders the document either way. Nothing needs to be open, as with
+/// [`pe_session_set_cropping`] — a property of the window outlives whichever
+/// photograph is in it.
+///
+/// Returns 0; `-1` for a null handle; `-2` for a mode this ABI has no
+/// comparison for, with the reason in [`pe_session_last_error`].
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_set_compare(s: *mut PeSession, mode: u32, wipe: f32) -> i32 {
+    with(s, -1, move |s| {
+        let Some(compare) = compare_mode(mode) else {
+            s.last_error = Some(format!("{mode} is not a comparison: 0 off, 1 wipe, 2 side"));
+            return -2;
+        };
+        s.inner.set_compare(compare, wipe);
+        s.last_error = None;
+        0
+    })
+}
+
+/// Which comparison the viewer is showing, and where its seam sits.
+///
+/// `out_mode` is one of the `PE_COMPARE_*` values; `out_wipe` is the fraction
+/// [`pe_session_set_compare`] stored, clamped, **whatever the mode is**. With
+/// a comparison off that is the seam the next wipe will start from, which is
+/// what lets a cycling button hand the fraction back instead of flattening it
+/// to zero. Before anything has been set it is 0.5: a first wipe begins in the
+/// middle.
+///
+/// Two answers in one call rather than two functions, because the control that
+/// wants either wants both: the button draws its state from the mode and the
+/// seam is drawn from the fraction, on the same frame.
+///
+/// Either out-pointer may be null. Returns 0, or `-1` for a null handle. There
+/// is no `-2`: a window property has an answer with nothing open, and reading
+/// it is not something the session can refuse.
+///
+/// # Safety
+/// `s` must be valid or null; each non-null out-pointer must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_compare(
+    s: *mut PeSession,
+    out_mode: *mut u32,
+    out_wipe: *mut f32,
+) -> i32 {
+    with(s, -1, move |s| {
+        unsafe {
+            if !out_mode.is_null() {
+                out_mode.write(compare_value(s.inner.compare()));
+            }
+            if !out_wipe.is_null() {
+                out_wipe.write(s.inner.wipe());
+            }
+        }
+        0
+    })
+}
+
 // ---- history --------------------------------------------------------------
 
 /// Bracket a drag so it becomes one undo step rather than three hundred.
@@ -2062,6 +2184,14 @@ mod tests {
             -1
         );
         assert_eq!(unsafe { pe_session_cancel_batch(ptr::null_mut()) }, -1);
+        assert_eq!(
+            unsafe { pe_session_set_compare(ptr::null_mut(), PE_COMPARE_WIPE, 0.5) },
+            -1
+        );
+        assert_eq!(
+            unsafe { pe_session_compare(ptr::null_mut(), ptr::null_mut(), ptr::null_mut()) },
+            -1
+        );
         unsafe { pe_session_free(ptr::null_mut()) };
     }
 
@@ -3710,5 +3840,236 @@ mod tests {
             );
             unsafe { pe_session_free(s) };
         }
+    }
+
+    // ---- comparing -------------------------------------------------------
+
+    /// The frame the comparison tests read back. Small: every assertion below
+    /// is about bands of it, not about detail.
+    const CW: u32 = 64;
+    const CH: u32 = 64;
+
+    /// A chart with an edit that is obvious in bytes — three stops — put there
+    /// the way a shell would, one call across the boundary at a time.
+    fn graded_session() -> *mut PeSession {
+        let s = pe_session_new();
+        assert_eq!(unsafe { pe_session_open_test_chart(s, CW, CH) }, 0);
+        let exposure = cstr("exposure");
+        let row = unsafe { pe_session_add_effect(s, exposure.as_ptr()) };
+        assert!(row > 0, "exposure is a registered effect: {row}");
+        let ev = cstr("ev");
+        assert_eq!(
+            unsafe { pe_session_set_float(s, row as u64, ev.as_ptr(), 3.0) },
+            0
+        );
+        s
+    }
+
+    /// The composited frame, as bytes.
+    ///
+    /// The one thing here that does not cross the ABI, because there is
+    /// nothing to cross it with and there should not be: a shell gets its
+    /// pixels by attaching a layer and presenting to it, which needs a screen.
+    /// This is the same offscreen render `pe_session_measure` bins, and it is
+    /// the only way to assert that a comparison was *composited* rather than
+    /// merely accepted — which is the whole of what these two functions are
+    /// for.
+    fn frame(s: *mut PeSession) -> Vec<u8> {
+        unsafe { &mut *s }
+            .inner
+            .render_offscreen(CW, CH)
+            .expect("the chart renders")
+    }
+
+    /// Columns `from..to` of a `CW`-wide RGBA8 frame, every row of them.
+    fn cols(pixels: &[u8], from: u32, to: u32) -> Vec<u8> {
+        let stride = CW as usize * 4;
+        let (from, to) = (from as usize * 4, to as usize * 4);
+        pixels
+            .chunks_exact(stride)
+            .flat_map(|row| row[from..to].iter().copied())
+            .collect()
+    }
+
+    /// The mode and the seam, as a shell reads them back.
+    fn compare_of(s: *mut PeSession) -> (u32, f32) {
+        let (mut mode, mut wipe) = (u32::MAX, f32::NAN);
+        assert_eq!(unsafe { pe_session_compare(s, &mut mode, &mut wipe) }, 0);
+        (mode, wipe)
+    }
+
+    fn set_compare(s: *mut PeSession, mode: u32, wipe: f32) -> i32 {
+        unsafe { pe_session_set_compare(s, mode, wipe) }
+    }
+
+    #[test]
+    fn a_comparison_crosses_as_a_mode_and_a_fraction_and_is_composited() {
+        let s = graded_session();
+        let after = frame(s);
+
+        // All of one picture at either end, and the two ends are not the same
+        // picture: three stops apart.
+        assert_eq!(set_compare(s, PE_COMPARE_WIPE, 1.0), 0);
+        let ungraded = frame(s);
+        assert_ne!(ungraded, after, "a wipe at everything is still the grade");
+        assert_eq!(set_compare(s, PE_COMPARE_WIPE, 0.0), 0);
+        assert_eq!(frame(s), after, "a wipe at nothing hid some of the grade");
+
+        // And in between, one picture with a seam: each half is exactly what
+        // the whole of it would have been there, which is what says the
+        // fraction crossed as a position rather than as a flag.
+        assert_eq!(set_compare(s, PE_COMPARE_WIPE, 0.5), 0);
+        let wiped = frame(s);
+        assert_eq!(
+            cols(&wiped, 0, CW / 2),
+            cols(&ungraded, 0, CW / 2),
+            "the left of the seam is not the ungraded frame"
+        );
+        assert_eq!(
+            cols(&wiped, CW / 2, CW),
+            cols(&after, CW / 2, CW),
+            "the right of the seam is not the graded frame"
+        );
+
+        // Side by side is a different shape, not a seam somewhere else: two
+        // half-size pictures, so the corner is the viewer's surround, which no
+        // picture reaches any more.
+        assert_eq!(set_compare(s, PE_COMPARE_SIDE, 0.5), 0);
+        let side = frame(s);
+        assert_ne!(side, wiped, "2 drew the same frame as 1");
+        assert!(
+            side[0] < 60,
+            "the top left corner is not the surround: {:?}",
+            &side[..4]
+        );
+
+        // And 0 is the frame the session was drawing before any of this.
+        assert_eq!(set_compare(s, PE_COMPARE_OFF, 0.5), 0);
+        assert_eq!(frame(s), after, "off was still compositing something");
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn a_mode_this_abi_has_no_comparison_for_is_refused_rather_than_treated_as_off() {
+        let s = graded_session();
+        assert_eq!(set_compare(s, PE_COMPARE_WIPE, 0.25), 0);
+        assert_eq!(last_error(s), None, "a call that worked left a message");
+        let wiped = frame(s);
+
+        // A shell that grows a fourth way of comparing and sends 3 is told.
+        // Quietly showing no comparison would look, from the far side of the
+        // boundary, exactly like the feature not working — and this return
+        // value is the only thing that could have told it otherwise.
+        for unknown in [3u32, 4, u32::MAX] {
+            assert_eq!(set_compare(s, unknown, 0.5), -2, "{unknown} was accepted");
+            let message = last_error(s).expect("a refusal nobody can report");
+            assert!(
+                message.contains(&unknown.to_string()),
+                "the message does not say what was refused: {message}"
+            );
+            // Nothing moved, in the state or in the picture.
+            assert_eq!(
+                compare_of(s),
+                (PE_COMPARE_WIPE, 0.25),
+                "a refused mode changed the comparison"
+            );
+            assert_eq!(frame(s), wiped, "a refused mode changed the picture");
+        }
+
+        // The other sentinel means something else entirely: the request never
+        // reached a session, so there is nowhere for a message to have been
+        // written and nothing looked at it.
+        assert_eq!(
+            unsafe { pe_session_set_compare(ptr::null_mut(), PE_COMPARE_WIPE, 0.5) },
+            -1
+        );
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn the_seam_survives_a_round_trip_through_off() {
+        let s = graded_session();
+        let after = frame(s);
+
+        assert_eq!(set_compare(s, PE_COMPARE_WIPE, 0.25), 0);
+        let quarter = frame(s);
+        assert_ne!(quarter, after, "a quarter of a wipe drew no before");
+        assert_eq!(compare_of(s), (PE_COMPARE_WIPE, 0.25));
+
+        // One button, three presses, back where it started — each press
+        // handing back the fraction it just read rather than a zero of its
+        // own, which is the whole reason the fraction is readable.
+        for mode in [PE_COMPARE_SIDE, PE_COMPARE_OFF] {
+            let (_, wipe) = compare_of(s);
+            assert_eq!(set_compare(s, mode, wipe), 0);
+        }
+        assert_eq!(
+            compare_of(s),
+            (PE_COMPARE_OFF, 0.25),
+            "the seam was not kept for next time"
+        );
+        assert_eq!(frame(s), after, "off drew a before anyway");
+
+        let (_, wipe) = compare_of(s);
+        assert_eq!(set_compare(s, PE_COMPARE_WIPE, wipe), 0);
+        assert_eq!(
+            frame(s),
+            quarter,
+            "the seam came back somewhere other than where it was left"
+        );
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn a_seam_dragged_off_the_frame_lands_on_the_edge_rather_than_being_refused() {
+        // Both ends are places a user drags to, and past either end is what
+        // dragging against the edge of a window produces. Each of these
+        // renders as well as reading back: past either end the scissor would
+        // be negative or wider than the target, and wgpu rejects both rather
+        // than shrugging.
+        let s = graded_session();
+        for (asked, want) in [(-3.0_f32, 0.0_f32), (4.0, 1.0), (f32::NAN, 0.0)] {
+            assert_eq!(set_compare(s, PE_COMPARE_WIPE, asked), 0);
+            let (mode, wipe) = compare_of(s);
+            assert_eq!((mode, wipe), (PE_COMPARE_WIPE, want), "a wipe of {asked}");
+            frame(s);
+        }
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn a_comparison_is_a_property_of_the_window_and_needs_no_out_parameters() {
+        // Nothing open, and every question about a comparison still has an
+        // answer: the same bargain `pe_session_set_cropping` makes, because a
+        // window outlives whichever photograph is in it.
+        let s = pe_session_new();
+        assert_eq!(
+            compare_of(s),
+            (PE_COMPARE_OFF, 0.5),
+            "a fresh session is comparing something, or starts its first wipe \
+             somewhere other than the middle"
+        );
+        assert_eq!(set_compare(s, PE_COMPARE_SIDE, 0.75), 0);
+        assert_eq!(last_error(s), None, "a call that worked left a message");
+        assert_eq!(compare_of(s), (PE_COMPARE_SIDE, 0.75));
+
+        // Either half may be the only half wanted, and neither may be.
+        let mut mode = u32::MAX;
+        assert_eq!(
+            unsafe { pe_session_compare(s, &mut mode, ptr::null_mut()) },
+            0
+        );
+        assert_eq!(mode, PE_COMPARE_SIDE);
+        let mut wipe = f32::NAN;
+        assert_eq!(
+            unsafe { pe_session_compare(s, ptr::null_mut(), &mut wipe) },
+            0
+        );
+        assert_eq!(wipe, 0.75);
+        assert_eq!(
+            unsafe { pe_session_compare(s, ptr::null_mut(), ptr::null_mut()) },
+            0
+        );
+        unsafe { pe_session_free(s) };
     }
 }
