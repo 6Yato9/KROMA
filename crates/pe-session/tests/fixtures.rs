@@ -573,3 +573,35 @@ fn the_locus_fixture_is_current() {
     .unwrap();
     check("locus.json", json);
 }
+
+/// The formats a picker offers, with the strings each side needs.
+///
+/// `name` is what crosses the FFI, `label` is what the reader sees, and
+/// `takes_quality` is whether the quality row is live. Three strings that have
+/// to agree across two shells, so they are generated from the engine rather
+/// than typed a second time in Swift.
+#[test]
+fn the_export_formats_fixture_is_current() {
+    use pe_session::export::Format;
+
+    let formats: Vec<serde_json::Value> = Format::ALL
+        .iter()
+        .map(|f| {
+            serde_json::json!({
+                "name": f.name(),
+                "label": f.label(),
+                "extension": f.extension(),
+                "takes_quality": f.takes_quality(),
+            })
+        })
+        .collect();
+
+    let json = serde_json::to_string_pretty(&serde_json::json!({
+        "formats": formats,
+        // What a session starts at, so the Swift side can assert the panel's
+        // opening state rather than assuming it.
+        "default_format": Format::default().name(),
+    }))
+    .unwrap();
+    check("export_formats.json", json);
+}

@@ -1,0 +1,23 @@
+{
+  "default_format": "jpeg",
+  "formats": [
+    {
+      "extension": "jpg",
+      "label": "JPEG",
+      "name": "jpeg",
+      "takes_quality": true
+    },
+    {
+      "extension": "png",
+      "label": "PNG 8",
+      "name": "png",
+      "takes_quality": false
+    },
+    {
+      "extension": "png",
+      "label": "PNG 16",
+      "name": "png16",
+      "takes_quality": false
+    }
+  ]
+}
