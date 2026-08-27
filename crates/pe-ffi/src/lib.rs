@@ -1734,6 +1734,112 @@ pub unsafe extern "C" fn pe_session_cancel_batch(s: *mut PeSession) -> i32 {
     })
 }
 
+// ---- what is remembered between runs --------------------------------------
+//
+// The handful of things that belong to the person rather than to any one
+// picture: the effects they have starred and the set that was open. See
+// [`pe_session::Settings`] for why they live in the engine and not in a shell —
+// a star means the same in both, and so does the set you left open.
+//
+// The two lists cross as JSON, by rule 4. Neither is a scalar, neither has a
+// count known in advance, and both are read once at launch rather than per
+// frame: the typed alternative is a pointer-and-length pair of a type this ABI
+// is not allowed to name.
+
+/// Whether an effect is starred. `1` yes, `0` no; `-1` for a null handle or a
+/// null or non-UTF-8 `key`.
+///
+/// No `-2`. The session cannot refuse this question — a key it has never heard
+/// of is simply not starred — so there is nothing for a refusal to mean.
+///
+/// # Safety
+/// `s` and `key` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_is_favourite(s: *mut PeSession, key: *const c_char) -> i32 {
+    let Some(key) = as_str(key) else { return -1 };
+    let key = key.to_string();
+    with(s, -1, |s| i32::from(s.inner.is_favourite(&key)))
+}
+
+/// Star or unstar an effect, and write the change out.
+///
+/// Returns 0; `-1` for a null handle or a null or non-UTF-8 `key`. No `-2`, for
+/// the reason [`pe_session_is_favourite`] gives, and none for the write either:
+/// settings that cannot be written are not an error anybody is told about — see
+/// [`pe_session::Settings::save`].
+///
+/// # Safety
+/// `s` and `key` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_toggle_favourite(s: *mut PeSession, key: *const c_char) -> i32 {
+    let Some(key) = as_str(key) else { return -1 };
+    let key = key.to_string();
+    status(s, move |s| {
+        s.toggle_favourite(&key);
+        Ok(())
+    })
+}
+
+/// Every starred effect, as a JSON array of keys — `["grain","halation"]` — in
+/// the order they were starred. Caller must release with [`pe_string_free`].
+///
+/// Null only for a null handle. Nothing starred is `[]`, which is a list and
+/// not a failure: a browser with no favourites draws no favourites heading, and
+/// that is a different thing from a browser that could not ask.
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_favourites_json(s: *mut PeSession) -> *mut c_char {
+    with(s, ptr::null_mut(), |s| {
+        match serde_json::to_string(&s.inner.settings().favourites) {
+            Ok(j) => to_c(j),
+            Err(_) => ptr::null_mut(),
+        }
+    })
+}
+
+/// The set that was open when this last ran, as
+/// `{"paths":["/a.jpg","/b.jpg"],"index":1}`. Caller must release with
+/// [`pe_string_free`].
+///
+/// **Only the photographs that are still there** — see
+/// [`pe_session::Session::remembered_session`], which drops the ones that have
+/// gone and looks the one that was showing up again by name in what survived.
+///
+/// An empty `paths` with an `index` of nought is the answer for a first run and
+/// for a set whose files have all gone. The index is not a position in an empty
+/// list and nothing should treat it as one: [`pe_session_open_paths`] refuses
+/// an empty set, so a shell that passes this straight back gets `-2` rather
+/// than a set of no photographs.
+///
+/// **What this does not promise is that the photographs will decode.** They
+/// exist; that is all `is_file` can say. A file that is there and will not read
+/// makes [`pe_session_open_paths`] answer `-2`, and what to do about that is
+/// the shell's to decide — the engine has no window to say it in.
+///
+/// Null only for a null handle.
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_remembered_session_json(s: *mut PeSession) -> *mut c_char {
+    with(s, ptr::null_mut(), |s| {
+        let (paths, index) = s.inner.remembered_session();
+        let described = serde_json::json!({
+            "paths": paths
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>(),
+            "index": index,
+        });
+        match serde_json::to_string(&described) {
+            Ok(j) => to_c(j),
+            Err(_) => ptr::null_mut(),
+        }
+    })
+}
+
 // ---- scopes ---------------------------------------------------------------
 
 /// Which measurement to read. The numbering is part of the ABI: add to the end.
@@ -4070,6 +4176,286 @@ mod tests {
             unsafe { pe_session_compare(s, ptr::null_mut(), ptr::null_mut()) },
             0
         );
+        unsafe { pe_session_free(s) };
+    }
+
+    // ---- what is remembered between runs ---------------------------------
+
+    /// A JSON string out of the ABI, as the shell reads it: parsed, freed.
+    fn json_out(p: *mut c_char) -> Option<serde_json::Value> {
+        if p.is_null() {
+            return None;
+        }
+        let text = unsafe { CStr::from_ptr(p) }.to_str().unwrap().to_owned();
+        unsafe { pe_string_free(p) };
+        Some(serde_json::from_str(&text).unwrap())
+    }
+
+    fn favourites(s: *mut PeSession) -> Vec<String> {
+        let json = json_out(unsafe { pe_session_favourites_json(s) }).expect("a list, not null");
+        serde_json::from_value(json).expect("a JSON array of keys")
+    }
+
+    fn remembered(s: *mut PeSession) -> (Vec<String>, usize) {
+        let json = json_out(unsafe { pe_session_remembered_session_json(s) })
+            .expect("an object, not null");
+        (
+            serde_json::from_value(json["paths"].clone()).expect("paths is an array of strings"),
+            serde_json::from_value(json["index"].clone()).expect("index is a number"),
+        )
+    }
+
+    /// A star is written down when it is made, and the next session reads it —
+    /// which is the whole reason any of this crosses the boundary.
+    #[test]
+    fn a_star_crosses_and_the_next_session_finds_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let support = cstr(&tmp.path().join("support").display().to_string());
+        let grain = cstr("grain");
+
+        let s = pe_session_new();
+        assert_eq!(
+            unsafe { pe_session_set_support_dir(s, support.as_ptr()) },
+            0
+        );
+        assert_eq!(unsafe { pe_session_is_favourite(s, grain.as_ptr()) }, 0);
+        assert_eq!(favourites(s), Vec::<String>::new());
+
+        assert_eq!(unsafe { pe_session_toggle_favourite(s, grain.as_ptr()) }, 0);
+        assert_eq!(unsafe { pe_session_is_favourite(s, grain.as_ptr()) }, 1);
+        assert_eq!(favourites(s), ["grain"]);
+        unsafe { pe_session_free(s) };
+
+        // The next launch, which is the only thing this feature is for.
+        let again = pe_session_new();
+        assert_eq!(
+            unsafe { pe_session_set_support_dir(again, support.as_ptr()) },
+            0
+        );
+        assert_eq!(
+            unsafe { pe_session_is_favourite(again, grain.as_ptr()) },
+            1,
+            "the star did not survive the session it was made in"
+        );
+        assert_eq!(favourites(again), ["grain"]);
+
+        // And the same gesture takes it off again.
+        assert_eq!(
+            unsafe { pe_session_toggle_favourite(again, grain.as_ptr()) },
+            0
+        );
+        assert_eq!(unsafe { pe_session_is_favourite(again, grain.as_ptr()) }, 0);
+        assert_eq!(favourites(again), Vec::<String>::new());
+        unsafe { pe_session_free(again) };
+    }
+
+    /// The set that was open comes back with which one was showing, and the
+    /// shell can hand the paths straight back to `pe_session_open_paths`.
+    #[test]
+    fn the_set_that_was_open_crosses_as_paths_and_an_index() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let b = photo_at(tmp.path(), "b.png", 64, 64);
+        let c = photo_at(tmp.path(), "c.png", 64, 64);
+        let support = cstr(&tmp.path().join("support").display().to_string());
+
+        let s = pe_session_new();
+        assert_eq!(
+            unsafe { pe_session_set_support_dir(s, support.as_ptr()) },
+            0
+        );
+        assert_eq!(
+            remembered(s),
+            (Vec::new(), 0),
+            "a first run remembers a set it never had"
+        );
+
+        let list = paths_json(&[&a, &b, &c]);
+        assert_eq!(unsafe { pe_session_open_paths(s, list.as_ptr()) }, 0);
+        assert_eq!(unsafe { pe_session_focus(s, 2) }, 0);
+        unsafe { pe_session_free(s) };
+
+        let again = pe_session_new();
+        assert_eq!(
+            unsafe { pe_session_set_support_dir(again, support.as_ptr()) },
+            0
+        );
+        let (paths, index) = remembered(again);
+        assert_eq!(
+            paths,
+            [
+                a.display().to_string(),
+                b.display().to_string(),
+                c.display().to_string()
+            ]
+        );
+        assert_eq!(paths[index], c.display().to_string());
+
+        // The round trip the shell actually makes: the list comes back out and
+        // goes straight in again.
+        let back = cstr(&serde_json::to_string(&paths).unwrap());
+        assert_eq!(unsafe { pe_session_open_paths(again, back.as_ptr()) }, 0);
+        assert_eq!(unsafe { pe_session_entry_count(again) }, 3);
+        assert_eq!(unsafe { pe_session_focus(again, index as u32) }, 0);
+        assert_eq!(snapshot(again)["name"], "c.png");
+        unsafe { pe_session_free(again) };
+    }
+
+    /// A photograph that has gone is left out, and the one that was showing is
+    /// still the one that comes back — by name, not by the position it used to
+    /// hold.
+    #[test]
+    fn a_photograph_that_has_gone_is_left_out_of_what_comes_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let b = photo_at(tmp.path(), "b.png", 64, 64);
+        let c = photo_at(tmp.path(), "c.png", 64, 64);
+        let support = cstr(&tmp.path().join("support").display().to_string());
+
+        let s = pe_session_new();
+        assert_eq!(
+            unsafe { pe_session_set_support_dir(s, support.as_ptr()) },
+            0
+        );
+        let list = paths_json(&[&a, &b, &c]);
+        assert_eq!(unsafe { pe_session_open_paths(s, list.as_ptr()) }, 0);
+        assert_eq!(unsafe { pe_session_focus(s, 2) }, 0);
+        unsafe { pe_session_free(s) };
+
+        // Deleted between the two runs, from in front of the one that was
+        // showing — which renumbers everything after it.
+        std::fs::remove_file(&a).unwrap();
+
+        let again = pe_session_new();
+        assert_eq!(
+            unsafe { pe_session_set_support_dir(again, support.as_ptr()) },
+            0
+        );
+        let (paths, index) = remembered(again);
+        assert_eq!(paths, [b.display().to_string(), c.display().to_string()]);
+        assert_eq!(
+            paths[index],
+            c.display().to_string(),
+            "the deletion slid the answer onto the wrong photograph"
+        );
+        unsafe { pe_session_free(again) };
+    }
+
+    /// Everything the last run had is gone: an empty list, an index of nought,
+    /// and `pe_session_open_paths` refusing it rather than a set of none.
+    #[test]
+    fn a_set_that_has_entirely_gone_comes_back_empty_and_is_refused_on_the_way_in() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let support = cstr(&tmp.path().join("support").display().to_string());
+
+        let s = pe_session_new();
+        assert_eq!(
+            unsafe { pe_session_set_support_dir(s, support.as_ptr()) },
+            0
+        );
+        let list = paths_json(&[&a]);
+        assert_eq!(unsafe { pe_session_open_paths(s, list.as_ptr()) }, 0);
+        unsafe { pe_session_free(s) };
+
+        std::fs::remove_file(&a).unwrap();
+
+        let again = pe_session_new();
+        assert_eq!(
+            unsafe { pe_session_set_support_dir(again, support.as_ptr()) },
+            0
+        );
+        let (paths, index) = remembered(again);
+        assert!(paths.is_empty());
+        assert_eq!(index, 0);
+
+        let empty = cstr("[]");
+        assert_eq!(
+            unsafe { pe_session_open_paths(again, empty.as_ptr()) },
+            -2,
+            "a set of no photographs was opened"
+        );
+        assert!(last_error(again).is_some(), "a refusal with no reason");
+        unsafe { pe_session_free(again) };
+    }
+
+    /// A remembered photograph that is *there* and will not *decode* is the
+    /// case the engine does not answer, and the shells do. `is_file` is all
+    /// `remembered_session` can say, so the path comes back and opening it is
+    /// `-2` — which is what `apps/windows/src/main.rs`'s `open_something` and
+    /// `SessionStore.openRemembered` are each built on.
+    #[test]
+    fn a_remembered_photograph_that_will_not_decode_still_comes_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let support = cstr(&tmp.path().join("support").display().to_string());
+
+        let s = pe_session_new();
+        assert_eq!(
+            unsafe { pe_session_set_support_dir(s, support.as_ptr()) },
+            0
+        );
+        let list = paths_json(&[&a]);
+        assert_eq!(unsafe { pe_session_open_paths(s, list.as_ptr()) }, 0);
+        unsafe { pe_session_free(s) };
+
+        // Still there, still named the same, and no longer a photograph.
+        std::fs::write(&a, b"not a PNG any more").unwrap();
+
+        let again = pe_session_new();
+        assert_eq!(
+            unsafe { pe_session_set_support_dir(again, support.as_ptr()) },
+            0
+        );
+        let (paths, _) = remembered(again);
+        assert_eq!(
+            paths,
+            [a.display().to_string()],
+            "a file that exists was dropped for not decoding, which is not \
+             something the engine can know"
+        );
+
+        let back = cstr(&serde_json::to_string(&paths).unwrap());
+        assert_eq!(
+            unsafe { pe_session_open_paths(again, back.as_ptr()) },
+            -2,
+            "a file of rubbish decoded"
+        );
+        assert!(
+            last_error(again).is_some(),
+            "the shell has to be able to say what went wrong"
+        );
+        unsafe { pe_session_free(again) };
+    }
+
+    /// The sentinels, and the rule they follow: `-1` never reached a session.
+    #[test]
+    fn what_is_remembered_answers_a_null_handle_without_touching_it() {
+        let grain = cstr("grain");
+        assert_eq!(
+            unsafe { pe_session_is_favourite(ptr::null_mut(), grain.as_ptr()) },
+            -1
+        );
+        assert_eq!(
+            unsafe { pe_session_toggle_favourite(ptr::null_mut(), grain.as_ptr()) },
+            -1
+        );
+        assert!(unsafe { pe_session_favourites_json(ptr::null_mut()) }.is_null());
+        assert!(unsafe { pe_session_remembered_session_json(ptr::null_mut()) }.is_null());
+
+        // And a null key is the same failure with a session behind it: nothing
+        // is starred and nothing is written.
+        let s = pe_session_new();
+        assert_eq!(unsafe { pe_session_is_favourite(s, ptr::null()) }, -1);
+        assert_eq!(unsafe { pe_session_toggle_favourite(s, ptr::null()) }, -1);
+        assert_eq!(favourites(s), Vec::<String>::new());
+
+        // A session with nowhere to write still answers both questions, which
+        // is the arrangement `Settings` is built on: no support directory is
+        // not an error, it is a run that does not outlive itself.
+        assert_eq!(unsafe { pe_session_toggle_favourite(s, grain.as_ptr()) }, 0);
+        assert_eq!(unsafe { pe_session_is_favourite(s, grain.as_ptr()) }, 1);
+        assert_eq!(remembered(s), (Vec::new(), 0));
         unsafe { pe_session_free(s) };
     }
 }
