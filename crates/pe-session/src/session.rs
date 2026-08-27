@@ -1325,6 +1325,22 @@ impl Session {
         Ok(self.gpu.context.as_ref().expect("built above"))
     }
 
+    /// One line naming the GPU actually in use, for the status bar and for bug
+    /// reports.
+    ///
+    /// `None` until a device exists. Deliberately not built on demand: a
+    /// session that has not drawn anything has no device, and acquiring one to
+    /// answer a question about it would make reading a label the most expensive
+    /// thing in the frame. The first render fills it in.
+    ///
+    /// See [`pe_render::GpuContext::describe`] for what is in it — the maximum
+    /// texture dimension is there because it is the one number that decides
+    /// whether a given photograph opens at all, and "it refused my panorama" is
+    /// unanswerable without it.
+    pub fn gpu_name(&self) -> Option<String> {
+        self.gpu.context.as_ref().map(|g| g.describe())
+    }
+
     /// Show this rectangle of the frame, in frame coordinates.
     ///
     /// The working texture is built for a particular rectangle, so moving it
@@ -4687,5 +4703,19 @@ mod tests {
     fn a_frame_with_no_area_has_no_scale() {
         assert_eq!(view_scale_of((800, 600), (0, 0), [1.0, 1.0]), None);
         assert_eq!(view_scale_of((800, 600), (4000, 3000), [0.0, 0.0]), None);
+    }
+
+    /// A session that has not drawn has no device, and says so rather than
+    /// acquiring one to answer. Reading a label must not be the most expensive
+    /// thing in the frame.
+    #[test]
+    fn a_session_that_has_not_drawn_names_no_gpu() {
+        let s = Session::new();
+        assert_eq!(s.gpu_name(), None);
+        // And opening a photograph is not drawing one: the chart goes through
+        // the CPU decoder, and no device is needed until there is a layer.
+        let mut s = s;
+        s.open_test_chart(32, 32).unwrap();
+        assert_eq!(s.gpu_name(), None, "opening a photograph acquired a device");
     }
 }

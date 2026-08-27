@@ -91,6 +91,13 @@ public final class SessionStore {
     /// button is greyed by.
     public var isFit: Bool { view.zoom == 1 }
 
+    /// One line naming the GPU in use, or nil until a device exists.
+    ///
+    /// Read straight off the engine rather than cached, for the same reason
+    /// ``viewScale`` is: it is nil until the first frame and nothing tells the
+    /// store when that happens.
+    public var gpuName: String? { session.gpuName }
+
     /// Screen pixels per image pixel, or nil with nothing to measure.
     ///
     /// Read straight off the engine every time rather than cached: it changes

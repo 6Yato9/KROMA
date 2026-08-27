@@ -277,3 +277,39 @@ fn the_source_colour_space_changes_what_is_rendered() {
         one[0]
     );
 }
+
+/// The one-line description the status bar draws and a bug report quotes.
+///
+/// Never checked before this: it has been on the Windows toolbar for a hundred
+/// commits, and "the string is there" was the whole of the evidence. It is
+/// worth a test because of what is *in* it — the maximum texture dimension is
+/// the number that decides whether a given photograph opens at all, and "it
+/// refused my panorama" is unanswerable without it.
+#[test]
+fn the_gpu_describes_itself_with_the_limit_that_matters() {
+    let Some(gpu) = pe_golden::shared_gpu() else {
+        eprintln!("no GPU, skipping");
+        return;
+    };
+    let described = gpu.describe();
+    assert!(!described.is_empty(), "the GPU described itself as nothing");
+
+    // The backend, which is what tells a Metal machine from a Vulkan one when
+    // a bug reproduces on only one of them.
+    let backend = format!("{:?}", gpu.adapter.get_info().backend);
+    assert!(
+        described.contains(&backend),
+        "{described:?} does not say which backend it is"
+    );
+
+    // And the limit, spelled the way the format writes it.
+    let limit = gpu.device.limits().max_texture_dimension_2d;
+    assert!(
+        described.contains(&format!("up to {limit}px")),
+        "{described:?} does not carry the texture limit"
+    );
+    assert!(
+        limit >= 2048,
+        "a limit of {limit} would not open a photograph"
+    );
+}

@@ -255,6 +255,22 @@ pub unsafe extern "C" fn pe_session_last_error(s: *mut PeSession) -> *mut c_char
     })
 }
 
+/// One line naming the GPU in use, or null until a device exists.
+///
+/// Null is not a failure: a session that has not drawn anything has no device,
+/// and this deliberately does not acquire one to answer. Ask again after the
+/// first frame. Caller must release the string with [`pe_string_free`].
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_gpu_name(s: *mut PeSession) -> *mut c_char {
+    with(s, ptr::null_mut(), |s| match s.inner.gpu_name() {
+        Some(name) => to_c(name),
+        None => ptr::null_mut(),
+    })
+}
+
 /// # Safety
 /// `s` and `path` must be valid or null.
 #[unsafe(no_mangle)]

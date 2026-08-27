@@ -813,6 +813,17 @@ public final class Session {
         try check(pe_session_flush_autosave(handle))
     }
 
+    /// One line naming the GPU in use, or nil until a device exists.
+    ///
+    /// Nil is not a failure: a session that has not drawn has no device, and
+    /// the engine deliberately does not acquire one to answer. It fills in
+    /// after the first frame.
+    public var gpuName: String? {
+        guard let raw = pe_session_gpu_name(handle) else { return nil }
+        defer { pe_string_free(raw) }
+        return String(cString: raw)
+    }
+
     /// Screen pixels per image pixel, or nil with nothing to measure.
     ///
     /// Not the view's zoom, which is a fraction of the frame and reads 1 for

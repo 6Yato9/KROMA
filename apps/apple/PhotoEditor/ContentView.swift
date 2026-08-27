@@ -358,6 +358,23 @@ struct ContentView: View {
             Text("passes \(store.snapshot.passes)")
                 .foregroundStyle(Palette.label.color)
                 .monospacedDigit()
+
+            // Last, quietly, as `main.rs` has it. Nobody reads this until
+            // something has gone wrong, and then it is the first thing worth
+            // knowing — which is why it is present rather than in an About box
+            // nobody opens. Absent until the first frame: the engine will not
+            // acquire a device just to be named.
+            if let gpu = store.gpuName {
+                Text(gpu)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Palette.dim.color)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    // It may not fit, and it must never push the numbers left
+                    // — they are read constantly and this is not.
+                    .layoutPriority(-1)
+                    .help(gpu)
+            }
         }
         .font(.system(size: 11))
         .padding(.horizontal, 10)
