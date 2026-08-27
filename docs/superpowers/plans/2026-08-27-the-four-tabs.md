@@ -296,7 +296,17 @@ git add -A && git commit -m "The tabs and the sections cross as a fixture"
 - Rename: `apps/apple/KromaKit/Controls/ToolStrip.swift` → `apps/apple/KromaKit/Controls/TabRow.swift`
 - Rename: `apps/apple/KromaKitTests/ToolStripTests.swift` → `apps/apple/KromaKitTests/TabRowTests.swift`
 
-**Context:** The icons go. Windows draws four *words* in a row (`tab_row` at `apps/windows/src/main.rs`), not glyphs — read it before drawing this. Four words is also why the SF Symbols reasoning in the old file no longer applies: it existed because eight buttons in a narrow strip could not carry words.
+**Context:** Read `tab_row` at `apps/windows/src/main.rs:1889` and `tab_icon` at `:1835` before drawing this. The row is **icon above, label below** — not one or the other:
+
+- 44 points tall, the width split evenly between the four.
+- The glyph centred 13 points down, the label centred 10 points up from the bottom at 10.5pt.
+- Tint: `TITLE` when it is the chosen tab, `HANDLE` under the pointer, `LABEL` otherwise.
+- The chosen tab gets a 2pt **`ACCENT`** underline along its bottom edge, inset 10 points at each end.
+- A 1pt `RULE` hairline under the whole row.
+
+**The accent belongs here.** The old `ToolStrip` doc argued the opposite — "The accent is not here. A selected tool is 'this is chosen', which is `SELECT`" — and that was this shell's own choice, not the Windows one. Windows accents the active tab's underline and titles its text. Since the two are meant to match, follow Windows and delete that paragraph rather than carrying it over.
+
+Keep SF Symbols for the four glyphs. That remains the one place the shells are allowed to differ, and the reason is unchanged: Windows draws its glyphs by hand for parity with Resolve's, where SF Symbols are the platform idiom and scale with the type. Windows' four are a colour wheel (ring with an off-centre puck), a wand throwing sparks, a frame with a horizon in it, and a sheet with a folded corner — pick the nearest symbol to each and, as before, ask `NSImage` for every one of them in the tests rather than assuming.
 
 Keep the existing `Drawn` struct and `draws(_:)` logic — they still answer "which rows does this draw", now for `Tab.effects` and `Section`.
 
@@ -396,7 +406,9 @@ public enum Section: String, CaseIterable, Sendable {
 
 - [ ] **Step 4: Write `TabRow`**
 
-Four words in a row, in the shape `ToolStrip` already had — `RAISED` behind it, a `RULE` hairline under it, `SELECT` on the chosen one and **not** the accent. Copy that reasoning comment across verbatim; it is still exactly true.
+Four equal cells, each an SF Symbol above its label, drawn to the measurements in the Context above: `RAISED` behind the row, a `RULE` hairline under it, and the chosen tab carrying an `ACCENT` underline with its glyph and label in `TITLE`.
+
+Assert the geometry that a reader cannot check by eye — that the four cells are equal and together fill the width, and that exactly one underline is drawn. `ToolStripTests` already asks `NSImage` for every symbol; keep that test and extend it to the four.
 
 - [ ] **Step 5: Run the suite**
 
@@ -701,7 +713,7 @@ xcodebuild -project PhotoEditor.xcodeproj -scheme PhotoEditor -configuration Deb
 
 Then check, by eye:
 
-1. Four tabs, reading Colour, Effects, Image, File.
+1. Four tabs, each an icon above its label, reading Colour, Effects, Image, File — the chosen one underlined in the accent.
 2. Colour opens on Curves and Basic and Primaries; the Warper and the Mixer are shut.
 3. The header names the photograph and its size.
 4. The shelf is always visible in the Effects tab.
