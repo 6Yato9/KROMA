@@ -122,6 +122,34 @@ you are working in" are different facts. The accent goes on an effect's name
 only where the effect *is* the tool — Curves, the Warper, the Mixer. Basic draws
 six effects and six accented names is no more use than none.
 
+## Comparing
+
+The engine composites the two pictures and the shell draws the chrome — the
+seam, the labels — because the engine owns the textures and presents to the
+layer itself. That split is also what makes a comparison testable without a
+screen: `render_offscreen` returns the composited pixels, so "a wipe at 0.5 has
+the ungraded frame on the left" is an assertion about bytes.
+
+**The before frame is the working texture** — after the crop and the geometry,
+before any effect — through the display transform. It is not the file
+re-decoded: the comparison is "what did my grade do", not "what did the crop
+do", and one side of the seam showing the whole frame while the other shows the
+crop would be answering a question nobody asked.
+
+A wipe has **no gap and no scaling difference** — the two halves are one picture
+with a seam, which is why the eye reads it more finely than two pictures a
+hand's width apart. Side by side has a real gap, because there the question is
+"which of these do I prefer" and a seam would fuse them into one image.
+
+**An overlay that draws is not an overlay that takes the pointer.** `CropOverlay`
+and `CompareOverlay` are `.allowsHitTesting(false)` and every viewer gesture is
+handled by `MetalViewerView` itself. That is not tidiness: `NSHostingView`
+answers `hitTest` for its whole area — a bare `Canvas` with no gesture at all is
+enough — and it is the viewer's *ancestor*, so the responder chain runs up and
+out of the window rather than down into the viewer. The crop tool shipped
+having silently killed zoom, pan and double-click-to-fit for as long as it was
+open.
+
 ## Exporting a set
 
 `Export All…` writes every photograph in the set, **one per frame**. Sixty
