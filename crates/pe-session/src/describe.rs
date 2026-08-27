@@ -412,7 +412,11 @@ mod tests {
         .unwrap();
 
         let after = snapshot(&s);
-        assert_eq!((after.width, after.height), (256, 256), "the source is untouched");
+        assert_eq!(
+            (after.width, after.height),
+            (256, 256),
+            "the source is untouched"
+        );
         assert_eq!((after.output_width, after.output_height), (256, 128));
     }
 
