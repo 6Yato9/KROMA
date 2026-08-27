@@ -30,6 +30,23 @@ pub enum Format {
 }
 
 impl Format {
+    /// Every format, in the order a picker should offer them.
+    ///
+    /// Here rather than in a shell because there are two shells. A variant
+    /// added and not listed is a format nobody can choose, and the only
+    /// symptom is its absence.
+    pub const ALL: [Format; 3] = [Format::Jpeg, Format::Png, Format::Png16];
+
+    /// Whether the quality setting means anything for this format.
+    ///
+    /// The shells grey the control rather than hiding it: a control that
+    /// vanishes takes its explanation with it, and the row staying put,
+    /// dimmed, says "quality is a JPEG idea" far better than an empty space
+    /// does. One answer per format, because there are two shells to dim.
+    pub fn takes_quality(self) -> bool {
+        self == Format::Jpeg
+    }
+
     pub fn extension(self) -> &'static str {
         match self {
             Format::Jpeg => "jpg",
@@ -362,5 +379,33 @@ mod tests {
         ];
         assert!(would_overwrite_a_source(&open, Path::new("/photos/B.JPG")));
         assert!(!would_overwrite_a_source(&open, Path::new("/photos/c.jpg")));
+    }
+
+    /// `ALL` is a hand-written list beside an enum, which is the shape that
+    /// goes stale. The match is exhaustive, so a variant added and not listed
+    /// here fails to compile rather than quietly vanishing from both pickers.
+    #[test]
+    fn all_lists_every_format() {
+        for format in Format::ALL {
+            match format {
+                Format::Jpeg | Format::Png | Format::Png16 => {}
+            }
+        }
+        assert_eq!(Format::ALL.len(), 3);
+        for (i, a) in Format::ALL.iter().enumerate() {
+            for b in &Format::ALL[i + 1..] {
+                assert_ne!(a, b, "{a:?} is in ALL twice");
+            }
+        }
+    }
+
+    /// The quality is a JPEG idea. Stated here rather than as a comparison in
+    /// each shell, because two shells disagreeing about which formats carry a
+    /// quality is a slider that does nothing on one of them.
+    #[test]
+    fn only_jpeg_takes_a_quality() {
+        assert!(Format::Jpeg.takes_quality());
+        assert!(!Format::Png.takes_quality());
+        assert!(!Format::Png16.takes_quality());
     }
 }

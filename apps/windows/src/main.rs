@@ -2142,7 +2142,7 @@ fn export_section(ui: &mut egui::Ui, app: &mut App) -> bool {
                     .color(resolve::colour::LABEL),
             ),
         );
-        for format in [Format::Jpeg, Format::Png, Format::Png16] {
+        for format in Format::ALL {
             if ui
                 .selectable_label(chosen.format == format, format.label())
                 .clicked()
@@ -2156,8 +2156,8 @@ fn export_section(ui: &mut egui::Ui, app: &mut App) -> bool {
     // Greyed rather than hidden for a PNG. A control that vanishes takes its
     // explanation with it — the row staying put, dimmed, says "quality is a
     // JPEG idea" far better than an empty space does.
-    let is_jpeg = chosen.format == Format::Jpeg;
-    ui.add_enabled_ui(is_jpeg, |ui| {
+    let takes_quality = chosen.format.takes_quality();
+    ui.add_enabled_ui(takes_quality, |ui| {
         let mut quality = chosen.quality as f32;
         if resolve::slider_row(
             ui,
