@@ -172,6 +172,16 @@ public struct TabRow: View {
         self._chosen = chosen
     }
 
+    /// What a tab's glyph and label are drawn in: `main.rs`'s three tints.
+    ///
+    /// A static so the rule can be asserted without standing a view up. The
+    /// **accent** is not one of them — it is the underline under the chosen
+    /// tab, and that is the one place in this row it is spent.
+    static func tint(chosen: Bool, hovering: Bool) -> Color {
+        if chosen { return Palette.title.color }
+        return (hovering ? Palette.handle : Palette.label).color
+    }
+
     /// Tall enough for a glyph with a label under it. `main.rs`'s 44.
     static let height: CGFloat = 44
     /// How far in from each end the underline stops. `main.rs`'s 10.
@@ -230,9 +240,6 @@ public struct TabRow: View {
             .accessibilityLabel(tab.name)
         }
 
-        private var tint: Color {
-            if chosen { return Palette.title.color }
-            return (hovering ? Palette.handle : Palette.label).color
-        }
+        private var tint: Color { TabRow.tint(chosen: chosen, hovering: hovering) }
     }
 }

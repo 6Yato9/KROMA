@@ -143,29 +143,35 @@ final class PaletteTests: XCTestCase {
 /// Where the accent is allowed to go.
 ///
 /// Resolve's interface is almost entirely grey, which is why its one orange
-/// title tells you where you are without having to shout. Spending it on every
-/// heading — or on eleven pinned panels at once, which is the same thing
-/// arriving through the layout instead of through the colour — says nothing at
-/// all. `resolve.rs` accents an effect's name only while its panel is open,
-/// and this is that rule.
+/// mark tells you where you are without having to shout. Spending it on every
+/// heading — or on eleven panels at once, which is the same thing arriving
+/// through the layout instead of through the colour — says nothing at all.
+///
+/// It has two homes, and `main.rs` has both: the underline under the chosen
+/// tab, and the name of an added row's header (`effect_header` there,
+/// `StackRowView` here). Every other heading is `TITLE`.
 final class AccentDisciplineTests: XCTestCase {
-    func testOnlyAnOpenEffectIsAccented() {
-        XCTAssertEqual(
-            InspectorSection<EmptyView>.titleColour(namesAnEffect: true, open: true),
-            Palette.accent.color,
-            "the effect you are working in should be the one thing wearing it")
-        XCTAssertEqual(
-            InspectorSection<EmptyView>.titleColour(namesAnEffect: true, open: false),
-            Palette.title.color,
-            "a folded panel is not the one you are working in")
+    /// A collapsing heading is a group of controls, and never accented. This is
+    /// the rule that stops the Colour tab lighting up five headings at once.
+    func testASectionHeadingIsNeverAccented() {
+        XCTAssertEqual(InspectorSection<EmptyView>.titleColour, Palette.title.color)
+        XCTAssertNotEqual(InspectorSection<EmptyView>.titleColour, Palette.accent.color)
     }
 
-    func testASectionInsideAnEffectIsNeverAccented() {
-        for open in [true, false] {
-            XCTAssertEqual(
-                InspectorSection<EmptyView>.titleColour(namesAnEffect: false, open: open),
-                Palette.title.color,
-                "a group inside an effect took the accent (open: \(open))")
+    /// Nor is a tab, open or hovered. The chosen one is `TITLE` and wears the
+    /// accent as an underline instead, which is a mark rather than a word and
+    /// so can be spent without competing with one.
+    func testNoTabIsAccented() {
+        for chosen in [true, false] {
+            for hovering in [true, false] {
+                XCTAssertNotEqual(
+                    TabRow.tint(chosen: chosen, hovering: hovering),
+                    Palette.accent.color,
+                    "a tab's text took the accent (chosen: \(chosen))")
+            }
         }
+        XCTAssertEqual(TabRow.tint(chosen: true, hovering: false), Palette.title.color)
+        XCTAssertEqual(TabRow.tint(chosen: false, hovering: true), Palette.handle.color)
+        XCTAssertEqual(TabRow.tint(chosen: false, hovering: false), Palette.label.color)
     }
 }

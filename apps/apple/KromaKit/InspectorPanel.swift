@@ -302,49 +302,44 @@ public struct InspectorPanel: View {
 /// second while a slider is moving.
 struct InspectorSection<Content: View>: View {
     let title: String
-    /// Whether this heading names a whole effect rather than a group inside
-    /// one. An effect's name is accented while its panel is open and grey
-    /// while it is shut, which is what `resolve.rs` does — and the reason the
-    /// accent stays worth something. Eleven pinned panels all titled in it at
-    /// once says exactly as little as accenting every heading would.
-    let namesAnEffect: Bool
     private let content: () -> Content
     @AppStorage private var open: Bool
 
     init(
         effect: String,
         title: String,
-        namesAnEffect: Bool = false,
         startsOpen: Bool = true,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.title = title
-        self.namesAnEffect = namesAnEffect
         self.content = content
         // Keyed by effect as well as by section: "Add Vignetting" folded away
         // under one effect says nothing about the section of the same name
         // under another.
-        // `startsOpen` is only the *first* answer. After that the stored
-        // value wins, because what the reader folded is what the reader wants
-        // folded — a section that springs back open every launch is one they
-        // have to close every launch.
+        //
+        // `startsOpen` is only the *first* answer. After that the stored value
+        // wins, because what the reader folded is what the reader wants folded
+        // — a section that springs back open every launch is one they have to
+        // close every launch.
         _open = AppStorage(
-            wrappedValue: startsOpen,
-            namesAnEffect ? "effect.\(effect)" : "section.\(effect).\(title)"
-        )
+            wrappedValue: startsOpen, "section.\(effect).\(title)")
     }
 
-    /// What the title is drawn in. Only an *open* effect gets the accent.
+    /// What a heading is drawn in, open or shut.
     ///
-    /// A free function so the rule can be asserted without standing a view up
-    /// and driving its stored state — the rule is the point, not the plumbing.
-    static func titleColour(namesAnEffect: Bool, open: Bool) -> Color {
-        namesAnEffect && open ? Palette.accent.color : Palette.title.color
-    }
+    /// **Never the accent.** `resolve.rs` spends the accent on the name of an
+    /// added row's header — which on this side is `StackRowView` — and on the
+    /// chosen tab's underline, and nowhere else. A heading here is a group of
+    /// controls, and a colour spent on every group is a colour that says
+    /// nothing.
+    ///
+    /// A static so the rule can be asserted without standing a view up and
+    /// driving its stored state: the rule is the point, not the plumbing.
+    /// Computed rather than stored: `InspectorSection` is generic over its
+    /// content, and a generic type cannot hold a static stored property.
+    static var titleColour: Color { Palette.title.color }
 
-    var titleColour: Color {
-        Self.titleColour(namesAnEffect: namesAnEffect, open: open)
-    }
+    var titleColour: Color { Self.titleColour }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -372,7 +367,7 @@ struct InspectorSection<Content: View>: View {
                     .padding(.trailing, 8.4)
 
                 Text(title)
-                    .font(.system(size: 12, weight: namesAnEffect ? .semibold : .regular))
+                    .font(.system(size: 12))
                     .foregroundStyle(titleColour)
                     .lineLimit(1)
 
