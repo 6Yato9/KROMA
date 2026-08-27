@@ -87,6 +87,31 @@ public final class SessionStore {
         pushView()
     }
 
+    /// Whether the whole picture is already on screen, which is what the Fit
+    /// button is greyed by.
+    public var isFit: Bool { view.zoom == 1 }
+
+    /// Screen pixels per image pixel, or nil with nothing to measure.
+    ///
+    /// Read straight off the engine every time rather than cached: it changes
+    /// when the window is resized, and nothing tells the store about that.
+    public var viewScale: CGFloat? { session.viewScale }
+
+    /// One image pixel to one screen pixel.
+    ///
+    /// `viewScale` is what the current zoom is worth, so the factor that takes
+    /// it to 1 is what the zoom has to be multiplied by. `ViewState` clamps the
+    /// result, which is what stops a photograph smaller than the window from
+    /// asking to be zoomed out past fit — there is no such view.
+    ///
+    /// About the middle of the viewport, so what was in the centre stays there.
+    /// Zooming about a corner would send the subject off screen.
+    public func zoomToActualPixels() {
+        guard let scale = viewScale, scale > 0 else { return }
+        view.zoom(by: 1 / scale, at: CGPoint(x: 0.5, y: 0.5))
+        pushView()
+    }
+
     private func pushView() {
         let r = view.region
         run {

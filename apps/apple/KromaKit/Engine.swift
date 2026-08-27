@@ -813,6 +813,15 @@ public final class Session {
         try check(pe_session_flush_autosave(handle))
     }
 
+    /// Screen pixels per image pixel, or nil with nothing to measure.
+    ///
+    /// Not the view's zoom, which is a fraction of the frame and reads 1 for
+    /// any fitted view however big the window is.
+    public var viewScale: CGFloat? {
+        let s = pe_session_view_scale(handle)
+        return s > 0 ? CGFloat(s) : nil
+    }
+
     // ---- the grade in hand -------------------------------------------------
 
     /// Copy this photograph's grade — the whole stack, pinned rows included.

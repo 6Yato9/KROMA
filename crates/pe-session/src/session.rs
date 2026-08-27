@@ -190,6 +190,24 @@ fn surround() -> wgpu::Color {
 }
 
 /// The photograph that is open, and its edit.
+/// Screen pixels per image pixel, from the three numbers that decide it.
+///
+/// A free function so it can be checked without a window: [`Session::view_scale`]
+/// needs a layer attached, and a headless test has none.
+///
+/// `region` is the visible fraction of the frame on each axis. The picture is
+/// letterboxed into the viewport, so the axis that runs out first is the one
+/// that sets the scale — which is why this is a `min` and not a choice of one
+/// axis.
+fn view_scale_of(viewport: (u32, u32), frame: (u32, u32), region: [f32; 2]) -> Option<f32> {
+    let visible_w = frame.0 as f32 * region[0];
+    let visible_h = frame.1 as f32 * region[1];
+    if visible_w <= 0.0 || visible_h <= 0.0 {
+        return None;
+    }
+    Some((viewport.0 as f32 / visible_w).min(viewport.1 as f32 / visible_h))
+}
+
 struct Photo {
     path: Option<PathBuf>,
     image: DecodedImage,
@@ -1324,6 +1342,31 @@ impl Session {
             self.gpu.working_region = None;
             self.needs_render = true;
         }
+    }
+
+    /// Screen pixels per image pixel, at the current view and layer size.
+    ///
+    /// The number a zoom readout says and the one "100%" aims at, and it is not
+    /// [`Session::view_region`]'s `size`: that is a fraction of the *frame*, so
+    /// it reads 1 for a fitted view whether the photograph is filling the
+    /// window at 3:1 or letterboxed into it at a quarter. What a person means
+    /// by 100% is one image pixel to one screen pixel, which needs the layer's
+    /// size and the frame's, and only the engine has both.
+    ///
+    /// The frame, not the source: a crop decides how much picture there is, and
+    /// while the Image tab is open the frame is the whole straightened source
+    /// instead. [`pe_render::export::output_size`] is the same question and the
+    /// same answer.
+    ///
+    /// `None` with nothing open or no layer attached — there is no viewport to
+    /// measure against, and a made-up 1.0 would be a readout that looks right
+    /// and is not.
+    pub fn view_scale(&self) -> Option<f32> {
+        let viewport = self.gpu.attached.as_ref()?.size();
+        let doc = self.document()?;
+        let (sw, sh) = self.image_size();
+        let frame = pe_render::export::output_size(doc, sw, sh);
+        view_scale_of(viewport, frame, self.view.size)
     }
 
     /// The visible rectangle, as the shell gave it: x, y and size in frame
@@ -4592,5 +4635,57 @@ mod tests {
             s.paste_grade_to_all().unwrap_err(),
             SessionError::NothingOpen
         ));
+    }
+
+    // ---- the zoom readout --------------------------------------------------
+
+    /// A fitted view is not 100%: the frame's fraction is 1 either way, and
+    /// what a person means by 100% is one image pixel to one screen pixel.
+    #[test]
+    fn a_fitted_view_reads_the_ratio_of_the_window_to_the_picture() {
+        // A 4000-wide photograph fitted into an 800-wide window is a fifth.
+        assert_eq!(
+            view_scale_of((800, 600), (4000, 3000), [1.0, 1.0]),
+            Some(0.2)
+        );
+        // And a small photograph in a big window is over 1, which is a viewer
+        // showing it larger than life — a real answer, not an error.
+        assert_eq!(view_scale_of((800, 600), (400, 300), [1.0, 1.0]), Some(2.0));
+    }
+
+    /// Zoomed in, the visible fraction shrinks and the scale grows with it.
+    #[test]
+    fn zooming_in_raises_the_scale_in_proportion() {
+        let fit = view_scale_of((800, 600), (4000, 3000), [1.0, 1.0]).unwrap();
+        let quarter = view_scale_of((800, 600), (4000, 3000), [0.25, 0.25]).unwrap();
+        assert!(
+            (quarter - fit * 4.0).abs() < 1e-5,
+            "{quarter} is not four times {fit}"
+        );
+    }
+
+    /// The axis that runs out first sets it. A wide window on a tall picture is
+    /// limited by its height, and reading the width would say the picture is
+    /// bigger on screen than it is.
+    #[test]
+    fn the_letterboxed_axis_is_the_one_that_decides() {
+        // 1000x1000 window, 500x2000 picture: width would say 2, height says
+        // 0.5, and 0.5 is what actually fits.
+        assert_eq!(
+            view_scale_of((1000, 1000), (500, 2000), [1.0, 1.0]),
+            Some(0.5)
+        );
+        assert_eq!(
+            view_scale_of((1000, 1000), (2000, 500), [1.0, 1.0]),
+            Some(0.5)
+        );
+    }
+
+    /// Nothing to measure is `None`, not a made-up 1.0 — a readout that looks
+    /// right and is not is worse than one that is absent.
+    #[test]
+    fn a_frame_with_no_area_has_no_scale() {
+        assert_eq!(view_scale_of((800, 600), (0, 0), [1.0, 1.0]), None);
+        assert_eq!(view_scale_of((800, 600), (4000, 3000), [0.0, 0.0]), None);
     }
 }

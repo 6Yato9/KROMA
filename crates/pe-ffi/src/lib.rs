@@ -2153,6 +2153,21 @@ pub unsafe extern "C" fn pe_session_scope_data(
     })
 }
 
+/// Screen pixels per image pixel, for the zoom readout and the 100% button.
+///
+/// **Not the view's `size`**, which is a fraction of the frame and reads 1 for
+/// any fitted view. This is what a person means by 100%: one image pixel to one
+/// screen pixel. Negative with nothing open or no layer attached — there is no
+/// viewport to measure against, and a made-up 1.0 would be a readout that looks
+/// right and is not.
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_view_scale(s: *mut PeSession) -> f32 {
+    with(s, -1.0, |s| s.inner.view_scale().unwrap_or(-1.0))
+}
+
 /// The fraction of pixels above diffuse white, which is what a clipping
 /// warning is actually about. Negative with nothing measured.
 ///

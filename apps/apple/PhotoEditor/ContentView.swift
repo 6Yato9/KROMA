@@ -288,6 +288,16 @@ struct ContentView: View {
         }
     }
 
+    /// What the zoom is worth, as a percentage.
+    ///
+    /// An em dash rather than "100%" when there is nothing to measure: with no
+    /// layer attached the honest answer is that there is no answer, and a
+    /// plausible number would be read as one.
+    private var zoomReadout: String {
+        guard let scale = store.viewScale else { return "—" }
+        return "\(Int((scale * 100).rounded()))%"
+    }
+
     /// `~/Library/Application Support/Kroma`, which is where a Mac application
     /// keeps what belongs to it. The engine does not guess this; it is told.
     static var supportDirectory: URL {
@@ -326,6 +336,25 @@ struct ContentView: View {
             Toggle("Scopes", isOn: $showScopes)
                 .toggleStyle(KromaToggleButtonStyle())
                 .help("Waveform, parade, vectorscope and histogram")
+
+            // Fit, 100%, and what the zoom is worth — `main.rs`'s three, in its
+            // order. Fit is greyed when the whole picture is already on screen,
+            // because there is nothing for it to do.
+            Button("Fit") { store.fitView() }
+                .buttonStyle(KromaButtonStyle())
+                .disabled(store.isFit)
+                .help("Double-click the picture")
+            Button("100%") { store.zoomToActualPixels() }
+                .buttonStyle(KromaButtonStyle())
+                .disabled(store.viewScale == nil)
+                .help("One image pixel to one screen pixel")
+            Text(zoomReadout)
+                .foregroundStyle(Palette.label.color)
+                .monospacedDigit()
+                // A fixed width, so the row does not shuffle sideways every
+                // time the number gains or loses a digit mid-drag.
+                .frame(width: 44, alignment: .trailing)
+                .help("Screen pixels per image pixel")
             Text("passes \(store.snapshot.passes)")
                 .foregroundStyle(Palette.label.color)
                 .monospacedDigit()
