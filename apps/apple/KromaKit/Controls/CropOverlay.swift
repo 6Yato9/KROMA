@@ -112,17 +112,14 @@ public enum CropGrip: Equatable, Sendable {
 /// The in-flight rectangle is not held here for the same reason: it is not this
 /// side's to decide. `CurveEditor` and `WarpEditor` keep a local value between
 /// frames because the engine has nothing to say about theirs; this one does.
+///
+/// **Nothing here takes the pointer.** The drag that moves the rectangle lives
+/// in `MetalViewerView` with the zoom and the pan — see ``ViewerDrag``, which
+/// records what a SwiftUI layer in front of that view does to the events it was
+/// meant to get. It used to be here, and it was taking the wheel and the
+/// double-click along with the drag it wanted.
 public struct CropOverlay: View {
     let store: SessionStore
-
-    /// The grip a drag caught, decided once when it started. Re-deciding every
-    /// frame would hand the drag to whichever handle happened to pass under the
-    /// pointer.
-    @State private var held: CropGrip?
-    /// The rectangle as it was when the drag started, in the frame's uv, and
-    /// the ratio it has to keep. Both are fixed for the length of a gesture:
-    /// the deltas are measured from here.
-    @State private var start: (rect: CGRect, ratio: Double?)?
 
     public init(store: SessionStore) {
         self.store = store
@@ -151,14 +148,9 @@ public struct CropOverlay: View {
         GeometryReader { geo in
             let target = CGRect(origin: .zero, size: geo.size)
             let rect = Self.place(store.cropRect, in: target, showing: store.view.region)
-            CropOverlayCanvas(rect: rect, showsThirds: held != nil)
-                // The whole viewer, not just the rectangle: a drag that starts
-                // a few points outside a corner is a drag on that corner, and
-                // `CropGrip.at` is what decides — it answers nil for a press
-                // that has hold of nothing, and the gesture then does nothing.
-                .contentShape(Rectangle())
-                .gesture(drag(target: target))
+            CropOverlayCanvas(rect: rect, showsThirds: store.croppingByHand)
         }
+        .allowsHitTesting(false)
         .accessibilityLabel("Crop")
     }
 
@@ -179,42 +171,6 @@ public struct CropOverlay: View {
         let a = at(uv.minX, uv.minY)
         let b = at(uv.maxX, uv.maxY)
         return CGRect(x: a.x, y: a.y, width: b.x - a.x, height: b.y - a.y)
-    }
-
-    private func drag(target: CGRect) -> some Gesture {
-        DragGesture(minimumDistance: 0)
-            .onChanged { gesture in
-                let visible = store.view.region
-                if held == nil {
-                    let current = store.cropRect
-                    let onScreen = Self.place(current, in: target, showing: visible)
-                    guard let grip = CropGrip.at(gesture.startLocation, in: onScreen) else {
-                        return
-                    }
-                    store.beginInteraction("Crop")
-                    held = grip
-                    start = (
-                        current,
-                        Self.screenRatio(of: store.geometry.aspect, showing: current)
-                    )
-                }
-                guard let grip = held, let start else { return }
-                // Screen points into the frame's uv. Zoomed in, a point on
-                // screen is a smaller step across the frame, which is what
-                // `visible` carries.
-                let delta = CGSize(
-                    width: gesture.translation.width / max(target.width, 1e-4) * visible.width,
-                    height: gesture.translation.height / max(target.height, 1e-4) * visible.height
-                )
-                let next = CropGrip.dragged(
-                    start.rect, grip: grip, by: delta, ratio: start.ratio)
-                store.setCropRect(next)
-            }
-            .onEnded { _ in
-                if held != nil { store.endInteraction() }
-                held = nil
-                start = nil
-            }
     }
 }
 

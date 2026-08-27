@@ -419,6 +419,39 @@ public final class Session {
             width: CGFloat(u1 - u0), height: CGFloat(v1 - v0))
     }
 
+    // ---- comparing ----------------------------------------------------------
+
+    /// Hold the graded picture up against the ungraded one, or stop.
+    ///
+    /// `wipe` is where the seam sits, as a fraction of the frame's width, and
+    /// the engine keeps it **whatever the mode is** — so a caller cycling
+    /// through the modes has to hand the fraction back rather than pass zero,
+    /// or the next wipe starts at the left edge instead of where the user left
+    /// it. `SessionStore.cycleCompare` is the one caller that does the cycling
+    /// and it reads ``compare()`` first for exactly that reason.
+    ///
+    /// Not an edit: nothing is in the history, the document is untouched, and
+    /// an export renders the document either way. Nothing needs to be open —
+    /// a property of the window outlives whichever photograph is in it.
+    public func setCompare(_ mode: Compare, wipe: Float) throws {
+        try check(pe_session_set_compare(handle, mode.parameter, wipe))
+    }
+
+    /// Which comparison the viewer is showing, and where its seam sits.
+    ///
+    /// Two answers in one call because the control that wants either wants
+    /// both: the button draws its state from the mode and the seam is drawn
+    /// from the fraction, on the same frame. Before anything has been set the
+    /// fraction is 0.5 — a first wipe begins in the middle rather than at the
+    /// left edge — which is why this side reads the pair rather than starting
+    /// its own mirror at zero.
+    public func compare() throws -> (mode: Compare, wipe: Float) {
+        var mode: UInt32 = 0
+        var wipe: Float = 0
+        try check(pe_session_compare(handle, &mode, &wipe))
+        return (Compare(parameter: mode), wipe)
+    }
+
     // ---- history ------------------------------------------------------------
 
     /// Bracket a drag so it collapses into one undo step rather than three
@@ -975,6 +1008,44 @@ extension AspectLock {
             self = .ratio(w: Double(parameter), h: 1)
         } else {
             self = .free
+        }
+    }
+}
+
+extension Compare {
+    /// The mode as the ABI's `mode` integer — `PE_COMPARE_OFF`,
+    /// `PE_COMPARE_WIPE`, `PE_COMPARE_SIDE`.
+    ///
+    /// The numbering is part of the ABI and the constants are generated into
+    /// the header, so this switch is the only place on this side that knows
+    /// which integer is which. An exhaustive switch rather than a raw value on
+    /// the enum, because `Compare` is a shell idea — the cycle and the label
+    /// are not the engine's business — and pinning its cases to the ABI's
+    /// integers would make adding a fourth way of comparing a change to both.
+    ///
+    /// The constants cross the bridging header as `Int32`, because that is what
+    /// a bare `#define 0` is in C; the ABI's parameter is unsigned, so they are
+    /// widened here rather than at each call.
+    var parameter: UInt32 {
+        switch self {
+        case .off: UInt32(PE_COMPARE_OFF)
+        case .wipe: UInt32(PE_COMPARE_WIPE)
+        case .side: UInt32(PE_COMPARE_SIDE)
+        }
+    }
+
+    /// Read the ABI's `mode` back.
+    ///
+    /// `pe_session_compare` answers with one of the three it was given —
+    /// `pe_session_set_compare` refuses anything else rather than quietly
+    /// storing it — so the default arm is unreachable through this ABI. It is
+    /// off rather than a crash because the alternative is a shell that will not
+    /// open against a later engine that grew a fourth mode.
+    init(parameter: UInt32) {
+        switch parameter {
+        case UInt32(PE_COMPARE_WIPE): self = .wipe
+        case UInt32(PE_COMPARE_SIDE): self = .side
+        default: self = .off
         }
     }
 }

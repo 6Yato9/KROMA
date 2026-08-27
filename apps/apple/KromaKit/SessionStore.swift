@@ -33,6 +33,10 @@ public final class SessionStore {
         guard let registry = try? Engine.registry() else { return nil }
         self.session = session
         self.registry = registry
+        // Read rather than assumed: a fresh session's seam is already in the
+        // middle, and a mirror that started at zero would put the first wipe
+        // hard against the left edge.
+        refreshCompare()
     }
 
     // ---- what the viewer needs ------------------------------------------
@@ -318,6 +322,24 @@ public final class SessionStore {
         refresh()
     }
 
+    /// Whether a hand is on the crop rectangle right now.
+    ///
+    /// Observed, which `dragging` deliberately is not: the thirds grid is a
+    /// picture of the gesture, and since the gesture moved into the viewer the
+    /// overlay has no state of its own to read it from.
+    public private(set) var croppingByHand = false
+
+    /// Bracket a crop drag: one undo step, and the grid while the hand is down.
+    public func beginCropDrag() {
+        beginInteraction("Crop")
+        croppingByHand = true
+    }
+
+    public func endCropDrag() {
+        croppingByHand = false
+        endInteraction()
+    }
+
     /// The hot path: one call, no snapshot, no allocation beyond the key.
     public func setFloat(row: UInt64, key: String, value: Float) {
         run { try session.setFloat(row: row, key: key, value: value) }
@@ -484,6 +506,70 @@ public final class SessionStore {
         // Only written when it is actually changing: assigning an equal value
         // would tell every observing view to run its body again for nothing.
         if rect != cropRect { cropRect = rect }
+    }
+
+    // ---- comparing --------------------------------------------------------
+
+    /// Which comparison the viewer is showing. A property of the window, like
+    /// ``SessionStore/view`` and ``SessionStore/cropping`` — not of the
+    /// photograph, and not in the history.
+    public private(set) var compare: Compare = .off
+
+    /// Where a wipe's seam sits, as a fraction of the viewer's width.
+    ///
+    /// Mirrored here rather than read through to the engine on every frame
+    /// because the overlay draws it and a `body` that walks the ABI is a body
+    /// that cannot be a pure function of observed state.
+    ///
+    /// Kept while the mode is off, exactly as the engine keeps it: cycling
+    /// round to a wipe again puts the seam back where the user left it.
+    ///
+    /// Declared at zero and never observed there: `init` reads the engine's own
+    /// answer, which is a half. Writing the half here as well would put the
+    /// number in two places and leave this side quietly disagreeing with the
+    /// engine the day it moved.
+    public private(set) var wipe: CGFloat = 0
+
+    /// The one button: off → wipe → side → off.
+    ///
+    /// The fraction is read back and handed straight to the next call. It is
+    /// the one thing `pe_session_set_compare` lets a caller throw away — pass
+    /// zero on the way past off and the next wipe begins at the left edge —
+    /// so the cycle reads the pair rather than assuming its own mirror is the
+    /// engine's.
+    public func cycleCompare() {
+        guard let held = try? session.compare() else { return }
+        set(held.mode.next, wipe: held.wipe)
+    }
+
+    /// Move the seam, keeping the mode. What a drag on it calls, once a frame.
+    public func setWipe(_ fraction: CGFloat) {
+        set(compare, wipe: Float(fraction))
+    }
+
+    /// Show a comparison, or stop. For anything that names a mode rather than
+    /// cycling — a menu item, a test.
+    public func setCompare(_ mode: Compare) {
+        set(mode, wipe: Float(wipe))
+    }
+
+    private func set(_ mode: Compare, wipe fraction: Float) {
+        run { try session.setCompare(mode, wipe: fraction) }
+        // The engine clamps, so what it stored is not always what it was
+        // asked for. Read it back rather than mirroring the proposal, the same
+        // rule the crop rectangle follows.
+        refreshCompare()
+    }
+
+    /// Pull the mode and the seam across, and write them only when they moved.
+    ///
+    /// A refusal here is a null handle, which cannot happen — the session owns
+    /// its own — so there is nothing to put in the status bar.
+    private func refreshCompare() {
+        guard let held = try? session.compare() else { return }
+        if compare != held.mode { compare = held.mode }
+        let fraction = CGFloat(held.wipe)
+        if wipe != fraction { wipe = fraction }
     }
 
     public func setBool(row: UInt64, key: String, value: Bool) {

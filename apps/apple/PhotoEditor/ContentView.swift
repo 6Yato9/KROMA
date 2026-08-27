@@ -107,17 +107,25 @@ struct ContentView: View {
     /// lighter than the picture's own shadows makes the shadows look lifted,
     /// which is a lie told to the one person in the room grading them.
     ///
-    /// The crop overlay goes over it rather than inside `MetalViewer`: the
-    /// viewer hands a layer to the engine and every pixel in it is drawn by
-    /// Rust, so a SwiftUI rectangle cannot live there. Over the top it is an
-    /// ordinary view with an ordinary gesture, and it takes the drag before the
-    /// viewer's own pan sees it — which is what stops dragging a crop from also
-    /// scrolling the picture out from under it.
+    /// The overlays go over it rather than inside `MetalViewer`: the viewer
+    /// hands a layer to the engine and every pixel in it is drawn by Rust, so a
+    /// SwiftUI rectangle cannot live there. Over the top they are ordinary
+    /// views — but only drawing ones. Neither takes the pointer; the drags they
+    /// belong to are `MetalViewerView`'s, along with the zoom and the pan, for
+    /// the reason `ViewerDrag` sets out.
+    ///
+    /// The comparison is unconditional and the crop overlay is not, because the
+    /// comparison is a property of the window that survives changing tools
+    /// while the crop rectangle is the crop tool's own. Off, the comparison
+    /// draws nothing at all.
     private var viewer: some View {
         MetalViewer(store: store)
             .background(Palette.viewer.color)
             .overlay {
-                if tool.showsWholeFrame { CropOverlay(store: store) }
+                ZStack {
+                    if tool.showsWholeFrame { CropOverlay(store: store) }
+                    CompareOverlay(store: store)
+                }
             }
     }
 
@@ -233,6 +241,9 @@ struct ContentView: View {
                     .foregroundStyle(Palette.dim.color)
             }
             Spacer()
+            // Beside the scopes, because both are ways of looking at the
+            // photograph rather than things done to it.
+            CompareButton(store: store)
             Toggle("Scopes", isOn: $showScopes)
                 .toggleStyle(KromaToggleButtonStyle())
                 .help("Waveform, parade, vectorscope and histogram")
