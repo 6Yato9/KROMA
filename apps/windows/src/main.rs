@@ -27,6 +27,11 @@ mod wheels;
 use std::path::{Path, PathBuf};
 
 use pe_core::{Document, History, RowIdGenerator, Stack};
+// Resolve's tab row, with the tabs a photo editor can honestly fill: Video,
+// Audio and Transition are clip properties that do not exist here. Shared
+// with the Mac shell, because two shells disagreeing about what the tabs
+// are is two different applications.
+use pe_effects::Tab;
 use pe_session::export::{Export, Format, export_name, same_file, unclaimed_export_path};
 use pe_session::{Settings, Support, autosave};
 
@@ -1747,30 +1752,6 @@ impl eframe::App for App {
 
 /// Which page of the inspector is showing.
 ///
-/// Resolve's tab row, with the tabs a photo editor can honestly fill. Video,
-/// Audio and Transition are clip properties that do not exist here, and a tab
-/// that opens onto nothing is worse than one that is not there.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Tab {
-    Colour,
-    Effects,
-    Image,
-    File,
-}
-
-impl Tab {
-    const ALL: [Tab; 4] = [Tab::Colour, Tab::Effects, Tab::Image, Tab::File];
-
-    fn label(self) -> &'static str {
-        match self {
-            Tab::Colour => "Colour",
-            Tab::Effects => "Effects",
-            Tab::Image => "Image",
-            Tab::File => "File",
-        }
-    }
-}
-
 /// The inspector's title bar: what is being edited, and how big it is.
 fn inspector_header(ui: &mut egui::Ui, name: &str, size: (u32, u32)) {
     let (rect, _) =
@@ -1920,7 +1901,7 @@ fn tab_row(ui: &mut egui::Ui, current: &mut Tab) {
         painter.text(
             egui::pos2(cell.center().x, cell.max.y - 10.0),
             egui::Align2::CENTER_CENTER,
-            tab.label(),
+            tab.name(),
             egui::FontId::proportional(10.5),
             tint,
         );

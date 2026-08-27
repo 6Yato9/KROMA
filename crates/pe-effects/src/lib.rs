@@ -18,13 +18,13 @@ use pe_core::{ParamMap, ParamValue};
 
 pub mod pack;
 pub mod registry;
-pub mod tool;
+pub mod tab;
 
 pub use pack::{PARAM_SLOTS, declared_slots, pack, pack_all, slot_of, slots_used};
 pub use registry::{
     EFFECTS, EFFECTS_WITH_VISIBLE_DEFAULTS, PINNED_ROWS, all, by_key, new_document,
 };
-pub use tool::Tool;
+pub use tab::{Section, Tab};
 
 /// Which panel an effect appears under in the inspector.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

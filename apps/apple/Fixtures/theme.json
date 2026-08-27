@@ -187,7 +187,14 @@
       "CC54C4"
     ]
   },
-  "tools": [
+  "sections": [
+    {
+      "effects": [
+        "curves"
+      ],
+      "starts_open": true,
+      "title": "Curves"
+    },
     {
       "effects": [
         "white_balance",
@@ -197,43 +204,43 @@
         "presence",
         "colour"
       ],
-      "name": "Basic"
+      "starts_open": true,
+      "title": "Basic"
+    },
+    {
+      "effects": [
+        "colour_warper"
+      ],
+      "starts_open": false,
+      "title": "Colour Warper"
     },
     {
       "effects": [
         "primaries",
         "log_wheels"
       ],
-      "name": "Colour Wheels"
-    },
-    {
-      "effects": [
-        "curves"
-      ],
-      "name": "Curves"
-    },
-    {
-      "effects": [
-        "colour_warper"
-      ],
-      "name": "Colour Warper"
+      "starts_open": true,
+      "title": "Primaries - Color Wheels"
     },
     {
       "effects": [
         "colour_mixer"
       ],
-      "name": "Colour Mixer"
+      "starts_open": false,
+      "title": "Colour Mixer"
+    }
+  ],
+  "tabs": [
+    {
+      "name": "Colour"
     },
     {
-      "effects": [],
       "name": "Effects"
     },
     {
-      "effects": [],
-      "name": "Crop"
+      "name": "Image"
     },
     {
-      "effects": [],
       "name": "File"
     }
   ]
