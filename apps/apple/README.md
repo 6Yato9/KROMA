@@ -122,6 +122,35 @@ you are working in" are different facts. The accent goes on an effect's name
 only where the effect *is* the tool — Curves, the Warper, the Mixer. Basic draws
 six effects and six accented names is no more use than none.
 
+## The set of photographs
+
+Opening a folder gives a set, and the filmstrip down the left moves between
+them. Only one photograph is decoded at a time — a 24-megapixel frame is 96 MB
+of RGBA, so a folder of two hundred would be twenty gigabytes, and making a set
+navigable *without* holding it is the entire reason a filmstrip exists. What is
+kept per photograph is a path, a few kilobytes of edit, and a 128-pixel
+thumbnail.
+
+The set is `pe_session::library::Library`, shared with the Windows shell rather
+than written twice. Thumbnails cross as **bytes**, not textures: a texture
+belongs to a graphics context and there are two of those, so each shell uploads
+its own. They are copied only when `pe_session_collect_thumbnails` says
+something arrived, and cached by **path** rather than index — a set shifts under
+removal, and a picture on the wrong entry is a strip quietly showing the wrong
+photograph.
+
+**The edit follows the photograph.** Each entry parks a whole `History`, not
+just a document, so switching away and back does not throw away an undo stack —
+and the switch writes the parked edit rather than merely remembering it, because
+a crash after switching would otherwise lose every edit but the last. That last
+part needed care: `Watcher::pending()` answers from a field only `tick()`
+advances, so a host that is not ticking every frame — a test, or the FFI — would
+have been told there was nothing to write.
+
+The strip is vertical for the reason `filmstrip.rs` gives: the window is wider
+than it is tall and a photograph is not, so a horizontal strip costs height,
+which is the dimension the picture wants.
+
 ## Crop, and why it has no fixture
 
 Every other port here ends with a committed fixture, because each duplicated

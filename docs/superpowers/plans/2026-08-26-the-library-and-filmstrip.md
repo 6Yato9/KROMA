@@ -50,7 +50,7 @@ platform-independent and moves unchanged.
 - Create: `crates/pe-session/src/library.rs`
 - Modify: `crates/pe-session/src/lib.rs`, `apps/windows/src/library.rs`, `main.rs`
 
-- [ ] **Step 1: Move it**
+- [x] **Step 1: Move it**
 
 `apps/windows/src/library.rs` becomes `crates/pe-session/src/library.rs`,
 **keeping every doc comment** — they carry the reasoning about memory, about why
@@ -86,7 +86,7 @@ beside the library, filling it from `thumb` after `collect` returns true. That
 is a few lines in `apps/windows/src/library.rs`, which becomes a thin adapter,
 or in `filmstrip.rs` — put it wherever it reads better and say which.
 
-- [ ] **Step 2: Tests it did not have**
+- [x] **Step 2: Tests it did not have**
 
 It moves into a crate with tests, so give it some. The worker makes timing a
 consideration — **do not sleep and hope.** Poll `collect` in a loop with a
@@ -118,7 +118,7 @@ injectable so a test can run it synchronously; say which you chose.
     fn removing_the_last_photograph_leaves_an_empty_library() { }
 ```
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 Baseline **712 Rust passed, 0 failed, 1 ignored**. Report the real number.
 
@@ -137,7 +137,7 @@ cd "/Volumes/Projects/Programming/photo editor" && git add -A && git commit -m "
 **Files:**
 - Modify: `crates/pe-session/src/session.rs`
 
-- [ ] **Step 1: The session holds a library**
+- [x] **Step 1: The session holds a library**
 
 `Session` currently holds one `Photo`. It gains a `Library`, and the switch
 becomes one call rather than something each shell orchestrates:
@@ -168,7 +168,7 @@ writing it is how a crash loses the edit for every photograph but the last —
 check what `autosave.rs` does on the single-photograph path and make the switch
 honour it. Say what you found.
 
-- [ ] **Step 2: Tests**
+- [x] **Step 2: Tests**
 
 ```rust
     #[test]
@@ -189,7 +189,7 @@ honour it. Say what you found.
     fn a_one_photograph_session_still_behaves_as_it_did() { }
 ```
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 ---
 
@@ -198,7 +198,7 @@ honour it. Say what you found.
 **Files:**
 - Modify: `crates/pe-ffi/src/lib.rs`
 
-- [ ] **Step 1: The surface**
+- [x] **Step 1: The surface**
 
 Counts and scalars as typed calls; names as UTF-8 with a `pe_string_free`, as
 the existing string functions do; thumbnails as a **buffer copy into memory the
@@ -223,10 +223,10 @@ pe_session_thumbnail_data(s, index: u32, out: *mut u8, capacity: u32) -> i32
 rule is that cold paths take JSON. A file name is not a scalar and there is no
 count of them known in advance.
 
-- [ ] **Step 2: Tests**, following `a_scope_crosses_as_a_buffer_the_caller_owns`
+- [x] **Step 2: Tests**, following `a_scope_crosses_as_a_buffer_the_caller_owns`
 — assert on the document, not only on return codes.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 ---
 
@@ -236,7 +236,7 @@ count of them known in advance.
 - Modify: `apps/apple/KromaKit/Engine.swift`, `SessionStore.swift`
 - Create: `apps/apple/KromaKit/Library.swift`, `KromaKitTests/LibraryTests.swift`
 
-- [ ] **Step 1: The model**
+- [x] **Step 1: The model**
 
 `LibraryEntry` — path, display name, edited, failed — and the current index.
 Thumbnails are copied per entry and cached as `CGImage`, **rebuilt only when
@@ -246,11 +246,11 @@ is worth not copying on every body evaluation.
 
 `store.focus(_:)`, `store.openPaths(_:)`, `store.requestThumbnails(_:)`.
 
-- [ ] **Step 2: Tests**, against a real engine and a temporary directory of
+- [x] **Step 2: Tests**, against a real engine and a temporary directory of
 real images — write a few with `pe-io`'s own encoder from a Rust fixture step,
 or the smallest valid PNGs you can construct in Swift. Say which.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 ---
 
@@ -260,7 +260,7 @@ or the smallest valid PNGs you can construct in Swift. Say which.
 - Create: `apps/apple/KromaKit/Controls/Filmstrip.swift`
 - Modify: `apps/apple/PhotoEditor/ContentView.swift`
 
-- [ ] **Step 1: Draw it**
+- [x] **Step 1: Draw it**
 
 **Down the left, not across the bottom.** `filmstrip.rs` says why: the window is
 wider than it is tall and a photograph is not, so a horizontal strip costs
@@ -274,7 +274,7 @@ all of them defeats the entire design.
 Shown only when the set has more than one photograph, which is what
 `main.rs:284` does.
 
-- [ ] **Step 2: Test what a render can show**
+- [x] **Step 2: Test what a render can show**
 
 Use the `ImageRenderer` approach the last four plans established and **prove
 each test discriminates by breaking the thing it names.** Worth pinning: the
@@ -282,7 +282,7 @@ current entry is marked differently from the rest; an entry with no thumbnail
 yet still occupies its place rather than collapsing; only the visible range is
 requested.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 ---
 
