@@ -1462,6 +1462,156 @@ pub unsafe extern "C" fn pe_session_export(s: *mut PeSession) -> *mut c_char {
     })
 }
 
+// ---- a batch --------------------------------------------------------------
+//
+// Every photograph in the set, each with its own edit, into one folder chosen
+// rather than beside each original. The run belongs to the session — see
+// [`pe_session::Session::step_batch`] for which of the three places an edit can
+// be is looked in — and what crosses here is a directory, a step, three counts
+// and a cancel. Never a frame, and never a list.
+//
+// **The stepping is the caller's, and that is deliberate.** Sixty photographs
+// is sixty full-resolution renders; a loop inside the engine would freeze the
+// window for a minute with no way to tell whether it was working or hung, and
+// no way to stop it. One step per frame keeps the interface alive, gives
+// somewhere to show progress, and makes cancelling a matter of not asking for
+// the next one.
+
+/// Begin exporting every photograph in the set into `dir`, in whichever format
+/// [`pe_session_set_export`] was last given.
+///
+/// The format is taken now rather than per photograph, so changing it halfway
+/// cannot leave a folder half JPEG and half PNG.
+///
+/// Returns 0; `-1` for a null handle or a null or non-UTF-8 `dir`; `-2` if the
+/// session refused, with the reason in [`pe_session_last_error`].
+///
+/// **With no set open this is `-2`, not 0.** A session showing nothing, or
+/// showing the built-in chart, has no photographs to run over, and answering 0
+/// would report a successful run of nought files. Starting a second run
+/// replaces the first, counts and all.
+///
+/// # Safety
+/// `s` and `dir` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_start_batch(s: *mut PeSession, dir: *const c_char) -> i32 {
+    let Some(dir) = as_str(dir) else { return -1 };
+    let dir = std::path::PathBuf::from(dir);
+    status(s, move |s| s.start_batch(dir))
+}
+
+/// Export one photograph, and say whether there is more to do.
+///
+/// **`1` there is more, `0` there is no more, negative it was refused.** Three
+/// answers, not two, and not the usual 0-is-success status: the loop condition
+/// is `> 0`, never `!= 0`. A caller that reads `0` as a failure abandons a run
+/// on its last step and leaves the rest of the folder unwritten; a caller that
+/// reads a negative as "finished" reports `n exported` for a run that never
+/// started. `1` is the odd one out precisely so that neither mistake is
+/// silent.
+///
+/// `-1` for a null handle; `-2` if the session refused, with the reason in
+/// [`pe_session_last_error`]. A refusal means the engine has no device to
+/// render with, which ends the whole run rather than costing it one
+/// photograph. A photograph that merely cannot be written — a collision with
+/// somebody's original, a file that will not decode — is *not* a refusal: it
+/// is counted in `failed` by [`pe_session_batch_progress`] and stepped past,
+/// because one collision should not abandon the other sixty-five.
+///
+/// **`0` with no run in progress at all**, since there is equally nothing more
+/// to do. [`pe_session_batch_progress`] is what tells a run that finished from
+/// one that was never started, and it is the thing to ask before reporting a
+/// summary.
+///
+/// Call it once a frame from wherever the render loop already ticks, not in a
+/// loop and never inside a view update: a full-resolution render there is a
+/// frozen window with extra steps.
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_step_batch(s: *mut PeSession) -> i32 {
+    with(s, -1, |s| match s.inner.step_batch() {
+        Ok(more) => {
+            s.last_error = None;
+            i32::from(more)
+        }
+        Err(e) => {
+            s.last_error = Some(e.to_string());
+            -2
+        }
+    })
+}
+
+/// How far the run has got: done, failed, total.
+///
+/// Three counts in one call, because a progress bar wants all three on every
+/// frame it draws. Any out-pointer may be null. Returns 0; `-1` for a null
+/// handle; `-2` when no run has been started, in which case nothing is
+/// written. The two counts do not have to add up to the third until the run is
+/// over, which is the point of giving all three.
+///
+/// **A finished run is still a run.** Its counts stay readable until it is
+/// cancelled or another begins, because the summary — `n exported`, or
+/// `n exported, m failed` — is read *after* the step that answered 0. A run
+/// that silently stopped is indistinguishable from one that crashed.
+///
+/// `-2` here leaves [`pe_session_last_error`] alone rather than writing a
+/// reason onto it, as the other readers of the set do. "No batch is running"
+/// is the ordinary state of a session, this is asked once a frame to decide
+/// whether to draw a progress bar at all, and a message per frame would bury
+/// whatever real failure was sitting there.
+///
+/// # Safety
+/// `s` must be valid or null; each non-null out-pointer must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_batch_progress(
+    s: *mut PeSession,
+    out_done: *mut u32,
+    out_failed: *mut u32,
+    out_total: *mut u32,
+) -> i32 {
+    with(s, -1, |s| {
+        let Some((done, failed, total)) = s.inner.batch_progress() else {
+            return -2;
+        };
+        unsafe {
+            if !out_done.is_null() {
+                out_done.write(done as u32);
+            }
+            if !out_failed.is_null() {
+                out_failed.write(failed as u32);
+            }
+            if !out_total.is_null() {
+                out_total.write(total as u32);
+            }
+        }
+        0
+    })
+}
+
+/// Stop the run, keeping whatever has already been written.
+///
+/// Nothing is taken back. Half a folder of exports is the state somebody asked
+/// for when they pressed cancel; deleting the files they had already waited
+/// for would be the surprising answer. Also how the counts of a *finished* run
+/// are put away once the summary has been shown.
+///
+/// Returns 0, or `-1` for a null handle. Cancelling when nothing is running
+/// succeeds and does nothing: a shell that cancels because a window is closing
+/// does not know whether a run is on, and there is nothing it would do
+/// differently if it did.
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_cancel_batch(s: *mut PeSession) -> i32 {
+    status(s, |s| {
+        s.cancel_batch();
+        Ok(())
+    })
+}
+
 // ---- scopes ---------------------------------------------------------------
 
 /// Which measurement to read. The numbering is part of the ABI: add to the end.
@@ -1892,6 +2042,26 @@ mod tests {
             unsafe { pe_session_thumbnail_data(ptr::null_mut(), 0, out.as_mut_ptr(), 4) },
             -1
         );
+        let dir = cstr("/out");
+        assert_eq!(
+            unsafe { pe_session_start_batch(ptr::null_mut(), dir.as_ptr()) },
+            -1
+        );
+        // A step is the one of these whose 0 means something else entirely —
+        // "no more to do" — so a null handle must not be able to produce it.
+        assert_eq!(unsafe { pe_session_step_batch(ptr::null_mut()) }, -1);
+        assert_eq!(
+            unsafe {
+                pe_session_batch_progress(
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                )
+            },
+            -1
+        );
+        assert_eq!(unsafe { pe_session_cancel_batch(ptr::null_mut()) }, -1);
         unsafe { pe_session_free(ptr::null_mut()) };
     }
 
@@ -3332,5 +3502,213 @@ mod tests {
         assert_eq!(unsafe { pe_session_entry_count(s) }, 0);
         assert_eq!(unsafe { pe_session_current_entry(s) }, -2);
         unsafe { pe_session_free(s) };
+    }
+
+    // ---- a batch of them -------------------------------------------------
+
+    /// A session over a set on disc, writing PNGs into a folder beside it.
+    ///
+    /// PNG rather than JPEG because the assertions are about files arriving
+    /// under the names the format decides, and there is nothing here that a
+    /// lossy encode would make truer.
+    fn batch_session(tmp: &std::path::Path, paths: &[&std::path::Path]) -> *mut PeSession {
+        let s = pe_session_new();
+        let support = cstr(&tmp.join("support").display().to_string());
+        assert_eq!(
+            unsafe { pe_session_set_support_dir(s, support.as_ptr()) },
+            0
+        );
+        let list = paths_json(paths);
+        assert_eq!(unsafe { pe_session_open_paths(s, list.as_ptr()) }, 0);
+        let png = cstr("png");
+        assert_eq!(unsafe { pe_session_set_export(s, png.as_ptr(), 95) }, 0);
+        s
+    }
+
+    /// The three counts as a shell reads them: `None` when no run has been
+    /// started, and a panic for anything that is not one of the two answers
+    /// the function documents.
+    fn batch_progress(s: *mut PeSession) -> Option<(u32, u32, u32)> {
+        let (mut done, mut failed, mut total) = (u32::MAX, u32::MAX, u32::MAX);
+        match unsafe { pe_session_batch_progress(s, &mut done, &mut failed, &mut total) } {
+            0 => Some((done, failed, total)),
+            -2 => None,
+            other => panic!("a progress read answered {other}"),
+        }
+    }
+
+    /// Step to the end the way a frame loop does — `> 0` is more to do — and
+    /// say how many steps it took. Anything negative is a refusal and ends the
+    /// test, not the loop.
+    fn run_batch(s: *mut PeSession) -> usize {
+        let mut steps = 0;
+        loop {
+            let more = unsafe { pe_session_step_batch(s) };
+            assert!(more >= 0, "the run was refused: {:?}", last_error(s));
+            steps += 1;
+            assert!(steps < 64, "a batch that will not finish");
+            if more == 0 {
+                return steps;
+            }
+        }
+    }
+
+    #[test]
+    fn a_batch_crosses_and_writes_one_file_per_photograph() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let b = photo_at(tmp.path(), "b.png", 64, 64);
+        let c = photo_at(tmp.path(), "c.png", 64, 64);
+        let out = tmp.path().join("out");
+        std::fs::create_dir(&out).expect("the temporary directory is writable");
+
+        let s = batch_session(tmp.path(), &[&a, &b, &c]);
+        assert_eq!(batch_progress(s), None, "a run nobody has started");
+
+        let dir = cstr(&out.display().to_string());
+        assert_eq!(unsafe { pe_session_start_batch(s, dir.as_ptr()) }, 0);
+        assert_eq!(batch_progress(s), Some((0, 0, 3)), "nothing has run yet");
+
+        assert_eq!(run_batch(s), 3, "one step per photograph, no more");
+
+        // On disc, because that is the only thing that proves a batch ran: a
+        // return code says a step happened, not that a file arrived.
+        for name in ["a_KROMA.png", "b_KROMA.png", "c_KROMA.png"] {
+            assert!(out.join(name).exists(), "{name} was not written");
+        }
+
+        // And the summary is still readable *after* the step that answered 0,
+        // which is when a shell reports it. A finished run that answered
+        // "nothing running" here would be indistinguishable from one that
+        // crashed on its first photograph.
+        assert_eq!(batch_progress(s), Some((3, 0, 3)));
+        assert_eq!(
+            unsafe { pe_session_step_batch(s) },
+            0,
+            "stepping a finished run found more to do"
+        );
+
+        unsafe { pe_session_free(s) };
+    }
+
+    /// One photograph that cannot be written is a count, not a refusal: `-2`
+    /// would stop the run, and the other sixty-five are still worth writing.
+    #[test]
+    fn a_collision_crosses_as_a_failed_count_rather_than_a_refusal() {
+        // Contrived deliberately, and not far-fetched: a folder exported once
+        // already, exported into again.
+        let tmp = tempfile::tempdir().unwrap();
+        let sunset = photo_at(tmp.path(), "sunset.png", 64, 64);
+        let already = photo_at(tmp.path(), "sunset_KROMA.png", 64, 64);
+        let untouched = std::fs::read(&already).unwrap();
+
+        let s = batch_session(tmp.path(), &[&sunset, &already]);
+        let dir = cstr(&tmp.path().display().to_string());
+        assert_eq!(unsafe { pe_session_start_batch(s, dir.as_ptr()) }, 0);
+
+        // `run_batch` asserts that no step went negative, which is half of
+        // what this test is about.
+        assert_eq!(run_batch(s), 2, "the collision abandoned the run");
+
+        assert_eq!(
+            std::fs::read(&already).unwrap(),
+            untouched,
+            "an original was written over"
+        );
+        assert_eq!(
+            batch_progress(s),
+            Some((1, 1, 2)),
+            "the collision was not counted, or it was counted as a success"
+        );
+        assert!(
+            tmp.path().join("sunset_KROMA_KROMA.png").exists(),
+            "one collision abandoned the photograph after it"
+        );
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn cancelling_keeps_what_was_written_and_puts_the_counts_away() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let b = photo_at(tmp.path(), "b.png", 64, 64);
+        let c = photo_at(tmp.path(), "c.png", 64, 64);
+        let out = tmp.path().join("out");
+        std::fs::create_dir(&out).expect("the temporary directory is writable");
+
+        let s = batch_session(tmp.path(), &[&a, &b, &c]);
+        let dir = cstr(&out.display().to_string());
+        assert_eq!(unsafe { pe_session_start_batch(s, dir.as_ptr()) }, 0);
+        assert_eq!(
+            unsafe { pe_session_step_batch(s) },
+            1,
+            "two photographs left is more to do"
+        );
+        assert_eq!(batch_progress(s), Some((1, 0, 3)));
+
+        assert_eq!(unsafe { pe_session_cancel_batch(s) }, 0);
+        assert_eq!(batch_progress(s), None, "a cancelled run is not a run");
+        assert!(
+            out.join("a_KROMA.png").exists(),
+            "cancelling took back what had already been written"
+        );
+        assert!(
+            !out.join("b_KROMA.png").exists(),
+            "the run carried on past the cancel"
+        );
+
+        // A step afterwards is 0 — there is nothing more to do — rather than a
+        // refusal, and cancelling again is a no-op rather than a failure.
+        assert_eq!(unsafe { pe_session_step_batch(s) }, 0);
+        assert_eq!(unsafe { pe_session_cancel_batch(s) }, 0);
+        assert!(
+            !out.join("b_KROMA.png").exists(),
+            "a step after a cancel restarted the run"
+        );
+        unsafe { pe_session_free(s) };
+    }
+
+    #[test]
+    fn a_batch_with_no_set_is_refused_and_told_apart_from_never_arriving() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = cstr(&tmp.path().display().to_string());
+
+        // The built-in chart is not a set of one: there is no file for a run
+        // to be a run over.
+        for open_a_chart in [false, true] {
+            let s = pe_session_new();
+            if open_a_chart {
+                assert_eq!(unsafe { pe_session_open_test_chart(s, 32, 32) }, 0);
+            }
+
+            // `-1`: the request never reached the session, and there is no
+            // message because nothing looked at it.
+            assert_eq!(unsafe { pe_session_start_batch(s, ptr::null()) }, -1);
+            assert!(
+                last_error(s).is_none(),
+                "a request that never arrived left a message behind"
+            );
+
+            // `-2`: the session looked at it and refused, and said why.
+            assert_eq!(unsafe { pe_session_start_batch(s, dir.as_ptr()) }, -2);
+            assert!(last_error(s).is_some(), "a refusal nobody can report");
+
+            // Nothing is running afterwards, and a refused read writes nothing
+            // over the caller's variables.
+            let mut done = 7u32;
+            assert_eq!(
+                unsafe {
+                    pe_session_batch_progress(s, &mut done, ptr::null_mut(), ptr::null_mut())
+                },
+                -2
+            );
+            assert_eq!(done, 7, "a refused progress read wrote anyway");
+            assert_eq!(
+                unsafe { pe_session_step_batch(s) },
+                0,
+                "a step with no run is nothing to do, not a refusal"
+            );
+            unsafe { pe_session_free(s) };
+        }
     }
 }
