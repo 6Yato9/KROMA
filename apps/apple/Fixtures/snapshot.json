@@ -3,6 +3,8 @@
   "is_open": true,
   "width": 64,
   "height": 64,
+  "output_width": 64,
+  "output_height": 64,
   "rows": [
     {
       "id": 0,

@@ -25,6 +25,21 @@ final class SnapshotTests: XCTestCase {
         XCTAssertEqual(snap.colour.input, "sRGB")
     }
 
+    /// The size an export will be, which the File page shows beside the
+    /// source's.
+    ///
+    /// Decoding at all is most of the assertion: both fields are
+    /// non-optional, so a key spelt differently on the two sides throws here
+    /// rather than quietly reading zero. The fixture's session has no crop and
+    /// no turn, so the two sizes agree in it — that they *can* differ is
+    /// asserted on the Rust side, where a document can be cropped without a
+    /// GPU.
+    func testTheCommittedSnapshotCarriesTheOutputSize() throws {
+        let snap = try JSONDecoder().decode(Snapshot.self, from: fixture("snapshot"))
+        XCTAssertEqual(snap.outputWidth, 64)
+        XCTAssertEqual(snap.outputHeight, 64)
+    }
+
     func testAParameterKeepsTheDocumentsOwnShape() throws {
         // `{"t":"float","v":0.75}` — the same representation the document uses
         // on disk. One shape on the wire, not two.
@@ -44,8 +59,10 @@ final class SnapshotTests: XCTestCase {
         // is not optional on the wire, and with nothing open it is the
         // identity rather than absent. A decoder that let it go missing would
         // read a cropped photograph as an uncropped one on the day the two
-        // sides disagreed about the key.
-        let json = Data(#"{"version":0,"is_open":false,"width":0,"height":0,"rows":[],"color":{"input":"","output":""},"geometry":{"centre":[0.0,0.0],"size":[1.0,1.0],"angle":0.0,"turns":0,"flip_h":false,"flip_v":false,"aspect":"free"},"passes":0,"can_undo":false,"can_redo":false,"export_format":"jpeg","export_quality":95}"#.utf8)
+        // sides disagreed about the key. The output size is here for the same
+        // reason: the engine writes it whether or not anything is open, and
+        // with nothing open it is the source's nothing rather than absent.
+        let json = Data(#"{"version":0,"is_open":false,"width":0,"height":0,"output_width":0,"output_height":0,"rows":[],"color":{"input":"","output":""},"geometry":{"centre":[0.0,0.0],"size":[1.0,1.0],"angle":0.0,"turns":0,"flip_h":false,"flip_v":false,"aspect":"free"},"passes":0,"can_undo":false,"can_redo":false,"export_format":"jpeg","export_quality":95}"#.utf8)
         let snap = try JSONDecoder().decode(Snapshot.self, from: json)
         XCTAssertFalse(snap.isOpen)
         XCTAssertTrue(snap.rows.isEmpty)

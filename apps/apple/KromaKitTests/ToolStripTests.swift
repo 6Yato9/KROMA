@@ -6,7 +6,7 @@ import XCTest
 ///
 /// Two of these are about a thing the compiler cannot see. A tool's symbol is
 /// a *string* handed to the system, so a name the system does not have is not
-/// a build error — it is a button that draws nothing, in a strip of seven,
+/// a build error — it is a button that draws nothing, in a strip of eight,
 /// with no way for anybody to tell which one it was. And which effects a tool
 /// claims is written in the engine and again in Swift, so the fixture is what
 /// keeps the two lists one list.
@@ -35,7 +35,7 @@ final class ToolStripTests: XCTestCase {
     // ---- the symbols ------------------------------------------------------
 
     /// A symbol that does not exist renders as nothing, and a blank button in a
-    /// strip of seven is one nobody can identify. `NSImage` returns nil for a
+    /// strip of eight is one nobody can identify. `NSImage` returns nil for a
     /// name the system does not have, so this is checkable rather than a hope.
     func testEveryToolHasASymbolTheSystemActuallyHas() {
         for tool in Tool.allCases {
@@ -45,7 +45,7 @@ final class ToolStripTests: XCTestCase {
         }
     }
 
-    /// And no two tools wear the same one, which would be seven buttons and six
+    /// And no two tools wear the same one, which would be eight buttons and seven
     /// distinguishable ones.
     func testNoTwoToolsShareASymbol() {
         XCTAssertEqual(
@@ -149,20 +149,20 @@ final class ToolStripTests: XCTestCase {
         }
     }
 
-    /// Exactly two tools have no pinned effects of their own, and both are
+    /// Exactly three tools have no pinned effects of their own, and each is
     /// deliberate: Effects shows whatever the user put there and is where the
-    /// browser lives, and Crop edits the document's geometry rather than a row
-    /// in its stack.
+    /// browser lives, Crop edits the document's geometry rather than a row in
+    /// its stack, and File is about the file rather than the picture.
     ///
     /// Named rather than counted, and the mirror of
-    /// `only_effects_and_crop_own_nothing_pinned` in `pe-effects`. What it
-    /// catches is a *third* — a tool added to the strip and its effects list
+    /// `only_effects_crop_and_file_own_nothing_pinned` in `pe-effects`. What it
+    /// catches is a *fourth* — a tool added to the strip and its effects list
     /// forgotten, which draws an empty panel and takes its effects off screen
     /// with it.
-    func testOnlyEffectsAndCropOwnNothingPinned() {
+    func testOnlyEffectsCropAndFileOwnNothingPinned() {
         XCTAssertEqual(
-            Tool.allCases.filter { $0.effects.isEmpty }, [.effects, .crop],
-            "a tool with no pinned effects that is not one of these two is a panel "
+            Tool.allCases.filter { $0.effects.isEmpty }, [.effects, .crop, .file],
+            "a tool with no pinned effects that is not one of these three is a panel "
                 + "that draws nothing")
     }
 

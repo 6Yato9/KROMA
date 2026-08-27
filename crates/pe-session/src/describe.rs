@@ -224,6 +224,15 @@ pub struct Snapshot {
     pub name: Option<String>,
     pub width: u32,
     pub height: u32,
+    /// What an export will actually produce.
+    ///
+    /// Not the source's size: the crop decides how much picture there is and
+    /// the resize decides how many pixels it is delivered in, and a
+    /// quarter-turn swaps the two. Carried rather than recomputed in each
+    /// shell, because it is [`pe_render::export::output_size`] and that is
+    /// where the rule lives.
+    pub output_width: u32,
+    pub output_height: u32,
     pub rows: Vec<Row>,
     pub color: Color,
     /// The crop the document holds. Always present — the identity when nothing
@@ -315,6 +324,11 @@ fn geometry(g: &pe_core::Geometry) -> GeometryJson {
 pub fn snapshot(session: &crate::Session) -> Snapshot {
     let doc = session.document();
     let (width, height) = session.image_size();
+    // The source's size when nothing is open, which is (0, 0): there is no
+    // document to ask, and no export to size.
+    let (output_width, output_height) = doc
+        .map(|d| pe_render::export::output_size(d, width, height))
+        .unwrap_or((width, height));
     let rows = doc
         .map(|d| {
             d.stack
@@ -352,6 +366,8 @@ pub fn snapshot(session: &crate::Session) -> Snapshot {
             .map(|n| n.to_string_lossy().to_string()),
         width,
         height,
+        output_width,
+        output_height,
         rows,
         color: Color {
             input: doc.map(|d| d.color.input.clone()).unwrap_or_default(),
@@ -371,6 +387,34 @@ pub fn snapshot(session: &crate::Session) -> Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The output is not the source once anything has been cropped or turned,
+    /// which is the entire reason the File page shows both numbers.
+    ///
+    /// The quarter-turn is here on purpose: it is what separates reading
+    /// `pe_render::export::output_size` from multiplying the width by the
+    /// crop's own fraction, which agrees with it right up until the picture is
+    /// stood on its side.
+    #[test]
+    fn the_snapshot_reports_the_size_an_export_will_be() {
+        let mut s = crate::Session::new();
+        s.open_test_chart(256, 256).unwrap();
+
+        let before = snapshot(&s);
+        assert_eq!((before.output_width, before.output_height), (256, 256));
+
+        // The left half of the picture, stood on its side.
+        s.set_geometry(pe_core::Geometry {
+            size: [0.5, 1.0],
+            turns: 1,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let after = snapshot(&s);
+        assert_eq!((after.width, after.height), (256, 256), "the source is untouched");
+        assert_eq!((after.output_width, after.output_height), (256, 128));
+    }
 
     #[test]
     fn every_registered_effect_is_described() {

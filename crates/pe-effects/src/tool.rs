@@ -11,7 +11,11 @@
 //! headers in a match arm, which is the shape that drifts the first time a
 //! twelfth pinned effect appears.
 
-/// One page of the colour tools, in the strip's order.
+/// One page of the strip, in the order it shows them.
+///
+/// Mostly colour tools, and then the two that are not: Crop edits the
+/// document's geometry, and File is about the file. The strip is this shell's
+/// answer to the Windows shell's four tabs, so it carries what they carry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tool {
     Basic,
@@ -25,9 +29,17 @@ pub enum Tool {
     ///
     /// The one tool that edits the document's *geometry* rather than a row in
     /// its stack, which is why it owns no pinned effects: there is no
-    /// `Effect` behind it and no parameters to look up. It sits last for the
-    /// same reason the Windows shell puts its Image page after Effects.
+    /// `Effect` behind it and no parameters to look up. It follows Effects for
+    /// the same reason the Windows shell puts its Image page after its Effects
+    /// tab.
     Crop,
+    /// What the photograph is, and what it will be written as.
+    ///
+    /// The one tool about the *file* rather than the picture. It owns no
+    /// pinned effects for the same reason Crop does not — there is no `Effect`
+    /// behind it — and it sits last, in the order the Windows shell lists its
+    /// tabs: Colour, Effects, Image, File.
+    File,
 }
 
 impl Tool {
@@ -36,7 +48,7 @@ impl Tool {
     /// Here rather than in a shell for the same reason [`crate::Group::ALL`]
     /// is: a variant added and not listed is a tool with no button, and the
     /// only symptom is a panel nobody can reach.
-    pub const ALL: [Tool; 7] = [
+    pub const ALL: [Tool; 8] = [
         Tool::Basic,
         Tool::ColourWheels,
         Tool::Curves,
@@ -44,6 +56,7 @@ impl Tool {
         Tool::ColourMixer,
         Tool::Effects,
         Tool::Crop,
+        Tool::File,
     ];
 
     pub fn name(self) -> &'static str {
@@ -55,6 +68,7 @@ impl Tool {
             Tool::ColourMixer => "Colour Mixer",
             Tool::Effects => "Effects",
             Tool::Crop => "Crop",
+            Tool::File => "File",
         }
     }
 
@@ -78,11 +92,13 @@ impl Tool {
             Tool::Curves => &["curves"],
             Tool::ColourWarper => &["colour_warper"],
             Tool::ColourMixer => &["colour_mixer"],
-            // Neither of these is pinned, and deliberately. Effects shows the
-            // rows the user put there; Crop edits the document's geometry,
-            // which is not a row at all.
+            // None of these three is pinned, and deliberately. Effects shows
+            // the rows the user put there; Crop edits the document's geometry,
+            // which is not a row at all; File is about the file rather than
+            // the picture.
             Tool::Effects => &[],
             Tool::Crop => &[],
+            Tool::File => &[],
         }
     }
 
@@ -176,15 +192,15 @@ mod tests {
     /// silence `every_pinned_effect_belongs_to_exactly_one_tool` catches from
     /// the other end.
     #[test]
-    fn only_effects_and_crop_own_nothing_pinned() {
+    fn only_effects_crop_and_file_own_nothing_pinned() {
         let empty: Vec<Tool> = Tool::ALL
             .into_iter()
             .filter(|t| t.effects().is_empty())
             .collect();
         assert_eq!(
             empty,
-            vec![Tool::Effects, Tool::Crop],
-            "a tool with no pinned effects that is not one of these two is a \
+            vec![Tool::Effects, Tool::Crop, Tool::File],
+            "a tool with no pinned effects that is not one of these three is a \
              panel that draws nothing"
         );
     }

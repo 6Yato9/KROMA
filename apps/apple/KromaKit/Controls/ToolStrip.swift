@@ -1,9 +1,13 @@
 import SwiftUI
 
-/// The colour page's tools, and the strip that chooses between them.
+/// The tools, and the strip that chooses between them.
+///
+/// Mostly the colour page's, and then the two that are not: Crop edits the
+/// document's geometry, and File is about the file. This strip is what the
+/// Windows shell spells as four tabs.
 ///
 /// A mirror of `pe_effects::Tool`, and checked against it by the fixture: the
-/// same seven tools in the same order, each claiming the same effects. Which
+/// same eight tools in the same order, each claiming the same effects. Which
 /// tool draws an effect is one answer per effect, so it is decided in the
 /// engine and read here rather than decided twice.
 ///
@@ -26,6 +30,12 @@ public enum Tool: String, CaseIterable, Sendable {
     /// and no registry parameters to generate controls from. `CropPanel` is
     /// what it draws.
     case crop = "Crop"
+    /// What the photograph is, and what it will be written as.
+    ///
+    /// Owns no pinned effects, like Effects and Crop: there is no `Effect`
+    /// behind it, and `FilePanel` is what it draws. Last, in the order the
+    /// Windows shell lists its tabs.
+    case file = "File"
 
     /// What the button says it is — the tooltip, and the accessibility label.
     ///
@@ -49,11 +59,12 @@ public enum Tool: String, CaseIterable, Sendable {
         case .curves: ["curves"]
         case .colourWarper: ["colour_warper"]
         case .colourMixer: ["colour_mixer"]
-        // Neither of these is pinned, and deliberately. Effects shows the
+        // None of these three is pinned, and deliberately. Effects shows the
         // rows the user put there; Crop edits the document's geometry, which is
-        // not a row at all.
+        // not a row at all; File is about the file rather than the picture.
         case .effects: []
         case .crop: []
+        case .file: []
         }
     }
 
@@ -66,10 +77,10 @@ public enum Tool: String, CaseIterable, Sendable {
     /// design.
     ///
     /// **A name the system does not have renders as nothing** — a blank button
-    /// in a strip of seven is one nobody can identify — so every one of these
-    /// is asked of `NSImage` in `ToolStripTests` rather than assumed. All seven
-    /// are from 2019–2021, well below the 14.0 deployment target: `crop` is
-    /// SF Symbols 1.0, and was the first name tried.
+    /// in a strip of eight is one nobody can identify — so every one of these
+    /// is asked of `NSImage` in `ToolStripTests` rather than assumed. All eight
+    /// are from 2019–2021, well below the 14.0 deployment target: `crop` and
+    /// `doc` are both SF Symbols 1.0, and each was the first name tried.
     public var symbol: String {
         switch self {
         case .basic: "slider.horizontal.3"
@@ -79,6 +90,7 @@ public enum Tool: String, CaseIterable, Sendable {
         case .colourMixer: "paintpalette"
         case .effects: "wand.and.stars"
         case .crop: "crop"
+        case .file: "doc"
         }
     }
 
@@ -120,7 +132,7 @@ public enum Tool: String, CaseIterable, Sendable {
     /// draws them.
     ///
     /// One function rather than a rule in the view and a copy of it in a test,
-    /// because the property that matters is about *all seven tools at once*:
+    /// because the property that matters is about *all eight tools at once*:
     /// every row belongs to exactly one of them. A row belonging to none is
     /// drawn nowhere at all, with nothing to say so.
     ///
@@ -149,7 +161,7 @@ public enum Tool: String, CaseIterable, Sendable {
     }
 }
 
-/// The strip: seven buttons, one tool on screen at a time.
+/// The strip: eight buttons, one tool on screen at a time.
 ///
 /// **The accent is not here.** A selected tool is "this is chosen", which is
 /// `SELECT` — the same colour the scopes toggle and the choice chips use. The

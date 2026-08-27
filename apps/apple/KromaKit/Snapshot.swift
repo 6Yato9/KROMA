@@ -15,6 +15,11 @@ public struct Snapshot: Decodable, Sendable {
     public let name: String?
     public let width: UInt32
     public let height: UInt32
+    /// What an export will produce. `width`/`height` is the file; this is the
+    /// result once the crop, the quarter-turns and the resize have had their
+    /// say. Both are shown on the File page, because they differ.
+    public let outputWidth: UInt32
+    public let outputHeight: UInt32
     public let rows: [Row]
     public let colour: Colour
     /// The crop, straighten, quarter-turns and flips.
@@ -43,10 +48,13 @@ public struct Snapshot: Decodable, Sendable {
         case redoLabel = "redo_label"
         case exportFormat = "export_format"
         case exportQuality = "export_quality"
+        case outputWidth = "output_width"
+        case outputHeight = "output_height"
     }
 
     public static let empty = Snapshot(
         version: 0, isOpen: false, path: nil, name: nil, width: 0, height: 0,
+        outputWidth: 0, outputHeight: 0,
         rows: [], colour: Colour(input: "", output: ""), geometry: .identity,
         passes: 0,
         canUndo: false, canRedo: false, undoLabel: nil, redoLabel: nil,
@@ -55,7 +63,8 @@ public struct Snapshot: Decodable, Sendable {
 
     public init(
         version: UInt64, isOpen: Bool, path: String?, name: String?,
-        width: UInt32, height: UInt32, rows: [Row], colour: Colour,
+        width: UInt32, height: UInt32, outputWidth: UInt32, outputHeight: UInt32,
+        rows: [Row], colour: Colour,
         geometry: GeometryValue, passes: Int,
         canUndo: Bool, canRedo: Bool, undoLabel: String?, redoLabel: String?,
         exportFormat: String, exportQuality: UInt8
@@ -66,6 +75,8 @@ public struct Snapshot: Decodable, Sendable {
         self.name = name
         self.width = width
         self.height = height
+        self.outputWidth = outputWidth
+        self.outputHeight = outputHeight
         self.rows = rows
         self.colour = colour
         self.geometry = geometry

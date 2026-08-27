@@ -166,6 +166,11 @@ struct ContentView: View {
                         // document's geometry, which is a value on the document
                         // rather than an entry in its stack.
                         CropPanel(store: store)
+                    case .file:
+                        // Also no rows behind it: this is the file, and the two
+                        // settings the next export will be written with,
+                        // neither of which is an entry in the document's stack.
+                        FilePanel(store: store)
                     default:
                         pinnedPanels
                     }
@@ -180,7 +185,7 @@ struct ContentView: View {
     ///
     /// `Tool.draws` is what decides, here and in `ToolStripTests` both, so the
     /// property the test asserts — every row of the document is drawn by
-    /// exactly one of the seven tools — is a property of what this view
+    /// exactly one of the eight tools — is a property of what this view
     /// actually draws rather than of a second copy of the rule.
     @ViewBuilder
     private var pinnedPanels: some View {
