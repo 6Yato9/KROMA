@@ -19,7 +19,7 @@ use pe_render::{
 use crate::library::{self, Library};
 use crate::scopes::Scopes;
 use crate::surface::Attached;
-use crate::{Support, autosave, export};
+use crate::{Settings, Support, autosave, export};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
@@ -245,10 +245,15 @@ pub struct Session {
     /// a strip of.
     library: Option<Library>,
     support: Support,
-    /// What an export would be written as. Kept on the session because it
-    /// is a property of the sitting rather than of a photograph; nothing
-    /// reads it until the export path lands.
-    export_settings: export::Export,
+    /// What this person keeps between runs: the effects they have starred,
+    /// the set they had open, and how they export.
+    ///
+    /// On the session rather than in a shell because none of it is a question
+    /// about a window — see [`Settings`]. It holds the export choice too,
+    /// which is why there is no separate field for it: two homes for one
+    /// answer is two answers, and the one on disc would be the one that was
+    /// wrong.
+    settings: Settings,
     /// The batch export in progress, if one is.
     ///
     /// On the session rather than on the shell because the run *is* the
@@ -306,7 +311,7 @@ impl Session {
             photo: None,
             library: None,
             support: Support::default(),
-            export_settings: export::Export::default(),
+            settings: Settings::default(),
             batch: None,
             open_set: Vec::new(),
             view: Region::FULL,
@@ -331,6 +336,10 @@ impl Session {
     /// away, which is worse than the problem.
     pub fn set_support_dir(&mut self, root: impl Into<PathBuf>) {
         self.support = Support::at(root);
+        // And this is the moment there is anywhere to read the last run's
+        // answers from. Before it a session has the defaults, because a host
+        // that has named no directory has not said where they were kept.
+        self.settings = Settings::load(&self.support);
     }
 
     pub fn is_open(&self) -> bool {
@@ -620,6 +629,10 @@ impl Session {
         // an entry the caller has already opened.
         library.focus(0);
         self.library = Some(library);
+        // Written down now rather than on the way out: this is what the next
+        // launch reopens, and a window can be closed by the operating system
+        // or by a crash long before anybody thinks to tidy up.
+        self.remember_the_set();
         Ok(())
     }
 
@@ -688,6 +701,10 @@ impl Session {
             image.space,
         );
         self.install(Some(path), image, history, ids);
+        // Which photograph you were on is half of reopening; remembering the
+        // set and forgetting the place in it puts you back at the front of a
+        // folder of two hundred.
+        self.remember_the_set();
         Ok(())
     }
 
@@ -1762,17 +1779,98 @@ impl Session {
         Ok(())
     }
 
+    // ---- what is remembered between runs ---------------------------------
+
+    /// What this person keeps between runs. See [`Settings`].
+    pub fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
+    pub fn is_favourite(&self, key: &str) -> bool {
+        self.settings.is_favourite(key)
+    }
+
+    /// Star or unstar an effect, and write the change out.
+    ///
+    /// Saved immediately rather than on exit, for the same reason the set is:
+    /// a window can be closed by the operating system, by a crash, or by
+    /// somebody who does not think of starring as something that needs
+    /// committing.
+    pub fn toggle_favourite(&mut self, key: &str) {
+        self.settings.toggle_favourite(key, &self.support);
+    }
+
+    /// The set that was open when this last ran, and which one was showing.
+    ///
+    /// **Only the photographs that are still there.** A remembered path can
+    /// have been moved, renamed, or left on a volume that is not mounted, and
+    /// one that has gone must not stop the others opening — at this point in a
+    /// launch there is no window to say so in, so it is quietly left out and
+    /// the rest come back.
+    ///
+    /// Which one was showing is remembered by name and looked up again in what
+    /// survived, so losing one from the front of the set does not slide the
+    /// answer onto its neighbour. When that photograph is itself the one that
+    /// has gone there is no right answer, and the remembered position clamped
+    /// to the last survivor at least lands near where you were.
+    ///
+    /// An empty set comes back with an index of nought, which is not a
+    /// position in it — everything the last run had is gone. Nothing has to be
+    /// done about that: [`Session::open_paths`] refuses an empty set, and a
+    /// shell that passes one straight through gets `NothingOpen` rather than a
+    /// panic.
+    pub fn remembered_session(&self) -> (Vec<PathBuf>, usize) {
+        self.settings.session()
+    }
+
+    /// Write down what is open and which one is showing.
+    ///
+    /// Called from both paths that can change either — opening a set and
+    /// focusing within one — rather than once on the way out, because the
+    /// moment worth surviving is the one nobody planned: the crash, the
+    /// battery, the process the operating system decided to end.
+    ///
+    /// **Not throttled the way the autosave is.** [`autosave::Watcher`] waits
+    /// for a pause because an edit changes at frame rate under a slider drag,
+    /// and sixty writes a second of a document is real work. This changes once
+    /// per photograph, and every one of those changes has just paid for a
+    /// decode of the next photograph's pixels — a few hundred bytes written
+    /// beside that is not measurable. What is worth guarding is the write that
+    /// records nothing, and [`Settings::remember_session`] already drops it
+    /// when neither the set nor the index has actually moved.
+    fn remember_the_set(&mut self) {
+        let Some(library) = self.library.as_ref() else {
+            return;
+        };
+        let paths = library.paths();
+        let index = library.current();
+        self.settings.remember_session(&paths, index, &self.support);
+    }
+
     // ---- export -------------------------------------------------------
 
+    /// How exports are written from here on — and from the next run.
+    ///
+    /// Remembered rather than asked again because it is a decision about the
+    /// work rather than about one photograph: somebody exporting JPEGs at 92
+    /// is going to keep doing it.
     pub fn set_export(&mut self, format: export::Format, quality: u8) {
-        self.export_settings = export::Export {
+        let chosen = export::Export {
             format,
             quality: quality.clamp(1, 100),
         };
+        // A shell with an export panel showing may hand this over on every
+        // frame. Writing the same file sixty times a second is a disc write to
+        // record that nothing happened.
+        if chosen == self.settings.export {
+            return;
+        }
+        self.settings.export = chosen;
+        self.settings.save(&self.support);
     }
 
     pub fn export_settings(&self) -> export::Export {
-        self.export_settings
+        self.settings.export
     }
 
     /// Write the graded photograph beside its original, refusing a collision.
@@ -1782,7 +1880,7 @@ impl Session {
             .path
             .clone()
             .unwrap_or_else(|| PathBuf::from("export"));
-        let chosen = self.export_settings;
+        let chosen = self.settings.export;
         let out = source.with_file_name(export::export_name(&source, chosen.format));
 
         // Both defences, in order. The naming keeps them apart; the check is
@@ -1841,7 +1939,7 @@ impl Session {
             return Err(SessionError::NothingOpen);
         }
         let targets = library.paths().into_iter().map(Path::to_path_buf).collect();
-        self.batch = Some(export::Batch::new(targets, dir, self.export_settings));
+        self.batch = Some(export::Batch::new(targets, dir, self.settings.export));
         Ok(())
     }
 
@@ -4073,5 +4171,217 @@ mod tests {
         s.set_compare(Compare::Side, 0.5);
         let compared = std::fs::read(s.export_current().unwrap()).unwrap();
         assert_eq!(plain, compared, "the comparison was written to the file");
+    }
+
+    // ---- what is remembered between runs ---------------------------------
+
+    /// The next launch, sharing the support directory and nothing else. What
+    /// crossing between runs actually means.
+    fn a_later_run(support: &Path) -> Session {
+        let mut s = Session::new();
+        s.set_support_dir(support);
+        s
+    }
+
+    #[test]
+    fn the_set_that_was_open_comes_back_next_run() {
+        let tmp = tempfile::tempdir().unwrap();
+        let support = tmp.path().join("support");
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let b = photo_at(tmp.path(), "b.png", 64, 64);
+        let c = photo_at(tmp.path(), "c.png", 64, 64);
+
+        let mut s = Session::new();
+        s.set_support_dir(&support);
+        s.open_paths(vec![a.clone(), b.clone(), c.clone()]).unwrap();
+
+        // Opening is already enough to be remembered — nothing has been
+        // focused and nothing has been closed.
+        assert_eq!(
+            a_later_run(&support).remembered_session(),
+            (vec![a.clone(), b.clone(), c.clone()], 0),
+            "the set was not written down until something else happened"
+        );
+
+        s.focus(2).unwrap();
+        // The first session is still running. The point of writing on every
+        // move rather than on the way out is that a crash here costs nothing.
+        let (paths, index) = a_later_run(&support).remembered_session();
+        assert_eq!(paths, vec![a, b, c.clone()]);
+        assert_eq!(paths[index], c, "which one was showing was not remembered");
+    }
+
+    /// A photograph that has been moved, renamed, or left on a volume that is
+    /// not mounted must not stop the rest of the set opening. There is nobody
+    /// to tell at this point in a launch, so it is quietly left out.
+    ///
+    /// And dropping one renumbers the list, so the remembered *position* is a
+    /// number from an older numbering: the one that was showing has to be
+    /// found again by name or the application reopens confidently on whatever
+    /// slid into its place.
+    #[test]
+    fn a_photograph_that_has_gone_does_not_stop_the_others_opening() {
+        let tmp = tempfile::tempdir().unwrap();
+        let support = tmp.path().join("support");
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let b = photo_at(tmp.path(), "b.png", 96, 32);
+        let c = photo_at(tmp.path(), "c.png", 32, 32);
+
+        let mut s = Session::new();
+        s.set_support_dir(&support);
+        s.open_paths(vec![a.clone(), b.clone(), c.clone()]).unwrap();
+        // The middle one, so that losing the first makes the remembered
+        // position and the remembered photograph two different answers: after
+        // the filtering, position 1 is `c` and the photograph is `b`.
+        s.focus(1).unwrap();
+        drop(s);
+
+        // Between the two runs, somebody moves the first one out of the folder.
+        std::fs::remove_file(&a).unwrap();
+
+        let mut next = a_later_run(&support);
+        let (paths, index) = next.remembered_session();
+        assert_eq!(paths, vec![b.clone(), c], "the one that has gone came back");
+        assert_eq!(
+            paths[index], b,
+            "reopened on the wrong photograph: the remembered number was taken \
+             as a position in what survived rather than as which photograph it \
+             named"
+        );
+
+        // And the whole of what a shell has to do with that answer works.
+        next.open_paths(paths).unwrap();
+        next.focus(index).unwrap();
+        assert_eq!(next.path(), Some(b.as_path()));
+        assert_eq!(next.image_size(), (96, 32), "a different photograph opened");
+    }
+
+    /// When the photograph you were on is itself the one that has gone there
+    /// is no right answer, only a reasonable one: the remembered position,
+    /// clamped to what is left.
+    #[test]
+    fn losing_the_photograph_you_were_on_lands_on_the_last_survivor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let support = tmp.path().join("support");
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let b = photo_at(tmp.path(), "b.png", 64, 64);
+        let c = photo_at(tmp.path(), "c.png", 64, 64);
+
+        let mut s = Session::new();
+        s.set_support_dir(&support);
+        s.open_paths(vec![a.clone(), b.clone(), c.clone()]).unwrap();
+        s.focus(2).unwrap();
+        drop(s);
+
+        std::fs::remove_file(&c).unwrap();
+
+        let (paths, index) = a_later_run(&support).remembered_session();
+        assert_eq!(paths, vec![a, b.clone()]);
+        assert!(
+            index < paths.len(),
+            "index {index} is off the end of the set"
+        );
+        assert_eq!(paths[index], b);
+    }
+
+    /// The whole folder on a volume that is not mounted. An empty answer, and
+    /// the shell's own refusal to open nothing — not a panic and not a crash
+    /// before the window ever appears.
+    #[test]
+    fn a_set_that_has_entirely_gone_comes_back_empty_rather_than_fatal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let support = tmp.path().join("support");
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+
+        let mut s = Session::new();
+        s.set_support_dir(&support);
+        s.open_paths(vec![a.clone()]).unwrap();
+        drop(s);
+
+        std::fs::remove_file(&a).unwrap();
+
+        let mut next = a_later_run(&support);
+        let (paths, index) = next.remembered_session();
+        assert!(paths.is_empty(), "a photograph that is not there came back");
+        assert_eq!(index, 0);
+        assert!(
+            matches!(next.open_paths(paths), Err(SessionError::NothingOpen)),
+            "opening the empty answer was not refused cleanly"
+        );
+        assert!(!next.is_open());
+    }
+
+    /// A star has to outlive the process that made it.
+    #[test]
+    fn a_star_crosses_from_one_run_to_the_next() {
+        let tmp = tempfile::tempdir().unwrap();
+        let support = tmp.path().join("support");
+
+        let mut s = Session::new();
+        s.set_support_dir(&support);
+        assert!(!s.is_favourite("grain"), "nothing is starred to begin with");
+        s.toggle_favourite("grain");
+        assert!(s.is_favourite("grain"));
+
+        assert!(
+            a_later_run(&support).is_favourite("grain"),
+            "the star did not survive the window closing"
+        );
+
+        // And the same gesture takes it away again.
+        s.toggle_favourite("grain");
+        assert!(!a_later_run(&support).is_favourite("grain"));
+        assert_eq!(s.settings().favourites, Vec::<String>::new());
+    }
+
+    /// Exporting JPEGs at 92 is a decision about the work, not about one
+    /// photograph. Asking again next time is asking somebody to answer a
+    /// question they have already answered.
+    #[test]
+    fn how_you_export_is_remembered_between_runs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let support = tmp.path().join("support");
+
+        let mut s = Session::new();
+        s.set_support_dir(&support);
+        s.set_export(export::Format::Jpeg, 92);
+        drop(s);
+
+        let next = a_later_run(&support);
+        assert_eq!(
+            next.export_settings(),
+            export::Export {
+                format: export::Format::Jpeg,
+                quality: 92,
+            },
+            "the export choice was asked again"
+        );
+        // One home for the answer, so an export cannot use one figure while
+        // the file on disc holds another.
+        assert_eq!(next.settings().export, next.export_settings());
+    }
+
+    /// A host that has named no support directory has not agreed to anything
+    /// being written. Everything still works; it simply does not outlive the
+    /// run, and nothing is thrown.
+    #[test]
+    fn a_session_with_nowhere_to_write_still_remembers_within_the_run() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+
+        let mut s = Session::new();
+        s.toggle_favourite("grain");
+        s.set_export(export::Format::Png, 95);
+        s.open_paths(vec![a.clone()]).unwrap();
+
+        assert!(s.is_favourite("grain"));
+        assert_eq!(s.export_settings().format, export::Format::Png);
+        assert_eq!(
+            s.remembered_session(),
+            (vec![a], 0),
+            "the set in hand is still the set in hand"
+        );
+        // None of which reached a file, because there is no file to reach.
+        assert!(Support::default().settings_path().is_none());
     }
 }
