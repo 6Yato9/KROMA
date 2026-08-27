@@ -13,7 +13,7 @@ use pe_core::{Document, Geometry, History, ParamValue, RowId, RowIdGenerator, St
 use pe_io::DecodedImage;
 use pe_render::{EffectRenderer, GpuContext, ImageTexture, Region, Sampling, TransformPass};
 
-use crate::library::Library;
+use crate::library::{self, Library};
 use crate::scopes::Scopes;
 use crate::surface::Attached;
 use crate::{Support, autosave, export};
@@ -158,6 +158,13 @@ pub struct Session {
     /// is a property of the sitting rather than of a photograph; nothing
     /// reads it until the export path lands.
     export_settings: export::Export,
+    /// The batch export in progress, if one is.
+    ///
+    /// On the session rather than on the shell because the run *is* the
+    /// engine's: which document each photograph is exported with is a question
+    /// only the thing holding the set and the histories can answer, and two
+    /// shells answering it separately is two answers.
+    batch: Option<export::Batch>,
     /// Every photograph currently open, for the collision check. The one on
     /// screen is in here too. A batch writes into one folder and the name it
     /// builds for photo A can collide with photo B sitting right beside it.
@@ -203,6 +210,7 @@ impl Session {
             library: None,
             support: Support::default(),
             export_settings: export::Export::default(),
+            batch: None,
             open_set: Vec::new(),
             view: Region::FULL,
             cropping: false,
@@ -1563,53 +1571,246 @@ impl Session {
             ));
         }
 
+        self.ready_to_render()?;
+        let gpu = self.gpu.context.as_ref().expect("built above");
+        let renderer = self.gpu.renderer.as_ref().expect("built above");
+        let photo = self.photo.as_ref().expect("checked above");
+        write_rendered(
+            gpu,
+            renderer,
+            &photo.image,
+            photo.history.document(),
+            &out,
+            chosen,
+        )?;
+        Ok(out)
+    }
+
+    /// The device and the effect renderer, built if this is the first time.
+    ///
+    /// An export can be the first thing a session is ever asked to do — a
+    /// batch over a set that has been opened and never drawn — so neither is
+    /// assumed to exist already.
+    fn ready_to_render(&mut self) -> Result<(), SessionError> {
         self.context()?;
         let gpu = self.gpu.context.as_ref().expect("built above");
         if self.gpu.renderer.is_none() {
             self.gpu.renderer = Some(EffectRenderer::new(&gpu.device));
         }
-        let renderer = self.gpu.renderer.as_ref().expect("built above");
-        let photo = self.photo.as_ref().expect("checked above");
-        let doc = photo.history.document();
-        let (w, h) = pe_render::export::output_size(doc, photo.image.width, photo.image.height);
-        // The space the pipeline actually rendered to, which is what the file
-        // has to say it is in. Taken from the same settings the render read, so
-        // the two cannot disagree — a file labelled with anything else is a
-        // wrong answer stated confidently, and every reader will believe it.
-        let out_space = doc.color.pipeline().output;
-
-        if chosen.format.is_sixteen_bit() {
-            let pixels = pe_render::export::render_full_16(
-                gpu,
-                renderer,
-                photo.image.width,
-                photo.image.height,
-                &photo.image.pixels,
-                doc,
-            )
-            .map_err(|e| SessionError::Render(e.to_string()))?;
-            pe_io::save_png16(w, h, &pixels, &out, &out_space)
-                .map_err(|e| SessionError::Write(e.to_string()))?;
-        } else {
-            let pixels = pe_render::render_full(
-                gpu,
-                renderer,
-                photo.image.width,
-                photo.image.height,
-                &photo.image.pixels,
-                doc,
-            )
-            .map_err(|e| SessionError::Render(e.to_string()))?;
-            let img = pe_io::DecodedImage::new(w, h, pixels)
-                .map_err(|e| SessionError::Write(e.to_string()))?;
-            match chosen.format {
-                export::Format::Jpeg => pe_io::save_jpeg(&img, &out, chosen.quality, &out_space),
-                _ => pe_io::save_png(&img, &out, &out_space),
-            }
-            .map_err(|e| SessionError::Write(e.to_string()))?;
-        }
-        Ok(out)
+        Ok(())
     }
+
+    // ---- a batch ----------------------------------------------------------
+
+    /// Begin exporting every photograph in the set into `dir`.
+    ///
+    /// Refused when there is no set. The built-in chart is not one — there is
+    /// no file for a run to be a run over — and a session with nothing open
+    /// has nothing to export; both are the caller's mistake rather than a run
+    /// of nought photographs that reports success.
+    ///
+    /// Somewhere chosen rather than beside each original: a batch written back
+    /// into the folder it read would be the next run's input.
+    pub fn start_batch(&mut self, dir: PathBuf) -> Result<(), SessionError> {
+        let library = self.library.as_ref().ok_or(SessionError::NothingOpen)?;
+        if library.is_empty() {
+            return Err(SessionError::NothingOpen);
+        }
+        let targets = library.paths().into_iter().map(Path::to_path_buf).collect();
+        self.batch = Some(export::Batch::new(targets, dir, self.export_settings));
+        Ok(())
+    }
+
+    /// Export one photograph. `Ok(true)` while there is more to do.
+    ///
+    /// One photograph per call, and the caller is expected to call it once a
+    /// frame: sixty photographs is sixty full-resolution renders, and a loop
+    /// freezes the window for a minute with no way to tell whether it is
+    /// working or hung, and no way to stop it.
+    ///
+    /// A photograph that cannot be written — a collision with somebody's
+    /// original, a file that will not decode, a render that fails — is counted
+    /// and stepped past. `Err` is reserved for what ends the whole run, which
+    /// is having no device to render with.
+    pub fn step_batch(&mut self) -> Result<bool, SessionError> {
+        let Some(batch) = self.batch.as_mut() else {
+            return Ok(false);
+        };
+        let Some(path) = batch.take_next() else {
+            return Ok(false);
+        };
+        let chosen = batch.settings();
+        let out = batch.claim(&path);
+        let more = batch.remaining() > 0;
+
+        // Every original this run must not land on: the set as the session has
+        // it, and the run's own targets, which stop being the same list the
+        // moment a photograph is taken out of the set. Something removed is
+        // still somebody's photograph.
+        let mut originals = self.open_set.clone();
+        originals.extend(
+            self.batch
+                .as_ref()
+                .expect("still running")
+                .targets()
+                .iter()
+                .cloned(),
+        );
+        if export::would_overwrite_a_source(&originals, &out) {
+            // Counted as a failure rather than stopping the run: one collision
+            // should not abandon the other sixty-five, and the summary at the
+            // end says how many did not make it.
+            self.missed_one();
+            return Ok(more);
+        }
+
+        // The photograph in hand is the one whose path is in hand, not the one
+        // the library happens to be pointing at. A photograph taken out of the
+        // set while it was showing is still the one whose edit is live, and
+        // asking the library where it sits would get nothing and reach instead
+        // for a sidecar that is a version behind.
+        let in_hand = self.photo.as_ref().and_then(|p| p.path.as_deref()) == Some(path.as_path());
+
+        // Decoded here rather than held: the whole reason a set is navigable is
+        // that only one frame is in memory at a time, and a batch that loaded
+        // them all would undo that in the one place it matters most.
+        //
+        // Before the document, not after, because a photograph that has never
+        // been opened has no document yet and the file is the only thing that
+        // can say what colour space it is in.
+        let image = if in_hand {
+            self.photo.as_ref().expect("in hand").image.clone()
+        } else {
+            match pe_io::load(&path) {
+                Ok(image) => image,
+                Err(_) => {
+                    self.missed_one();
+                    return Ok(more);
+                }
+            }
+        };
+
+        // Three places an edit can be: the live history for the photograph in
+        // hand, a parked history for one that has been visited, and the
+        // autosave or sidecar beside one never opened — or nowhere at all,
+        // which means the defaults.
+        //
+        // Getting this wrong exports sixty photographs with the wrong sixty
+        // edits, and the files look right until somebody opens them.
+        let doc = if in_hand {
+            self.photo
+                .as_ref()
+                .expect("in hand")
+                .history
+                .document()
+                .clone()
+        } else {
+            let parked = self
+                .library
+                .as_ref()
+                .and_then(|l| l.index_of(&path).and_then(|i| l.entries().get(i)))
+                .and_then(|entry| entry.document())
+                .cloned();
+            parked.unwrap_or_else(|| {
+                library::load_edit(&self.support, &path)
+                    .unwrap_or_else(|| library::fresh_document(&path, image.space))
+            })
+        };
+
+        self.ready_to_render()?;
+        let gpu = self.gpu.context.as_ref().expect("built above");
+        let renderer = self.gpu.renderer.as_ref().expect("built above");
+        let written = write_rendered(gpu, renderer, &image, &doc, &out, chosen);
+        match written {
+            Ok(()) => self.wrote_one(),
+            Err(_) => self.missed_one(),
+        }
+        Ok(more)
+    }
+
+    /// How far it has got: done, failed, total. `None` when there is no run.
+    ///
+    /// A finished run keeps its counts until it is cancelled or another
+    /// begins, because the summary — `n exported`, or `n exported, m failed` —
+    /// is read *after* the step that says there is no more to do. A run that
+    /// silently stopped is indistinguishable from one that crashed.
+    pub fn batch_progress(&self) -> Option<(usize, usize, usize)> {
+        self.batch.as_ref().map(export::Batch::progress)
+    }
+
+    /// Stop, keeping whatever has already been written.
+    ///
+    /// Nothing is taken back. Half a folder of exports is the state somebody
+    /// asked for when they pressed cancel; deleting the files they had already
+    /// waited for would be the surprising answer.
+    pub fn cancel_batch(&mut self) {
+        self.batch = None;
+    }
+
+    fn wrote_one(&mut self) {
+        if let Some(batch) = self.batch.as_mut() {
+            batch.wrote_one();
+        }
+    }
+
+    fn missed_one(&mut self) {
+        if let Some(batch) = self.batch.as_mut() {
+            batch.missed_one();
+        }
+    }
+}
+
+/// Render one photograph at full size and write it, in whichever format was
+/// chosen.
+///
+/// One function for the single export and for a batch's every step. Two copies
+/// of the same three lines is two places for a format to be handled and one of
+/// them to be forgotten — and the failure would be a folder of JPEGs from a
+/// run that said PNG.
+///
+/// A free function rather than a method because a batch's photograph is not
+/// the session's: it is decoded, exported and dropped, and the document it is
+/// written with may have come from a sidecar the session has never held.
+fn write_rendered(
+    gpu: &GpuContext,
+    renderer: &EffectRenderer,
+    image: &DecodedImage,
+    doc: &Document,
+    out: &Path,
+    chosen: export::Export,
+) -> Result<(), SessionError> {
+    let (w, h) = pe_render::export::output_size(doc, image.width, image.height);
+    // The space the pipeline actually rendered to, which is what the file has
+    // to say it is in. Taken from the same settings the render read, so the two
+    // cannot disagree — a file labelled with anything else is a wrong answer
+    // stated confidently, and every reader will believe it.
+    let out_space = doc.color.pipeline().output;
+
+    if chosen.format.is_sixteen_bit() {
+        let pixels = pe_render::export::render_full_16(
+            gpu,
+            renderer,
+            image.width,
+            image.height,
+            &image.pixels,
+            doc,
+        )
+        .map_err(|e| SessionError::Render(e.to_string()))?;
+        pe_io::save_png16(w, h, &pixels, out, &out_space)
+            .map_err(|e| SessionError::Write(e.to_string()))?;
+    } else {
+        let pixels =
+            pe_render::render_full(gpu, renderer, image.width, image.height, &image.pixels, doc)
+                .map_err(|e| SessionError::Render(e.to_string()))?;
+        let img = pe_io::DecodedImage::new(w, h, pixels)
+            .map_err(|e| SessionError::Write(e.to_string()))?;
+        match chosen.format {
+            export::Format::Jpeg => pe_io::save_jpeg(&img, out, chosen.quality, &out_space),
+            _ => pe_io::save_png(&img, out, &out_space),
+        }
+        .map_err(|e| SessionError::Write(e.to_string()))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2948,5 +3149,373 @@ mod tests {
         // The flag is a property of the window, so it needs nothing open.
         s.set_cropping(true);
         assert!(s.cropping());
+    }
+
+    // ---- a batch of them ------------------------------------------------
+
+    /// A session over a set, writing PNGs.
+    ///
+    /// PNG rather than JPEG because these tests read the written pixels back,
+    /// and a lossy step between the render and the assertion is noise nobody
+    /// needs.
+    fn batch_session(paths: Vec<PathBuf>, support: &Path) -> Session {
+        let mut s = Session::new();
+        s.set_support_dir(support);
+        s.open_paths(paths).unwrap();
+        s.set_export(export::Format::Png, 95);
+        s
+    }
+
+    fn out_dir(tmp: &Path) -> PathBuf {
+        let out = tmp.join("out");
+        std::fs::create_dir(&out).expect("the temporary directory is writable");
+        out
+    }
+
+    /// Step until there is no more to do, and say how many steps it took.
+    fn run_batch(s: &mut Session) -> usize {
+        let mut steps = 0;
+        loop {
+            let more = s.step_batch().expect("the run had a device to draw with");
+            steps += 1;
+            assert!(steps < 64, "a batch that will not finish");
+            if !more {
+                return steps;
+            }
+        }
+    }
+
+    /// The mean of a file that has been written, which is the only way to tell
+    /// one edit from another once the pixels have left the process.
+    fn mean_of_file(path: &Path) -> f32 {
+        let img = pe_io::load(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        mean(&img.pixels)
+    }
+
+    #[test]
+    fn a_batch_writes_one_file_per_photograph() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = out_dir(tmp.path());
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let b = photo_at(tmp.path(), "b.png", 64, 64);
+        let c = photo_at(tmp.path(), "c.png", 64, 64);
+
+        let mut s = batch_session(vec![a, b, c], &tmp.path().join("support"));
+        s.start_batch(out.clone()).unwrap();
+        assert_eq!(s.batch_progress(), Some((0, 0, 3)), "nothing has run yet");
+
+        assert_eq!(run_batch(&mut s), 3, "one step per photograph, no more");
+        assert_eq!(s.batch_progress(), Some((3, 0, 3)));
+        for name in ["a_KROMA.png", "b_KROMA.png", "c_KROMA.png"] {
+            assert!(out.join(name).exists(), "{name} was not written");
+        }
+    }
+
+    /// The edit follows the photograph, whether it is the one in hand, one
+    /// visited and parked, or one never opened with a sidecar beside it.
+    ///
+    /// The one that matters. Getting this wrong exports sixty photographs with
+    /// the wrong sixty edits, and the files look right until somebody opens
+    /// them — so this asserts on the written pixels rather than on a document,
+    /// and gives the four photographs identical sources so that the *only*
+    /// thing which can make the four files differ is the edit each was
+    /// exported with.
+    ///
+    /// `d` is the control: nobody has touched it, so it is what a lookup that
+    /// fell back to the defaults would produce. Every other file has to be on
+    /// the correct side of it by a visible margin.
+    #[test]
+    fn each_photograph_is_exported_with_its_own_edit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let support = tmp.path().join("support");
+        let out = out_dir(tmp.path());
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let b = photo_at(tmp.path(), "b.png", 64, 64);
+        let c = photo_at(tmp.path(), "c.png", 64, 64);
+        let d = photo_at(tmp.path(), "d.png", 64, 64);
+        let parked_photo = b.clone();
+
+        // c is never opened by the session that runs the batch. Its edit is in
+        // a sidecar beside it, written by a session that has since gone away —
+        // in its own support directory, so that nothing but the `.peproj` can
+        // be what carries the edit across.
+        {
+            let mut earlier = Session::new();
+            earlier.set_support_dir(tmp.path().join("elsewhere"));
+            earlier.open_path(&c).unwrap();
+            let row = earlier.add_effect("exposure").unwrap();
+            earlier.set_float(row, "ev", 1.0).unwrap();
+            earlier.save_sidecar().unwrap();
+        }
+
+        let mut s = batch_session(vec![a, b, c, d.clone()], &support);
+        // a is in hand. Two stops up first — which switching away writes out
+        // to its autosave — and then, once it is back in hand, one stop *down*
+        // on top of that, which nothing has written anywhere.
+        //
+        // The second edit is the whole point of the live history being asked
+        // first: the autosave is throttled, so at any moment the photograph on
+        // screen is ahead of everything on disc about it, and a run that read
+        // the disc would export the picture as it was a few seconds ago.
+        let a_row = s.add_effect("exposure").unwrap();
+        s.set_float(a_row, "ev", 2.0).unwrap();
+        // b is visited and then left: three stops down, parked behind.
+        s.focus(1).unwrap();
+        let b_row = s.add_effect("exposure").unwrap();
+        s.set_float(b_row, "ev", -3.0).unwrap();
+        s.focus(0).unwrap();
+        s.set_float(a_row, "ev", -1.0).unwrap();
+        // And b's autosave is deleted behind its back, so that the parked
+        // history in memory is the *only* place its three stops still exist.
+        // Otherwise this branch proves nothing: switching away writes the
+        // autosave, so a run that ignored the parked edit and read the disc
+        // would get the same answer and look correct.
+        autosave::forget(&Support::at(&support), &parked_photo);
+        assert_eq!(
+            autosave::load(&Support::at(&support), &d)
+                .or_else(|| library::load_sidecar(&d))
+                .map(|doc| doc.stack.len()),
+            None,
+            "the control photograph picked up an edit from somewhere"
+        );
+
+        s.start_batch(out.clone()).unwrap();
+        run_batch(&mut s);
+        assert_eq!(s.batch_progress(), Some((4, 0, 4)));
+
+        let untouched = mean_of_file(&out.join("d_KROMA.png"));
+        let in_hand = mean_of_file(&out.join("a_KROMA.png"));
+        let parked = mean_of_file(&out.join("b_KROMA.png"));
+        let sidecar = mean_of_file(&out.join("c_KROMA.png"));
+
+        assert!(
+            sidecar > untouched + 5.0,
+            "the sidecar edit did not reach the file: {sidecar} against an untouched {untouched}"
+        );
+        // Darker than untouched, so neither the defaults nor a's own autosave
+        // — which says two stops *up* — can produce this number.
+        assert!(
+            in_hand < untouched - 5.0,
+            "the photograph in hand was exported with something other than the \
+             edit in hand: {in_hand} against an untouched {untouched}, where the \
+             autosave a fallback would have found is brighter than both"
+        );
+        assert!(
+            parked < in_hand - 5.0,
+            "the parked edit did not reach the file: three stops down read as \
+             {parked}, one stop down as {in_hand}, untouched as {untouched}"
+        );
+    }
+
+    /// Two sources called the same thing in different folders must not write
+    /// over one another.
+    #[test]
+    fn two_photographs_with_the_same_name_get_different_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = out_dir(tmp.path());
+        let holiday = tmp.path().join("holiday");
+        let work = tmp.path().join("work");
+        std::fs::create_dir(&holiday).unwrap();
+        std::fs::create_dir(&work).unwrap();
+        let one = photo_at(&holiday, "sunset.png", 64, 64);
+        let two = photo_at(&work, "sunset.png", 64, 64);
+
+        let mut s = batch_session(vec![one, two], &tmp.path().join("support"));
+        s.start_batch(out.clone()).unwrap();
+        run_batch(&mut s);
+
+        assert_eq!(s.batch_progress(), Some((2, 0, 2)));
+        assert!(out.join("sunset_KROMA.png").exists());
+        assert!(
+            out.join("sunset_KROMA_2.png").exists(),
+            "the second sunset landed on the first: one file on disc, two successes reported"
+        );
+    }
+
+    /// One collision does not abandon the run.
+    #[test]
+    fn a_photograph_that_would_land_on_an_original_is_counted_and_skipped() {
+        // Contrived deliberately, and not far-fetched: a folder that has been
+        // exported once already, exported into again.
+        let tmp = tempfile::tempdir().unwrap();
+        let sunset = photo_at(tmp.path(), "sunset.png", 64, 64);
+        let already = photo_at(tmp.path(), "sunset_KROMA.png", 64, 64);
+        let untouched = std::fs::read(&already).unwrap();
+
+        let mut s = batch_session(vec![sunset, already.clone()], &tmp.path().join("support"));
+        s.start_batch(tmp.path().to_path_buf()).unwrap();
+        run_batch(&mut s);
+
+        assert_eq!(
+            std::fs::read(&already).unwrap(),
+            untouched,
+            "an original was written over"
+        );
+        assert_eq!(
+            s.batch_progress(),
+            Some((1, 1, 2)),
+            "the collision was not counted, or it stopped the run"
+        );
+        assert!(
+            tmp.path().join("sunset_KROMA_KROMA.png").exists(),
+            "one collision abandoned the photograph after it"
+        );
+    }
+
+    #[test]
+    fn a_photograph_that_will_not_decode_is_counted_and_skipped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = out_dir(tmp.path());
+        let good = photo_at(tmp.path(), "a.png", 64, 64);
+        // Second, not first: opening the set decodes the first one, and this
+        // is about a file that fails when the *run* reaches it.
+        let bad = tmp.path().join("b.png");
+        std::fs::write(&bad, b"not a photograph").unwrap();
+
+        let mut s = batch_session(vec![good, bad], &tmp.path().join("support"));
+        s.start_batch(out.clone()).unwrap();
+        run_batch(&mut s);
+
+        assert_eq!(s.batch_progress(), Some((1, 1, 2)));
+        assert!(out.join("a_KROMA.png").exists());
+        assert!(!out.join("b_KROMA.png").exists());
+    }
+
+    /// Taken out of the set half way through, still exported.
+    #[test]
+    fn a_photograph_removed_mid_run_is_still_written() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = out_dir(tmp.path());
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let b = photo_at(tmp.path(), "b.png", 64, 64);
+
+        let mut s = batch_session(vec![a.clone(), b], &tmp.path().join("support"));
+        s.start_batch(out.clone()).unwrap();
+        assert!(
+            s.step_batch().unwrap(),
+            "there is a second photograph to do"
+        );
+
+        // b leaves the set with the run half done. The session is re-opened on
+        // a alone, which is what a removal amounts to from the run's side: the
+        // photograph is no longer in the library, and is still on disc.
+        s.open_paths(vec![a]).unwrap();
+        assert_eq!(s.library().unwrap().len(), 1);
+
+        assert!(!s.step_batch().unwrap());
+        assert_eq!(s.batch_progress(), Some((2, 0, 2)));
+        assert!(
+            out.join("b_KROMA.png").exists(),
+            "a photograph taken out of the set was abandoned, though it is still on disc"
+        );
+    }
+
+    #[test]
+    fn cancelling_keeps_what_was_already_written() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = out_dir(tmp.path());
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let b = photo_at(tmp.path(), "b.png", 64, 64);
+        let c = photo_at(tmp.path(), "c.png", 64, 64);
+
+        let mut s = batch_session(vec![a, b, c], &tmp.path().join("support"));
+        s.start_batch(out.clone()).unwrap();
+        s.step_batch().unwrap();
+        s.cancel_batch();
+
+        assert!(s.batch_progress().is_none(), "the run is still going");
+        assert!(
+            !s.step_batch().unwrap(),
+            "a cancelled run carried on when it was stepped again"
+        );
+        assert!(
+            out.join("a_KROMA.png").exists(),
+            "cancelling took back what had already been written"
+        );
+        assert!(!out.join("b_KROMA.png").exists());
+        assert!(!out.join("c_KROMA.png").exists());
+    }
+
+    #[test]
+    fn a_batch_with_no_set_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = Session::new();
+        assert!(matches!(
+            s.start_batch(tmp.path().to_path_buf()),
+            Err(SessionError::NothingOpen)
+        ));
+        assert!(s.batch_progress().is_none());
+
+        // Nor is the built-in chart a set: there is no file for a run to be a
+        // run over.
+        s.open_test_chart(64, 64).unwrap();
+        assert!(matches!(
+            s.start_batch(tmp.path().to_path_buf()),
+            Err(SessionError::NothingOpen)
+        ));
+        assert!(s.batch_progress().is_none());
+        assert!(!s.step_batch().unwrap(), "a run that was never started ran");
+    }
+
+    /// The format is the run's, taken when it started.
+    ///
+    /// Changing it half way through would otherwise leave a folder half JPEG
+    /// and half PNG with no record of where the line fell.
+    #[test]
+    fn a_run_writes_the_format_it_started_with() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = out_dir(tmp.path());
+        let a = photo_at(tmp.path(), "a.png", 64, 64);
+        let b = photo_at(tmp.path(), "b.png", 64, 64);
+
+        let mut s = batch_session(vec![a, b], &tmp.path().join("support"));
+        s.start_batch(out.clone()).unwrap();
+        s.step_batch().unwrap();
+        s.set_export(export::Format::Jpeg, 95);
+        run_batch(&mut s);
+
+        assert_eq!(s.batch_progress(), Some((2, 0, 2)));
+        assert!(
+            out.join("b_KROMA.png").exists(),
+            "the format changed under a run that was already going"
+        );
+        assert!(!out.join("b_KROMA.jpg").exists());
+    }
+
+    /// The image is loaded before the document is chosen.
+    ///
+    /// A photograph that has never been opened has no document, and the file is
+    /// the only thing that can say what colour space it is in. Choosing the
+    /// document first means inventing one with nothing to tell it, and every
+    /// wide-gamut photograph in the set comes out as though it had been sRGB
+    /// all along — a subtle wrong answer rather than a crash, and one nobody
+    /// sees until they put the export beside the original.
+    #[test]
+    fn a_photograph_never_opened_is_exported_in_the_space_its_file_declares() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = out_dir(tmp.path());
+        // The same pixels three times. The first is there to be the one the
+        // session opens, so that the other two are never opened at all; the
+        // other two differ in nothing but what their file says about them.
+        let chart = pe_io::test_chart(64, 64);
+        let opened = tmp.path().join("opened.png");
+        let narrow = tmp.path().join("narrow.png");
+        let wide = tmp.path().join("wide.png");
+        pe_io::save_png(&chart, &opened, &pe_color::space::SRGB).unwrap();
+        pe_io::save_png(&chart, &narrow, &pe_color::space::SRGB).unwrap();
+        pe_io::save_png(&chart, &wide, &pe_color::space::DISPLAY_P3).unwrap();
+        assert_eq!(pe_io::load(&wide).unwrap().space, Some("Display P3"));
+
+        let mut s = batch_session(vec![opened, narrow, wide], &tmp.path().join("support"));
+        s.start_batch(out.clone()).unwrap();
+        run_batch(&mut s);
+        assert_eq!(s.batch_progress(), Some((3, 0, 3)));
+
+        let narrow_out = pe_io::load(out.join("narrow_KROMA.png")).unwrap();
+        let wide_out = pe_io::load(out.join("wide_KROMA.png")).unwrap();
+        assert_ne!(
+            narrow_out.pixels, wide_out.pixels,
+            "the wide photograph was exported as though its file had said nothing"
+        );
     }
 }

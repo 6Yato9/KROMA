@@ -167,6 +167,112 @@ pub fn would_overwrite_a_source(open: &[PathBuf], out: &Path) -> bool {
     open.iter().any(|p| same_file(p, out))
 }
 
+/// A batch export in progress.
+///
+/// Stepped rather than looped: sixty photographs is sixty full-resolution
+/// renders, and a loop freezes the window for a minute with no way to tell
+/// whether it is working or hung, and no way to stop. One photograph per frame
+/// keeps the interface alive, gives somewhere to show progress, and makes
+/// cancelling a matter of not asking for the next one.
+///
+/// The state only. Deciding which document a photograph is exported with, and
+/// doing the render, belongs to the session that holds them — see
+/// [`crate::Session::step_batch`].
+pub struct Batch {
+    /// The photographs to write, by path rather than by position, snapshotted
+    /// when the run started.
+    ///
+    /// The set can change underneath a run — "Remove from set" is right there
+    /// in the filmstrip and nothing disables it — and every position after a
+    /// removal slides down by one. A list of indices would then export one
+    /// photograph twice, miss another entirely, and report both as successes.
+    /// A path means the same photograph whatever happens to the list, and a
+    /// photograph taken out of the set part way through is still on disc and
+    /// still worth exporting.
+    targets: Vec<PathBuf>,
+    next: usize,
+    dir: PathBuf,
+    done: usize,
+    failed: usize,
+    /// Taken once, when the run starts, rather than read per photograph.
+    /// Changing the format halfway through a batch would otherwise leave a
+    /// folder half JPEG and half PNG, with no record of where the line fell.
+    export: Export,
+    /// Names already used by this run, folded to lower case, so two sources
+    /// with the same stem do not write over each other. A batch writes into
+    /// one directory and the set it is writing can have come from several.
+    taken: HashSet<String>,
+}
+
+impl Batch {
+    pub fn new(targets: Vec<PathBuf>, dir: PathBuf, export: Export) -> Self {
+        Self {
+            targets,
+            next: 0,
+            dir,
+            done: 0,
+            failed: 0,
+            export,
+            taken: HashSet::new(),
+        }
+    }
+
+    /// What this run writes as, decided when it started.
+    pub fn settings(&self) -> Export {
+        self.export
+    }
+
+    /// Where it is writing.
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// The photographs it set out to write.
+    pub fn targets(&self) -> &[PathBuf] {
+        &self.targets
+    }
+
+    /// Done, failed, total. The two counts do not have to add up to the third
+    /// until the run is over, which is the point of showing all three.
+    pub fn progress(&self) -> (usize, usize, usize) {
+        (self.done, self.failed, self.targets.len())
+    }
+
+    /// How many photographs have not been reached yet.
+    pub fn remaining(&self) -> usize {
+        self.targets.len().saturating_sub(self.next)
+    }
+
+    /// The next photograph to write, moving past it.
+    ///
+    /// Moved past before it is attempted rather than after, so that a
+    /// photograph which fails cannot be retried forever by a caller that keeps
+    /// stepping.
+    pub fn take_next(&mut self) -> Option<PathBuf> {
+        let path = self.targets.get(self.next).cloned()?;
+        self.next += 1;
+        Some(path)
+    }
+
+    /// Where this photograph goes: a name in this run's directory that nothing
+    /// in this run has used yet.
+    pub fn claim(&mut self, source: &Path) -> PathBuf {
+        unclaimed_export_path(&self.dir, source, self.export.format, &mut self.taken)
+    }
+
+    pub fn wrote_one(&mut self) {
+        self.done += 1;
+    }
+
+    /// One photograph did not make it. Counted rather than fatal: one
+    /// collision, or one file that will not decode, should not abandon the
+    /// other sixty-five, and the summary at the end says how many did not make
+    /// it.
+    pub fn missed_one(&mut self) {
+        self.failed += 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
