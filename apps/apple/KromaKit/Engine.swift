@@ -799,6 +799,141 @@ public final class Session {
         defer { pe_string_free(raw) }
         return URL(fileURLWithPath: String(cString: raw))
     }
+
+    // ---- a batch ------------------------------------------------------------
+    //
+    // Every photograph in the set, each with its own edit, into one folder
+    // chosen rather than beside each original. The run belongs to the engine;
+    // what crosses here is a directory, a step, three counts and a cancel.
+    // Never a frame, and never a list.
+    //
+    // **The stepping is this side's, and that is deliberate.** Sixty
+    // photographs is sixty full-resolution renders, and a loop inside the
+    // engine would freeze the window for a minute with no way to tell whether
+    // it was working or hung, and no way to stop it. One step per frame keeps
+    // the interface alive, gives somewhere to show progress, and makes
+    // cancelling a matter of not asking for the next one.
+
+    /// Begin exporting every photograph in the set into `directory`, in
+    /// whichever format ``setExport(format:quality:)`` was last given.
+    ///
+    /// The format is taken now rather than per photograph, so changing it
+    /// halfway cannot leave a folder half JPEG and half PNG.
+    ///
+    /// Throws with no set open. A session showing nothing, and a session
+    /// showing the built-in chart, have no photographs to run over, and a
+    /// successful run of nought files is not the honest answer to either.
+    /// Starting a second run replaces the first, counts and all.
+    public func startBatch(into directory: URL) throws {
+        try check(directory.path.withCString {
+            pe_session_start_batch(handle, $0)
+        })
+    }
+
+    /// Export one photograph, and say whether there is more to do.
+    ///
+    /// **True while there is more**, false when there is not, and a throw when
+    /// the run was refused. The ABI puts "more to do" on `1` rather than on the
+    /// usual 0-is-success precisely so that the loop condition is `> 0` and
+    /// never `!= 0`: reading `0` as a failure abandons a run on its last step
+    /// and leaves the rest of the folder unwritten, and reading a negative as
+    /// "finished" reports `n exported` for a run that never started.
+    ///
+    /// A throw is the engine having no device to render with, which ends the
+    /// whole run rather than costing it one photograph. A photograph that
+    /// merely could not be written — a collision with somebody's original, a
+    /// file that will not decode — is *not* a throw: it is counted in
+    /// ``BatchCounts/failed`` and stepped past, because one collision should
+    /// not abandon the other sixty-five.
+    ///
+    /// False with no run in progress at all, since there is equally nothing
+    /// more to do. ``batchProgress()`` is what tells a run that finished from
+    /// one that was never started.
+    ///
+    /// Call it once a frame from wherever the render loop already ticks, not in
+    /// a loop and never inside a view update: a full-resolution render there is
+    /// a frozen window with extra steps.
+    public func stepBatch() throws -> Bool {
+        let answer = pe_session_step_batch(handle)
+        guard answer >= 0 else {
+            throw EngineError(code: answer, message: lastError ?? "no reason given")
+        }
+        return answer > 0
+    }
+
+    /// How far the run has got, or nil when no run has been started.
+    ///
+    /// Three counts in one call, because a progress bar wants all three on
+    /// every frame it draws. Nil rather than a throw, and the ABI deliberately
+    /// leaves its last error alone for this one: "no batch is running" is the
+    /// ordinary state of a session, this is asked once a frame to decide
+    /// whether to draw a bar at all, and a message per frame would bury
+    /// whatever real failure was sitting there.
+    ///
+    /// **A finished run is still a run.** Its counts stay readable until it is
+    /// cancelled or another begins, which is what makes the summary — `n
+    /// exported`, or `n exported, m failed` — readable *after* the step that
+    /// answered false. A run that silently stopped is indistinguishable from
+    /// one that crashed.
+    public func batchProgress() -> BatchCounts? {
+        var done: UInt32 = 0
+        var failed: UInt32 = 0
+        var total: UInt32 = 0
+        guard pe_session_batch_progress(handle, &done, &failed, &total) == 0 else {
+            return nil
+        }
+        return BatchCounts(done: Int(done), failed: Int(failed), total: Int(total))
+    }
+
+    /// Stop the run, keeping whatever has already been written.
+    ///
+    /// Nothing is taken back. Half a folder of exports is the state somebody
+    /// asked for when they pressed stop; deleting the files they had already
+    /// waited for would be the surprising answer. Also how the counts of a
+    /// *finished* run are put away once the summary has been read.
+    ///
+    /// Cancelling when nothing is running does nothing, so a window closing
+    /// does not have to know whether a run is on.
+    public func cancelBatch() {
+        _ = pe_session_cancel_batch(handle)
+    }
+}
+
+/// How far a batch export has got: written, missed, and how many there are.
+///
+/// A value type and `Equatable`, so the store can write it only when it has
+/// actually moved rather than telling the bar drawing it to run its body again
+/// sixty times a second for three numbers it already has.
+public struct BatchCounts: Equatable, Sendable {
+    /// Photographs written.
+    public let done: Int
+    /// Photographs that could not be written — a collision with somebody's
+    /// original, a file that will not decode. Counted and stepped past, never a
+    /// stop: one collision should not abandon the other sixty-five.
+    public let failed: Int
+    /// How many the run was started over. Snapshotted when it started, so a
+    /// photograph taken out of the set part way through is still on disc and
+    /// still worth exporting.
+    public let total: Int
+
+    public init(done: Int, failed: Int, total: Int) {
+        self.done = done
+        self.failed = failed
+        self.total = total
+    }
+
+    /// Whether every photograph has been accounted for.
+    ///
+    /// The two counts do not have to add up to the third until the run is over,
+    /// which is the point of being given all three.
+    public var finished: Bool { done + failed >= total }
+
+    /// What a bar fills, 0 to 1. A run over nothing reads as finished rather
+    /// than as empty — though the engine refuses to start one.
+    public var fraction: Double {
+        guard total > 0 else { return 1 }
+        return min(Double(done + failed) / Double(total), 1)
+    }
 }
 
 extension AspectLock {

@@ -52,7 +52,7 @@ that are easy to lose:
 **Files:**
 - Modify: `crates/pe-session/src/export.rs`, `crates/pe-session/src/session.rs`
 
-- [ ] **Step 1: The state**
+- [x] **Step 1: The state**
 
 ```rust
 /// A batch export in progress.
@@ -91,7 +91,7 @@ and on `Session`:
     pub fn cancel_batch(&mut self)
 ```
 
-- [ ] **Step 2: Tests**
+- [x] **Step 2: Tests**
 
 These are the reason this feature was chosen while the screen is unavailable:
 every one of them is checkable on disc.
@@ -132,7 +132,7 @@ every one of them is checkable on disc.
 it fail if the document lookup falls back to the defaults, by giving the
 photographs visibly different edits and reading the written pixels back.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 Baseline **747 Rust passed, 0 failed, 1 ignored**. Report the real number.
 Run `cargo check --workspace --all-targets --exclude pe-windows --target x86_64-unknown-linux-gnu` and `cargo clippy --workspace --all-targets`.
@@ -169,7 +169,7 @@ refused.** Test against files on disc, not only return codes.
 - Modify: `apps/apple/PhotoEditor/PhotoEditorApp.swift` (a menu item and a folder panel)
 - Create: `apps/apple/KromaKit/Controls/BatchProgress.swift`
 
-- [ ] **Step 1: Drive it**
+- [x] **Step 1: Drive it**
 
 `store.startBatch(_:)` and a step per frame from wherever the render loop
 already ticks — the same place `renderIfNeeded` and `collectThumbnails` are
@@ -180,7 +180,7 @@ Progress as done/failed/total, and a cancel. When it finishes, say what
 happened — `n exported`, or `n exported, m failed` — because a run that
 silently stops is indistinguishable from one that crashed.
 
-- [ ] **Step 2: Tests**
+- [x] **Step 2: Tests**
 
 Against a real engine and a temporary directory, the way `LibraryTests` makes
 its fixtures: start a batch over three photographs, step it to completion, and

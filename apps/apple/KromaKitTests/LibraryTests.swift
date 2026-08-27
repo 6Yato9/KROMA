@@ -360,7 +360,11 @@ final class LibraryTests: XCTestCase {
     /// Write a real PNG: a red block in one corner over a grey field, so that a
     /// thumbnail of it is a picture of something rather than a flat colour that
     /// would read the same however the channels were ordered.
-    private static func writePNG(_ url: URL, width: Int, height: Int) throws {
+    ///
+    /// The bundle's one PNG writer — `BatchTests` needs real photographs on
+    /// disc for the same reason this does, and a second copy of an encoder is a
+    /// second copy to drift.
+    static func writePNG(_ url: URL, width: Int, height: Int) throws {
         guard
             let context = CGContext(
                 data: nil, width: width, height: height, bitsPerComponent: 8,

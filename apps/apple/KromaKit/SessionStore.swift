@@ -86,6 +86,11 @@ public final class SessionStore {
         // them. One C call when nothing has turned up, which is almost every
         // frame.
         collectThumbnails()
+        // One photograph of a batch, here and in no `body`: a full-resolution
+        // render inside a view update is a frozen window with extra steps.
+        // Before the frame rather than after it, so what the bar draws this
+        // time round is the count the step just moved.
+        stepBatch()
         // The tick drives the autosave debounce, so it can fail with something
         // the person needs to know — that their work in progress is not being
         // written. It goes to the status bar like any other refusal, and does
@@ -628,6 +633,127 @@ public final class SessionStore {
     /// when the window closes.
     public func flush() {
         run { try session.flushAutosave() }
+    }
+
+    // ---- a batch ----------------------------------------------------------
+    //
+    // Every photograph in the set, one per frame, from `renderIfNeeded` — the
+    // same tick that collects thumbnails and drives the autosave. Sixty
+    // photographs is sixty full-resolution renders: a loop would freeze the
+    // window for a minute with no way to tell whether it was working or hung
+    // and no way to stop it, and a step inside a `body` would be that same
+    // freeze with a view update wrapped round it.
+
+    /// How far the run has got, or nil when there is no run.
+    ///
+    /// Written only when the counts actually move, so a bar drawing them is not
+    /// asked to run its body again sixty times a second for three numbers it
+    /// already has.
+    public private(set) var batch: BatchCounts?
+
+    /// What the run that just ended did: `n exported`, or `n exported, m
+    /// failed`. Nil until one ends, and again once it has been dismissed.
+    ///
+    /// Its own property rather than `problem`, and not only because finishing
+    /// is not a failure: `problem` is cleared by the next call that succeeds,
+    /// which on this path is the tick of the very next frame. A run that
+    /// silently stops is indistinguishable from one that crashed, and this is
+    /// the thing that tells them apart — which is the whole reason the engine
+    /// keeps a finished run's counts until they are read.
+    public private(set) var batchSummary: String?
+
+    /// Whether a run could be started: there are photographs, and nothing is
+    /// already running.
+    public var canStartBatch: Bool { !library.isEmpty && batch == nil }
+
+    /// Begin exporting every photograph in the set into `directory`.
+    ///
+    /// Somewhere chosen rather than beside each original: a batch written back
+    /// into the folder it read would be the next run's input. Refused with no
+    /// set open — the built-in chart is not a set of one — and the refusal
+    /// arrives in `problem` like any other.
+    public func startBatch(into directory: URL) {
+        var started = false
+        run {
+            try session.startBatch(into: directory)
+            started = true
+        }
+        guard started else { return }
+        batchSummary = nil
+        batch = session.batchProgress()
+        if batch == nil {
+            // Nothing in the ABI produces this: a run that started reports its
+            // counts. Saying so beats a run that never steps and never says why.
+            problem = "the engine started a run it does not have"
+        }
+    }
+
+    /// Export one photograph, if a run is on. Called from the frame tick.
+    ///
+    /// The answer says whether a step was taken, which is the one thing worth
+    /// knowing about a call made every frame.
+    @discardableResult
+    public func stepBatch() -> Bool {
+        guard batch != nil else { return false }
+
+        var more = false
+        var refusal: String?
+        do {
+            more = try session.stepBatch()
+        } catch {
+            // A refusal is the engine having no device to render with, which
+            // ends the whole run. A photograph that merely could not be written
+            // is counted in `failed` and stepped past, and arrives here as an
+            // ordinary step with one more in that count.
+            refusal = String(describing: error)
+        }
+
+        // Read after the step and before the run is put away. A finished run
+        // keeps its counts until it is cancelled, which is the whole reason the
+        // summary below can be written at all.
+        let counts = session.batchProgress()
+        if counts != batch { batch = counts }
+
+        if let refusal {
+            // In `problem` too, for the frame it survives; the summary is the
+            // copy that is still there when somebody looks up.
+            problem = refusal
+            end(saying: "stopped after \(Self.tally(counts)): \(refusal)")
+        } else if !more {
+            end(saying: Self.tally(counts))
+        }
+        return true
+    }
+
+    /// Stop the run, keeping what it has already written.
+    ///
+    /// Nothing is taken back: half a folder of exports is the state somebody
+    /// asked for when they pressed stop.
+    public func cancelBatch() {
+        guard batch != nil else { return }
+        // The engine's counts rather than the held copy: this is a button
+        // press, not a frame, and the run is still there to be asked.
+        end(saying: "stopped after \(Self.tally(session.batchProgress()))")
+    }
+
+    /// Put the summary away, once it has been read.
+    public func dismissBatchSummary() {
+        if batchSummary != nil { batchSummary = nil }
+    }
+
+    /// Say what the run did, and let the engine put its counts away.
+    private func end(saying said: String) {
+        batchSummary = said
+        session.cancelBatch()
+        batch = nil
+    }
+
+    /// `n exported`, or `n exported, m failed`.
+    private static func tally(_ counts: BatchCounts?) -> String {
+        guard let counts else { return "nothing exported" }
+        return counts.failed == 0
+            ? "\(counts.done) exported"
+            : "\(counts.done) exported, \(counts.failed) failed"
     }
 
     // ---- the mechanism ----------------------------------------------------

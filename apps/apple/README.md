@@ -122,6 +122,31 @@ you are working in" are different facts. The accent goes on an effect's name
 only where the effect *is* the tool — Curves, the Warper, the Mixer. Basic draws
 six effects and six accented names is no more use than none.
 
+## Exporting a set
+
+`Export All…` writes every photograph in the set, **one per frame**. Sixty
+photographs is sixty full-resolution renders; done in a loop the window is
+frozen for a minute with no way to tell whether it is working or hung, and no
+way to stop it. Stepping keeps the interface alive, gives somewhere to show
+progress, and makes cancelling a matter of not asking for the next one.
+
+The edit follows the photograph from whichever of three places it lives in: the
+live history for the one on screen, a parked history for one that has been
+visited, and the sidecar for one never opened — or nowhere, which means the
+defaults. Getting that wrong exports sixty photographs with the wrong sixty
+edits, and the files look right until somebody opens them, so it has a test that
+gives each photograph a visibly different edit and reads the written pixels back.
+
+Photographs are decoded one at a time, not held: the whole reason a set is
+navigable is that only one frame is in memory, and a batch that loaded them all
+would undo that in the one place it matters most. A photograph that cannot be
+written — a name that would land on somebody's original, a file that will not
+decode — is **counted and stepped past**, not fatal: one collision should not
+abandon the other sixty-five, and the summary says how many missed.
+
+A finished run keeps its counts until it is dismissed. A run that stopped
+silently is indistinguishable from one that crashed.
+
 ## The set of photographs
 
 Opening a folder gives a set, and the filmstrip down the left moves between
