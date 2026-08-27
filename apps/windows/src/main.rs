@@ -20,7 +20,6 @@ mod mixer;
 mod preview;
 mod resolve;
 mod scopes;
-mod settings;
 mod theme;
 mod warper;
 mod wheels;
@@ -28,8 +27,8 @@ mod wheels;
 use std::path::{Path, PathBuf};
 
 use pe_core::{Document, History, RowIdGenerator, Stack};
-use pe_session::export::{export_name, same_file, unclaimed_export_path};
-use pe_session::{Support, autosave};
+use pe_session::export::{Export, Format, export_name, same_file, unclaimed_export_path};
+use pe_session::{Settings, Support, autosave};
 
 use crate::library::{Library, Thumbnails};
 use pe_render::GpuContext;
@@ -53,7 +52,11 @@ fn main() -> eframe::Result {
         // Nothing asked for, so reopen what the last session had. Opening on
         // the test chart when the user has a folder of photographs they were
         // halfway through is a worse guess than any.
-        let (saved, at) = settings::Settings::load().session();
+        //
+        // The support directory is worked out here and again in `App::new`,
+        // because what to open has to be decided before there is an `App` to
+        // hold one. It is two environment reads and the same answer both times.
+        let (saved, at) = Settings::load(&platform_support()).session();
         paths = saved;
         index = at;
     }
@@ -204,7 +207,7 @@ pub struct App {
     tab: Tab,
     /// What the application remembers between runs: starred effects, and
     /// whatever joins that list later.
-    settings: settings::Settings,
+    settings: Settings,
     /// Where this platform keeps what belongs to the application. The one
     /// place a `cfg!` about directories is correct: the shell knows what
     /// platform it is.
@@ -311,7 +314,7 @@ impl App {
             shown: scopes::Shown::default(),
             scope_textures: scopes::Textures::default(),
             tab: Tab::Colour,
-            settings: settings::Settings::load(),
+            settings: Settings::load(&support),
             support,
             autosave: autosave::Watcher::new(),
             preview_effect: None,
@@ -335,7 +338,7 @@ impl App {
     fn remember_session(&mut self) {
         let paths = self.library.paths();
         let index = self.library.current();
-        self.settings.remember_session(&paths, index);
+        self.settings.remember_session(&paths, index, &self.support);
     }
 
     /// Write the work in progress now, throttle or no throttle.
@@ -1551,6 +1554,7 @@ impl eframe::App for App {
                             &mut self.ids,
                             &mut self.dragging_effect,
                             &mut self.settings,
+                            &self.support,
                         );
                     }
                     Tab::Image => {
@@ -2138,11 +2142,7 @@ fn export_section(ui: &mut egui::Ui, app: &mut App) -> bool {
                     .color(resolve::colour::LABEL),
             ),
         );
-        for format in [
-            settings::Format::Jpeg,
-            settings::Format::Png,
-            settings::Format::Png16,
-        ] {
+        for format in [Format::Jpeg, Format::Png, Format::Png16] {
             if ui
                 .selectable_label(chosen.format == format, format.label())
                 .clicked()
@@ -2156,7 +2156,7 @@ fn export_section(ui: &mut egui::Ui, app: &mut App) -> bool {
     // Greyed rather than hidden for a PNG. A control that vanishes takes its
     // explanation with it — the row staying put, dimmed, says "quality is a
     // JPEG idea" far better than an empty space does.
-    let is_jpeg = chosen.format == settings::Format::Jpeg;
+    let is_jpeg = chosen.format == Format::Jpeg;
     ui.add_enabled_ui(is_jpeg, |ui| {
         let mut quality = chosen.quality as f32;
         if resolve::slider_row(
@@ -2195,7 +2195,7 @@ fn export_section(ui: &mut egui::Ui, app: &mut App) -> bool {
 
     if chosen != app.settings.export {
         app.settings.export = chosen;
-        app.settings.save();
+        app.settings.save(&app.support);
     }
 
     ui.add_space(8.0);
@@ -2291,7 +2291,7 @@ struct Batch {
     /// Taken once, when the run starts, rather than read per photograph.
     /// Changing the format halfway through a batch would otherwise leave a
     /// folder half JPEG and half PNG, with no record of where the line fell.
-    export: settings::Export,
+    export: Export,
     /// Names already written by this run, folded to lower case.
     ///
     /// A batch writes into one directory, and the set it is writing can come
@@ -2337,7 +2337,7 @@ fn write_export(
     image: &pe_io::DecodedImage,
     doc: &pe_core::Document,
     out: &Path,
-    chosen: settings::Export,
+    chosen: Export,
 ) -> Result<(u32, u32), String> {
     let (w, h) = pe_render::export::output_size(doc, image.width, image.height);
     // The space the pipeline actually rendered to, which is what the file has
@@ -2352,7 +2352,7 @@ fn write_export(
         let pixels = preview.export(image, doc).map_err(|e| e.to_string())?;
         let img = pe_io::DecodedImage::new(w, h, pixels).map_err(|e| e.to_string())?;
         match chosen.format {
-            settings::Format::Jpeg => pe_io::save_jpeg(&img, out, chosen.quality, &space),
+            Format::Jpeg => pe_io::save_jpeg(&img, out, chosen.quality, &space),
             _ => pe_io::save_png(&img, out, &space),
         }
         .map_err(|e| e.to_string())?;

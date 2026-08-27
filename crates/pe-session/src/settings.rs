@@ -2,20 +2,34 @@
 //!
 //! Not the edit — that is the document, and it lives beside the photograph.
 //! This is the handful of things that belong to the *person* rather than to
-//! any one picture: which effects they have starred, and whatever joins that
-//! list later.
+//! any one picture: which effects they have starred, the set that was open,
+//! how they export, and whatever joins that list later.
 //!
 //! A favourite that vanishes when the window closes is half a feature, which
 //! is the whole reason this file exists. It is deliberately small and
 //! deliberately forgiving — a settings file that fails to parse costs the user
 //! their stars, not their session, so every error here is swallowed and the
 //! defaults stand.
+//!
+//! Here rather than in a shell because none of it is a question about a
+//! window. A star means the same thing in both shells, so does the set you
+//! left open, and so does exporting JPEGs at 92 — and an answer that depends
+//! on which shell you happened to open is an answer given twice. What stays in
+//! a shell is per-shell interface state: which panel is folded, whether the
+//! scopes are showing. Those genuinely are about the window.
+//!
+//! Where the file lives is the one thing this module does not decide.
+//! [`Support`] is handed in by the host at start-up, for the reason written on
+//! it: an engine that worked the directory out from environment variables
+//! would be guessing on a platform nobody tested, and it was already wrong on
+//! the Mac.
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-pub use pe_session::export::{Export, Format};
+use crate::Support;
+use crate::export::Export;
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -45,34 +59,24 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// Where the file lives, per platform.
+    /// What was remembered, or the defaults.
     ///
-    /// Windows now, macOS later — the second arm is here because getting it
-    /// wrong is invisible until the port, and it is three lines.
-    fn path() -> Option<PathBuf> {
-        let dir = if cfg!(windows) {
-            PathBuf::from(std::env::var_os("APPDATA")?)
-        } else {
-            match std::env::var_os("XDG_CONFIG_HOME") {
-                Some(v) => PathBuf::from(v),
-                None => PathBuf::from(std::env::var_os("HOME")?).join(".config"),
-            }
-        };
-        Some(dir.join("Kroma").join("settings.json"))
-    }
-
-    pub fn load() -> Self {
-        // Every failure here is the same failure: there are no settings yet.
-        // A missing file, an unreadable one and a corrupt one all mean the
-        // user gets the defaults, and none of them is worth interrupting a
-        // launch over.
+    /// Every failure here is the same failure: there are no settings yet. A
+    /// host that named no support directory, a missing file, an unreadable one
+    /// and a corrupt one all mean the user gets the defaults, and none of them
+    /// is worth interrupting a launch over — which is why this returns a
+    /// `Settings` rather than a `Result` in a crate that returns `Result`
+    /// almost everywhere else.
+    pub fn load(support: &Support) -> Self {
         // The old location is read when the new one is not there yet, so
         // the rename to Kroma does not quietly cost anyone their stars. It
         // moves to the new path the next time anything is saved.
-        let former = Self::path()
-            .and_then(|p| p.parent()?.parent().map(|d| d.join("PhotoEditor")))
-            .map(|d| d.join("settings.json"));
-        Self::path()
+        let former = support
+            .root()
+            .and_then(|root| root.parent())
+            .map(|d| d.join("PhotoEditor").join("settings.json"));
+        support
+            .settings_path()
             .into_iter()
             .chain(former)
             .filter_map(|p| std::fs::read_to_string(p).ok())
@@ -80,8 +84,13 @@ impl Settings {
             .unwrap_or_default()
     }
 
-    pub fn save(&self) {
-        let Some(path) = Self::path() else {
+    /// Write them down, if there is anywhere to write them.
+    ///
+    /// A host that has named no support directory has not agreed to anything
+    /// being written, so nothing is — and, like everything else here, that is
+    /// not an error anybody is told about.
+    pub fn save(&self, support: &Support) {
+        let Some(path) = support.settings_path() else {
             return;
         };
         if let Some(dir) = path.parent() {
@@ -128,14 +137,14 @@ impl Settings {
     /// Guarded because this is called from the selection path, which runs on
     /// an arrow key — writing the file on every press would be a disc write
     /// per keystroke to save something that did not change.
-    pub fn remember_session(&mut self, paths: &[&Path], index: usize) {
+    pub fn remember_session(&mut self, paths: &[&Path], index: usize, support: &Support) {
         let next: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
         if next == self.session && index == self.session_index {
             return;
         }
         self.session = next;
         self.session_index = index;
-        self.save();
+        self.save(support);
     }
 
     pub fn is_favourite(&self, key: &str) -> bool {
@@ -147,20 +156,153 @@ impl Settings {
     /// Saved immediately rather than on exit: the window can be closed by the
     /// operating system, by a crash, or by a user who does not think of
     /// starring as something that needs committing.
-    pub fn toggle_favourite(&mut self, key: &str) {
+    pub fn toggle_favourite(&mut self, key: &str, support: &Support) {
         match self.favourites.iter().position(|k| k == key) {
             Some(i) => {
                 self.favourites.remove(i);
             }
             None => self.favourites.push(key.to_string()),
         }
-        self.save();
+        self.save(support);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A star has to outlive the process that made it, which is a claim about
+    /// a file on disc and cannot be made without one.
+    #[test]
+    fn a_star_survives_the_window_closing() {
+        let dir = tempfile::tempdir().unwrap();
+        let support = Support::at(dir.path().join("Kroma"));
+
+        let mut s = Settings::load(&support);
+        assert!(!s.is_favourite("grain"), "nothing is starred to begin with");
+        s.toggle_favourite("grain", &support);
+        drop(s);
+
+        // The next launch.
+        let again = Settings::load(&support);
+        assert!(
+            again.is_favourite("grain"),
+            "the star did not survive being written and read back"
+        );
+    }
+
+    /// Reopening is the set *and* the place in it. Remembering the photographs
+    /// and forgetting which one was showing puts you back at the front of a
+    /// folder of two hundred.
+    #[test]
+    fn the_set_that_was_open_is_remembered_with_which_one_was_showing() {
+        let dir = tempfile::tempdir().unwrap();
+        let support = Support::at(dir.path().join("Kroma"));
+        let photos = dir.path().join("photos");
+        std::fs::create_dir_all(&photos).unwrap();
+        let names = ["a.jpg", "b.jpg", "c.jpg"];
+        for n in names {
+            std::fs::write(photos.join(n), b"x").unwrap();
+        }
+        let paths: Vec<PathBuf> = names.iter().map(|n| photos.join(n)).collect();
+        let borrowed: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
+
+        let mut s = Settings::load(&support);
+        s.remember_session(&borrowed, 1, &support);
+        drop(s);
+
+        let (reopened, index) = Settings::load(&support).session();
+        assert_eq!(reopened, paths, "the set that was open came back wrong");
+        assert_eq!(reopened[index], photos.join("b.jpg"));
+    }
+
+    /// A settings file that will not parse costs the stars, not the session:
+    /// the defaults stand and nothing is thrown.
+    #[test]
+    fn a_settings_file_full_of_nonsense_is_ignored_rather_than_fatal() {
+        let dir = tempfile::tempdir().unwrap();
+        let support = Support::at(dir.path().join("Kroma"));
+        let path = support.settings_path().unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"{ not json at all, and never was").unwrap();
+
+        // Not `unwrap_or_default` at the call site — the whole point is that
+        // `load` itself hands back the defaults rather than a `Result` that
+        // somebody upstream has to decide what to do with mid-launch.
+        let mut s = Settings::load(&support);
+        assert!(s.favourites.is_empty());
+        assert_eq!(s.session().0, Vec::<PathBuf>::new());
+        assert_eq!(s.export, Export::default());
+
+        // And the launch goes on: the next save replaces the rubbish rather
+        // than refusing to touch it.
+        s.toggle_favourite("grain", &support);
+        assert!(Settings::load(&support).is_favourite("grain"));
+    }
+
+    /// What a newer build wrote is written back, so running an older one does
+    /// not quietly discard it.
+    #[test]
+    fn something_a_later_version_wrote_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let support = Support::at(dir.path().join("Kroma"));
+        let path = support.settings_path().unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // Written by hand, with a key this build has never heard of.
+        std::fs::write(
+            &path,
+            br#"{"favourites":["grain"],"lens_profiles":{"enabled":true,"kind":"auto"}}"#,
+        )
+        .unwrap();
+
+        let mut s = Settings::load(&support);
+        assert!(s.is_favourite("grain"), "the keys it does know were read");
+        // Change something else, and write the file back out.
+        s.toggle_favourite("halation", &support);
+
+        let back = std::fs::read_to_string(&path).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&back).unwrap();
+        assert_eq!(
+            json.get("lens_profiles"),
+            Some(&serde_json::json!({"enabled": true, "kind": "auto"})),
+            "an older build discarded what a newer one wrote: {back}"
+        );
+        assert!(back.contains("halation"), "the new star was not written");
+    }
+
+    /// With nowhere to write, everything still works and nothing is lost that
+    /// was not already going to be.
+    #[test]
+    fn settings_with_no_support_directory_are_defaults_and_do_not_panic() {
+        let nowhere = Support::default();
+        assert!(nowhere.settings_path().is_none());
+
+        let mut s = Settings::load(&nowhere);
+        assert!(s.favourites.is_empty());
+
+        // Each of these writes the file out. None of them has a file.
+        s.toggle_favourite("grain", &nowhere);
+        s.remember_session(&[Path::new("/some/photo.jpg")], 0, &nowhere);
+        s.save(&nowhere);
+
+        // In memory it all still works; it simply does not outlive the run.
+        assert!(s.is_favourite("grain"));
+        assert!(!Settings::load(&nowhere).is_favourite("grain"));
+    }
+
+    /// The browser lists favourites in a group of their own and every other
+    /// effect below. A key in the list twice would be two tiles for one
+    /// effect, one of them wrong the moment the star on the other is clicked.
+    #[test]
+    fn starring_the_same_effect_twice_does_not_star_it_twice() {
+        let nowhere = Support::default();
+        let mut s = Settings::default();
+        s.toggle_favourite("grain", &nowhere);
+        // The second press is the unstar, the third stars it again.
+        s.toggle_favourite("grain", &nowhere);
+        s.toggle_favourite("grain", &nowhere);
+        assert_eq!(s.favourites, ["grain"]);
+    }
 
     /// Reopening has to land on the photograph you left, not on whatever has
     /// slid into its old position.
@@ -279,5 +421,24 @@ mod tests {
     fn a_corrupt_file_gives_the_defaults_rather_than_an_error() {
         let s: Settings = serde_json::from_str("{ not json").unwrap_or_default();
         assert!(s.favourites.is_empty());
+    }
+
+    /// The rename from PhotoEditor to Kroma must not have cost anybody their
+    /// stars: a settings file left in the old directory is read when the new
+    /// one has nothing yet, and moves to the new one at the next save.
+    #[test]
+    fn a_file_left_in_the_old_directory_is_still_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let support = Support::at(dir.path().join("Kroma"));
+        let former = dir.path().join("PhotoEditor");
+        std::fs::create_dir_all(&former).unwrap();
+        std::fs::write(former.join("settings.json"), br#"{"favourites":["grain"]}"#).unwrap();
+
+        let mut s = Settings::load(&support);
+        assert!(s.is_favourite("grain"), "the old file was not read");
+
+        s.toggle_favourite("halation", &support);
+        let moved = std::fs::read_to_string(support.settings_path().unwrap()).unwrap();
+        assert!(moved.contains("grain") && moved.contains("halation"));
     }
 }

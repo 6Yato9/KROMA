@@ -23,9 +23,9 @@
 
 use pe_core::{BlendMode, Curve, History, ParamValue, RowId, RowIdGenerator, StackRow};
 use pe_effects::{EffectDef, Group, ParamDef, ParamKind};
+use pe_session::{Settings, Support};
 
 use crate::resolve::{self, Edit};
-use crate::settings::Settings;
 
 /// Padding inside a tile: room for the star on the right, and a little either
 /// side of the name.
@@ -40,9 +40,10 @@ pub fn show(
     ids: &mut RowIdGenerator,
     dragging: &mut Option<&'static str>,
     settings: &mut Settings,
+    support: &Support,
 ) -> Option<&'static str> {
     ui.add_space(4.0);
-    let preview = browser(ui, history, ids, dragging, settings);
+    let preview = browser(ui, history, ids, dragging, settings, support);
     ui.add_space(8.0);
     ui.separator();
     ui.label(
@@ -156,6 +157,7 @@ fn browser(
     ids: &mut RowIdGenerator,
     dragging: &mut Option<&'static str>,
     settings: &mut Settings,
+    support: &Support,
 ) -> Option<&'static str> {
     let mut preview = None;
     egui::ScrollArea::vertical()
@@ -173,7 +175,9 @@ fn browser(
                 .collect();
             if !starred.is_empty() {
                 heading(ui, "Favourites");
-                if let Some(hovered) = tiles(ui, history, ids, &starred, dragging, settings) {
+                if let Some(hovered) =
+                    tiles(ui, history, ids, &starred, dragging, settings, support)
+                {
                     preview = Some(hovered);
                 }
             }
@@ -193,7 +197,9 @@ fn browser(
                     continue;
                 }
                 heading(ui, group.as_str());
-                if let Some(hovered) = tiles(ui, history, ids, &available, dragging, settings) {
+                if let Some(hovered) =
+                    tiles(ui, history, ids, &available, dragging, settings, support)
+                {
                     preview = Some(hovered);
                 }
             }
@@ -243,12 +249,13 @@ fn tiles(
     defs: &[&'static EffectDef],
     dragging: &mut Option<&'static str>,
     settings: &mut Settings,
+    support: &Support,
 ) -> Option<&'static str> {
     let mut preview = None;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
         for def in defs {
-            if let Some(hovered) = tile(ui, history, ids, def, dragging, settings) {
+            if let Some(hovered) = tile(ui, history, ids, def, dragging, settings, support) {
                 preview = Some(hovered);
             }
         }
@@ -301,6 +308,7 @@ fn tile(
     def: &'static EffectDef,
     dragging: &mut Option<&'static str>,
     settings: &mut Settings,
+    support: &Support,
 ) -> Option<&'static str> {
     let (rect, response) = ui.allocate_exact_size(tile_size(ui), egui::Sense::click_and_drag());
 
@@ -314,7 +322,7 @@ fn tile(
         egui::Sense::click(),
     );
     if star_response.clicked() {
-        settings.toggle_favourite(def.key);
+        settings.toggle_favourite(def.key, support);
     }
     let over_star = star_response.hovered();
 
