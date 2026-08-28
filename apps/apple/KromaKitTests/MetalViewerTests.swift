@@ -127,8 +127,44 @@ final class MetalViewerTests: XCTestCase {
         }
     }
 
+    /// The composition `ContentView` actually draws: both overlays *and* the
+    /// drop destination that lets an effect be dragged onto the picture.
+    ///
+    /// A `dropDestination` registers a dragging destination rather than a mouse
+    /// handler, so it should leave the wheel, the drag and the double-click to
+    /// the viewer. "Should" is what the crop overlay did too, and it took all
+    /// three. Every case above composes the overlays *without* the drop target,
+    /// so without this one it is the single layer nothing checks — and the only
+    /// way left to find out would be to open the application and try it.
+    @MainActor
+    func testTheDropDestinationLeavesThePointerToTheViewer() throws {
+        let store = try Self.opened()
+        // The hardest arrangement: the crop tool open and a comparison running,
+        // with the drop target over both.
+        store.setCropping(true)
+        store.setCompare(.wipe)
+        let (_, host, viewer) = Self.hosted(
+            MetalViewer(store: store)
+                .frame(width: Self.size.width, height: Self.size.height)
+                .overlay {
+                    ZStack {
+                        CropOverlay(store: store)
+                        CompareOverlay(store: store)
+                    }
+                }
+                .dropDestination(for: DraggedEffect.self) { _, _ in true })
+        defer { viewer?.stop() }
+        let found = try XCTUnwrap(viewer)
+        for at in Self.points {
+            XCTAssertTrue(
+                host.hitTest(at) === found,
+                "the drop target took the pointer at \(at): the wheel, the pan and the "
+                    + "double-click would all go to it instead of to the picture")
+        }
+    }
+
     /// The check on the check: the layering this replaced really does take the
-    /// pointer away, so the three cases above are not passing for free.
+    /// pointer away, so the cases above are not passing for free.
     ///
     /// A plain `Canvas` with no gesture and no `contentShape` — less than the
     /// crop overlay ever had — is enough to do it.
