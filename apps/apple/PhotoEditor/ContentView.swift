@@ -28,35 +28,18 @@ struct ContentView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            // Down the left, not across the bottom. The window is wider than
-            // it is tall and a photograph is not, so a horizontal strip costs
-            // height — the dimension the picture is already short of.
+        VStack(spacing: 0) {
+            // Across the whole window, above the filmstrip and the split, which
+            // is where `main.rs` puts its `TopBottomPanel::top`. These are
+            // properties of the *window* — how the picture is being looked at —
+            // and none of them belongs to the viewer pane alone.
             //
-            // Beside the split rather than inside it: a filmstrip's width is
-            // the width of a thumbnail and there is nothing for a wider one to
-            // show, so there is no reason to offer a handle that only makes it
-            // wrong. And unconditional, because the strip draws nothing at all
-            // for a set of one or none — which set gets a strip is decided in
-            // `Filmstrip` and nowhere else.
-            Filmstrip(store: store)
-            HSplitView {
-                VStack(spacing: 0) {
-                    viewerAndScopes
-                    statusBar
-                }
-                inspector
-                    // Wide enough for a row, and resizable. It was pinned at
-                    // 260, which is less than the label, readout and reset
-                    // arrow cost between them — every control in the
-                    // application was drawing its label with the front clipped
-                    // off.
-                    .frame(
-                        minWidth: RowMetrics.minimumPanel,
-                        idealWidth: 330,
-                        maxWidth: 520
-                    )
-            }
+            // They were in the status bar, which is only as wide as that pane
+            // because the inspector sits beside it. Eight controls and two
+            // readouts in a third of the window truncated "Compare" to "Co…"
+            // and wrapped "passes 0" onto two lines.
+            toolbar
+            content
         }
         .frame(minWidth: 900, minHeight: 560)
         // Behind the splits, so the seams between them are the panel grey
@@ -91,6 +74,39 @@ struct ContentView: View {
         // goes on top of it.
         .onChange(of: tab) { _, chosen in
             store.setCropping(chosen.showsWholeFrame)
+        }
+    }
+
+    private var content: some View {
+        HStack(spacing: 0) {
+            // Down the left, not across the bottom. The window is wider than
+            // it is tall and a photograph is not, so a horizontal strip costs
+            // height — the dimension the picture is already short of.
+            //
+            // Beside the split rather than inside it: a filmstrip's width is
+            // the width of a thumbnail and there is nothing for a wider one to
+            // show, so there is no reason to offer a handle that only makes it
+            // wrong. And unconditional, because the strip draws nothing at all
+            // for a set of one or none — which set gets a strip is decided in
+            // `Filmstrip` and nowhere else.
+            Filmstrip(store: store)
+            HSplitView {
+                VStack(spacing: 0) {
+                    viewerAndScopes
+                    statusBar
+                }
+                inspector
+                    // Wide enough for a row, and resizable. It was pinned at
+                    // 260, which is less than the label, readout and reset
+                    // arrow cost between them — every control in the
+                    // application was drawing its label with the front clipped
+                    // off.
+                    .frame(
+                        minWidth: RowMetrics.minimumPanel,
+                        idealWidth: 330,
+                        maxWidth: 520
+                    )
+            }
         }
     }
 
@@ -309,33 +325,27 @@ struct ContentView: View {
 
     /// The passes counter, which is the number worth watching: with a deep
     /// stack, dragging the deepest slider should read 1.
-    private var statusBar: some View {
-        HStack(spacing: 12) {
-            if let problem = store.problem {
-                Text(problem)
-                    .foregroundStyle(Palette.error.color)
-                    .lineLimit(1)
-                    .help(problem)
-            } else if let notice = store.notice {
-                // Ahead of the name and size, in the same place a problem
-                // would be: it is the answer to something just asked for, and
-                // the file's name is not going anywhere.
-                Text(notice)
-                    .foregroundStyle(Palette.label.color)
-                    .lineLimit(1)
-            } else if store.snapshot.isOpen {
-                Text(store.snapshot.name ?? "test chart")
-                    .foregroundStyle(Palette.label.color)
-                Text("\(store.snapshot.width)x\(store.snapshot.height)")
-                    .foregroundStyle(Palette.dim.color)
-            }
-            Spacer()
+    /// How the picture is being looked at, across the whole window.
+    ///
+    /// `main.rs`'s toolbar, less the parts macOS puts in the menu bar: File,
+    /// Export, Grade and undo are menus there because that is where a Mac user
+    /// looks for them, and duplicating them here would be two ways to do one
+    /// thing.
+    ///
+    /// What is left is the window's own state — which comparison is running,
+    /// whether the scopes are up, how far in the picture is — and it belongs
+    /// across the top rather than in the status bar, which is only as wide as
+    /// the viewer pane.
+    private var toolbar: some View {
+        HStack(spacing: 8) {
             // Beside the scopes, because both are ways of looking at the
             // photograph rather than things done to it.
             CompareButton(store: store)
             Toggle("Scopes", isOn: $showScopes)
                 .toggleStyle(KromaToggleButtonStyle())
                 .help("Waveform, parade, vectorscope and histogram")
+
+            Divider().frame(height: 14)
 
             // Fit, 100%, and what the zoom is worth — `main.rs`'s three, in its
             // order. Fit is greyed when the whole picture is already on screen,
@@ -360,22 +370,29 @@ struct ContentView: View {
                 // time the number gains or loses a digit mid-drag.
                 .frame(width: 44, alignment: .trailing)
                 .help("Screen pixels per image pixel")
+
+            Divider().frame(height: 14)
+
             Text("passes \(store.snapshot.passes)")
                 .foregroundStyle(Palette.label.color)
                 .monospacedDigit()
+                .fixedSize()
+                .help(
+                    "GPU passes executed this frame. Dragging one slider in a deep stack "
+                        + "should read 1 — that is the stage cache doing its job.")
 
-            // Last, quietly, as `main.rs` has it. Nobody reads this until
+            Spacer(minLength: 8)
+
+            // Last and quietly, as `main.rs` has it. Nobody reads this until
             // something has gone wrong, and then it is the first thing worth
             // knowing — which is why it is present rather than in an About box
             // nobody opens. Absent until the first frame: the engine will not
             // acquire a device just to be named.
+            //
+            // Shown whole or not at all. Told to truncate it drew a bare "…" in
+            // a narrow window, which is worse than the space: an ellipsis says
+            // something is there and refuses to say what.
             if let gpu = store.gpuName {
-                // Shown whole or not at all. Told to truncate it drew a bare
-                // "…" in a narrow window, which is worse than the space: an
-                // ellipsis says something is there and refuses to say what.
-                //
-                // It must also never push the numbers left — they are read
-                // constantly and this is not — which is what the fallback does.
                 ViewThatFits(in: .horizontal) {
                     Text(gpu)
                         .font(.system(size: 10))
@@ -389,11 +406,64 @@ struct ContentView: View {
         }
         .font(.system(size: 11))
         .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .frame(maxWidth: .infinity)
+        .background(Palette.raised.color)
+        .overlay(alignment: .bottom) { Hairline() }
+    }
+
+    /// What just happened, or what is open.
+    ///
+    /// One line and nothing else, which is all `main.rs` puts here. Everything
+    /// that used to share it now lives in the toolbar: this bar is as wide as
+    /// the viewer pane, and eight controls in that width truncated their own
+    /// labels.
+    ///
+    /// Always present rather than appearing with the first message. A bar that
+    /// comes and goes moves the photograph up and down under it, and a
+    /// photograph that jumps while you are judging it is worse than a strip of
+    /// window spent on the name of what you are looking at.
+    private var statusBar: some View {
+        HStack(spacing: 6) {
+            if let problem = store.problem {
+                Text(problem)
+                    .foregroundStyle(Palette.error.color)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(problem)
+            } else if let notice = store.notice {
+                Text(notice)
+                    .foregroundStyle(Palette.label.color)
+                    .lineLimit(1)
+            } else if store.snapshot.isOpen {
+                // The idle line is the name and the size, the way `main.rs`
+                // writes it. Also in the inspector's header, and the two answer
+                // different questions: that one says what the column of
+                // controls belongs to, this says what the window is showing.
+                Text(idle)
+                    .foregroundStyle(Palette.dim.color)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(idle)
+            } else {
+                Text("no photograph open")
+                    .foregroundStyle(Palette.dim.color)
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: 11))
+        .padding(.horizontal, 10)
         .padding(.vertical, 4)
         // The status bar is a panel, like the inspector and the scopes. It was
         // `.bar` — a system material — which is how one background became
         // three different greys on one screen.
         .background(Palette.panel.color)
         .overlay(alignment: .top) { Hairline() }
+    }
+
+    /// `main.rs`'s idle line: `name — WxH`, one string so it truncates as one.
+    private var idle: String {
+        let name = store.snapshot.name ?? "test chart"
+        return "\(name) — \(store.snapshot.width)x\(store.snapshot.height)"
     }
 }
