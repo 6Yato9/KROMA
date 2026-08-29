@@ -202,6 +202,23 @@ public final class SessionStore {
     ///
     /// An empty list is refused by the engine rather than opening a set of
     /// none, and the refusal arrives in `problem` like any other.
+    /// Open every photograph in a folder, and say how many.
+    ///
+    /// The count is worth saying: a folder that opened is otherwise
+    /// indistinguishable from one that did not, and this is the command that
+    /// turns a single photograph into a *set* — which is what the filmstrip,
+    /// Export All and Paste to All all need before they do anything.
+    public func openFolder(_ url: URL) {
+        flush()
+        var count = 0
+        run { count = try session.openFolder(url) }
+        refresh()
+        guard problem == nil else { return }
+        notice = count == 1
+            ? "opened 1 photograph"
+            : "opened \(count) photographs"
+    }
+
     public func openPaths(_ urls: [URL]) {
         flush()
         run { try session.openPaths(urls) }

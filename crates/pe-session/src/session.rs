@@ -30,6 +30,11 @@ pub enum SessionError {
     /// should be told which of the two it got wrong.
     #[error("no grade has been copied")]
     NothingCopied,
+    /// Distinct from a read failure: the folder opened and had nothing in it
+    /// this application can read, which is worth saying differently from "that
+    /// folder is not there".
+    #[error("no photographs in {0}")]
+    NoPhotographs(String),
     #[error("no GPU: {0}")]
     NoGpu(String),
     #[error("could not read {path}: {message}")]
@@ -622,6 +627,31 @@ impl Session {
     /// Open a photograph, restoring whatever was being done to it last time.
     pub fn open_path(&mut self, path: impl AsRef<Path>) -> Result<(), SessionError> {
         self.open_paths(vec![path.as_ref().to_path_buf()])
+    }
+
+    /// Open every photograph in a folder, focused on the first.
+    ///
+    /// Returns how many were found, which a shell says out loud — opening a
+    /// folder is the one command whose result is otherwise invisible when it
+    /// works and indistinguishable from a refusal when it does not.
+    ///
+    /// The scanning is [`Library::scan`]'s: which extensions count and what
+    /// order they come back in is one answer, and a shell enumerating the
+    /// directory itself would be a second copy of it that drifts.
+    ///
+    /// An empty folder is refused rather than opened. A set of nothing would
+    /// leave the session with no photograph and a filmstrip of no cells, which
+    /// reads as a folder that failed to load rather than one with no pictures
+    /// in it.
+    pub fn open_folder(&mut self, dir: impl AsRef<Path>) -> Result<usize, SessionError> {
+        let dir = dir.as_ref();
+        let found = Library::scan(dir);
+        if found.is_empty() {
+            return Err(SessionError::NoPhotographs(dir.display().to_string()));
+        }
+        let n = found.len();
+        self.open_paths(found)?;
+        Ok(n)
     }
 
     /// Open a set of photographs, focused on the first.
@@ -4717,5 +4747,44 @@ mod tests {
         let mut s = s;
         s.open_test_chart(32, 32).unwrap();
         assert_eq!(s.gpu_name(), None, "opening a photograph acquired a device");
+    }
+
+    #[test]
+    fn opening_a_folder_of_nothing_is_refused_and_names_it() {
+        let dir = std::env::temp_dir().join("kroma-empty-folder-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = Session::new();
+        let e = s.open_folder(&dir).unwrap_err();
+        assert!(matches!(e, SessionError::NoPhotographs(_)), "{e}");
+        assert!(e.to_string().contains("no photographs in"), "{e}");
+        // And the session is untouched: a refusal is not a half-open set.
+        assert!(!s.is_open());
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    /// A folder with pictures in it opens all of them and says how many, and
+    /// files this application cannot read are not counted.
+    #[test]
+    fn opening_a_folder_takes_the_photographs_and_leaves_the_rest() {
+        let dir = std::env::temp_dir().join("kroma-folder-scan-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["b.png", "a.png"] {
+            let img = pe_io::test_chart(8, 8);
+            pe_io::save_png(&img, dir.join(name), &pe_color::space::SRGB).unwrap();
+        }
+        std::fs::write(dir.join("notes.txt"), b"not a photograph").unwrap();
+
+        let mut s = Session::new();
+        let n = s.open_folder(&dir).unwrap();
+        assert_eq!(n, 2, "the text file was counted as a photograph");
+        assert_eq!(s.library().map(|l| l.len()), Some(2));
+        // Sorted, so the set is in a predictable order rather than the
+        // directory's own.
+        assert!(
+            s.path().unwrap().ends_with("a.png"),
+            "the set did not open on the first"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -29,6 +29,8 @@ struct PhotoEditorApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("Open…") { open() }
                     .keyboardShortcut("o", modifiers: .command)
+                Button("Open Folder…") { openFolder() }
+                    .keyboardShortcut("o", modifiers: [.command, .shift])
             }
             CommandGroup(replacing: .undoRedo) {
                 Button("Undo") { store?.undo() }
@@ -74,10 +76,39 @@ struct PhotoEditorApp: App {
     private func open() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.jpeg, .png]
-        panel.allowsMultipleSelection = false
+        // More than one, because a set is the thing the filmstrip, Export All
+        // and Paste to All are all about — and picking two photographs in the
+        // panel is how somebody makes one without reaching for a whole folder.
+        panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        store?.openPaths(panel.urls)
+    }
+
+    /// A folder of photographs, which is what a set usually is.
+    ///
+    /// `main.rs`'s Ctrl+Shift+O. Without it the Mac could only ever open one
+    /// photograph at a time, which left the filmstrip with nothing to show,
+    /// Export All with nothing to run on and Paste to All permanently greyed —
+    /// three finished features that could not be reached.
+    ///
+    /// The scanning is the engine's, not this panel's: which extensions count
+    /// and what order they come back in is one answer, kept beside the library
+    /// that holds them.
+    private func openFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Open folder"
+        panel.prompt = "Open"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        // Where the photograph in hand came from is where somebody starts
+        // looking for the folder they mean.
+        panel.directoryURL = store?.snapshot.path.map {
+            URL(fileURLWithPath: $0).deletingLastPathComponent()
+        }
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        store?.open(url)
+        store?.openFolder(url)
     }
 
     /// Where a batch writes: a folder, chosen.

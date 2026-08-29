@@ -783,6 +783,20 @@ public final class Session {
         return Thumbnail(width: Int(width), height: Int(height), rgba: rgba)
     }
 
+    /// Open every photograph in a folder, returning how many were found.
+    ///
+    /// Throws when the folder holds nothing this application can read, which is
+    /// a refusal rather than a failure — and worth saying differently from "no
+    /// such folder".
+    @discardableResult
+    public func openFolder(_ url: URL) throws -> Int {
+        let n = url.path.withCString { pe_session_open_folder(handle, $0) }
+        guard n >= 0 else {
+            throw EngineError(code: n, message: lastError ?? "no reason given")
+        }
+        return Int(n)
+    }
+
     // ---- persistence and export ---------------------------------------------
 
     @discardableResult

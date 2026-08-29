@@ -1513,6 +1513,35 @@ pub unsafe extern "C" fn pe_session_redo(s: *mut PeSession) -> i32 {
     })
 }
 
+/// Open every photograph in a folder, focused on the first.
+///
+/// Returns how many were found — a shell says that out loud, because opening a
+/// folder is otherwise invisible when it works. `-1` for a null handle or a
+/// malformed path; `-2` if the session refused, which is what an empty folder
+/// gets, with the reason on [`pe_session_last_error`].
+///
+/// The scan is the engine's: which extensions count and what order they come
+/// back in is one answer, and a shell reading the directory itself would be a
+/// second copy of it.
+///
+/// # Safety
+/// `s` and `dir` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_open_folder(s: *mut PeSession, dir: *const c_char) -> i32 {
+    let Some(dir) = as_str(dir) else { return -1 };
+    let dir = dir.to_string();
+    with(s, -1, |s| match s.inner.open_folder(&dir) {
+        Ok(n) => {
+            s.last_error = None;
+            i32::try_from(n).unwrap_or(i32::MAX)
+        }
+        Err(e) => {
+            s.last_error = Some(e.to_string());
+            -2
+        }
+    })
+}
+
 // ---- persistence and export -----------------------------------------------
 
 /// Write a `.peproj` beside the photograph, returning its path. Null on
