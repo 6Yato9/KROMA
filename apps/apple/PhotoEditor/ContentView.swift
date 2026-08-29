@@ -32,8 +32,23 @@ struct ContentView: View {
 
     private var tab: Tab { Tab(rawValue: tabName) ?? .colour }
 
+    /// What the tab row writes to.
+    ///
+    /// The framing is set **here**, where the tab is chosen, rather than only
+    /// from the `onChange` below. Choosing a tab is what changes what the
+    /// viewer should be showing, so this is cause and effect; the observer is a
+    /// second chance at it, for any route to `tabName` that is not this one.
+    ///
+    /// Both is not belt and braces for its own sake: `Session::set_cropping`
+    /// returns immediately when the flag is already what was asked for, so the
+    /// second call costs a comparison and cannot render twice.
     private var chosenTab: Binding<Tab> {
-        Binding(get: { tab }, set: { tabName = $0.rawValue })
+        Binding(
+            get: { tab },
+            set: { chosen in
+                tabName = chosen.rawValue
+                store.setCropping(chosen.showsWholeFrame)
+            })
     }
 
     var body: some View {
@@ -81,6 +96,10 @@ struct ContentView: View {
         // Driven from here rather than from `CropOverlay`'s `onAppear`, because
         // the flag decides what the *viewer* draws and the overlay is only what
         // goes on top of it.
+        //
+        // The second of the two: `chosenTab` sets it as the tab is chosen, and
+        // this catches any other way `tabName` could move — a preference
+        // written from elsewhere, or a future control that is not the tab row.
         .onChange(of: tab) { _, chosen in
             store.setCropping(chosen.showsWholeFrame)
         }

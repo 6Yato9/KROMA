@@ -94,6 +94,72 @@ final class CropOverlayTests: XCTestCase {
         }
     }
 
+    /// The whole sequence a person actually performs: open the tool, drag a
+    /// crop, leave for another tab.
+    ///
+    /// Every case around this one sets `cropping` once, at construction, and so
+    /// says nothing about the *transition* — which is the half that was
+    /// reported wrong: after cropping, another tab was still showing the
+    /// cut-away parts. Closing the tool must put the viewer back on the crop
+    /// itself, which is what a `cropRect` filling the frame means.
+    @MainActor
+    func testCroppingThenLeavingTheToolShowsOnlyTheCrop() throws {
+        let store = try XCTUnwrap(SessionStore())
+        store.openTestChart(
+            width: UInt32(Self.source.width), height: UInt32(Self.source.height))
+
+        // Open the tool: the viewer goes to the enclosing frame.
+        store.setCropping(true)
+        // Crop to the middle half, as a drag on the overlay would.
+        store.setGeometry(
+            GeometryValue(
+                centre: .zero, size: CGSize(width: 0.5, height: 0.5), angle: 0, turns: 0,
+                flipH: false, flipV: false, aspect: .free))
+        XCTAssertLessThan(
+            Double(store.cropRect.width), 0.9,
+            "the tool is open, so the crop should sit inside a bigger frame")
+
+        // Leave for another tab. `Tab.showsWholeFrame` is false for every tab
+        // but Image, and this is the value `ContentView` hands over.
+        store.setCropping(Tab.colour.showsWholeFrame)
+        XCTAssertFalse(store.cropping, "the viewer is still framing the whole source")
+
+        let r = store.cropRect
+        XCTAssertEqual(Double(r.minX), 0, accuracy: 1e-3, "the frame is not the crop")
+        XCTAssertEqual(Double(r.minY), 0, accuracy: 1e-3, "the frame is not the crop")
+        XCTAssertEqual(
+            Double(r.width), 1, accuracy: 1e-3,
+            "another tab is still showing what the crop cuts away")
+        XCTAssertEqual(Double(r.height), 1, accuracy: 1e-3)
+
+        // And the document was not touched on the way: leaving a tab is not an
+        // edit, and the crop is still the middle half.
+        XCTAssertEqual(Double(store.geometry.size.width), 0.5, accuracy: 1e-6)
+        XCTAssertEqual(Double(store.geometry.size.height), 0.5, accuracy: 1e-6)
+    }
+
+    /// And going back to it shows the cut-away parts again.
+    @MainActor
+    func testGoingBackToTheToolShowsWhatTheCropCutsAway() throws {
+        let store = try XCTUnwrap(SessionStore())
+        store.openTestChart(
+            width: UInt32(Self.source.width), height: UInt32(Self.source.height))
+        store.setCropping(true)
+        store.setGeometry(
+            GeometryValue(
+                centre: .zero, size: CGSize(width: 0.5, height: 0.5), angle: 0, turns: 0,
+                flipH: false, flipV: false, aspect: .free))
+        store.setCropping(Tab.colour.showsWholeFrame)
+        XCTAssertEqual(Double(store.cropRect.width), 1, accuracy: 1e-3)
+
+        store.setCropping(Tab.image.showsWholeFrame)
+        XCTAssertTrue(store.cropping)
+        XCTAssertEqual(
+            Double(store.cropRect.width), 0.5, accuracy: 2e-3,
+            "the tool is open again but there is nothing outside the rectangle")
+        XCTAssertEqual(Double(store.cropRect.minX), 0.25, accuracy: 2e-3)
+    }
+
     /// And opening the tool puts the crop *inside* a bigger frame, which is the
     /// property the whole tool rests on: there is something outside the
     /// rectangle to see, and to drag back into.
