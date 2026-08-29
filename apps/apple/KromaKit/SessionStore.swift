@@ -236,6 +236,30 @@ public final class SessionStore {
         refresh()
     }
 
+    /// Whether there is a photograph after, or before, the one in hand.
+    ///
+    /// What the menu items are greyed by, and clamped rather than wrapping:
+    /// `main.rs` clamps too, and a set that wraps quietly takes you back to the
+    /// first photograph when you thought you were at the last.
+    public var hasNext: Bool {
+        guard let current = library.current else { return false }
+        return current + 1 < library.count
+    }
+
+    public var hasPrevious: Bool { (library.current ?? 0) > 0 }
+
+    /// The next photograph of the set, if there is one.
+    public func showNext() {
+        guard let current = library.current, hasNext else { return }
+        focus(current + 1)
+    }
+
+    /// And the one before.
+    public func showPrevious() {
+        guard let current = library.current, hasPrevious else { return }
+        focus(current - 1)
+    }
+
     /// Ask for the thumbnails of the entries a strip is actually showing.
     ///
     /// The visible range, not the whole set: opening a folder of a thousand

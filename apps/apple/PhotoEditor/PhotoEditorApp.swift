@@ -40,6 +40,21 @@ struct PhotoEditorApp: App {
                     .keyboardShortcut("z", modifiers: [.command, .shift])
                     .disabled(!(store?.canRedo ?? false))
             }
+            // Moving through the set. `main.rs` uses the bare arrow keys; a
+            // menu with them under Command is the Mac's version — bare arrows
+            // belong to whatever control has focus, and this application is
+            // full of sliders.
+            //
+            // In a menu at all because the filmstrip is the only other way to
+            // move, and it can be put away.
+            CommandMenu("Photo") {
+                Button("Next") { store?.showNext() }
+                    .keyboardShortcut(.rightArrow, modifiers: .command)
+                    .disabled(!(store?.hasNext ?? false))
+                Button("Previous") { store?.showPrevious() }
+                    .keyboardShortcut(.leftArrow, modifiers: .command)
+                    .disabled(!(store?.hasPrevious ?? false))
+            }
             // The Grade menu, which `main.rs` has beside File and Export.
             //
             // Its own menu rather than items under Edit: copying a *grade* and
