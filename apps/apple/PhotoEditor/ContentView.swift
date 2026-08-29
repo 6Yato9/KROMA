@@ -8,6 +8,15 @@ struct ContentView: View {
     /// for it should not be paying for it.
     @AppStorage("showScopes") private var showScopes = false
 
+    /// Whether the filmstrip is up. On to begin with, because a set of more
+    /// than one is exactly when you want to see the others.
+    ///
+    /// It had no control at all before this — the strip appeared for a set and
+    /// there was no way to put it away. `main.rs` gives the reason for the
+    /// button in the other direction, and it holds both ways: "A panel you can
+    /// hide and cannot get back is a panel you have lost."
+    @AppStorage("showFilmstrip") private var showFilmstrip = true
+
     /// Which tab the inspector is showing, remembered between launches — the
     /// page you were grading in is the page you want back.
     ///
@@ -75,6 +84,13 @@ struct ContentView: View {
         .onChange(of: tab) { _, chosen in
             store.setCropping(chosen.showsWholeFrame)
         }
+        // Opening a set puts the strip back, which is what `main.rs` does on
+        // every `add`. Somebody who hid it a fortnight ago and has just opened
+        // a folder of ninety photographs wants to see them; leaving it hidden
+        // would answer a preference they set about a different set entirely.
+        .onChange(of: store.library.count) { was, now in
+            if Filmstrip.shouldReappear(was: was, now: now) { showFilmstrip = true }
+        }
     }
 
     private var content: some View {
@@ -86,10 +102,15 @@ struct ContentView: View {
             // Beside the split rather than inside it: a filmstrip's width is
             // the width of a thumbnail and there is nothing for a wider one to
             // show, so there is no reason to offer a handle that only makes it
-            // wrong. And unconditional, because the strip draws nothing at all
-            // for a set of one or none — which set gets a strip is decided in
-            // `Filmstrip` and nowhere else.
-            Filmstrip(store: store)
+            // wrong.
+            //
+            // Two conditions, and they answer different questions: whether the
+            // set is worth a strip at all is `Filmstrip`'s to decide and is
+            // decided nowhere else, and whether the reader wants to see it is
+            // this. A set of one draws nothing however the toggle is set.
+            if showFilmstrip {
+                Filmstrip(store: store)
+            }
             HSplitView {
                 VStack(spacing: 0) {
                     viewerAndScopes
@@ -341,6 +362,13 @@ struct ContentView: View {
             // Beside the scopes, because both are ways of looking at the
             // photograph rather than things done to it.
             CompareButton(store: store)
+            Toggle("Filmstrip", isOn: $showFilmstrip)
+                .toggleStyle(KromaToggleButtonStyle())
+                // Nothing to show and nothing to hide for a set of one, and the
+                // same rule the strip itself draws by — so the button cannot
+                // offer to reveal a panel that would come up empty.
+                .disabled(!Filmstrip.isWorthShowing(count: store.library.count))
+                .help("The other photographs in the set")
             Toggle("Scopes", isOn: $showScopes)
                 .toggleStyle(KromaToggleButtonStyle())
                 .help("Waveform, parade, vectorscope and histogram")

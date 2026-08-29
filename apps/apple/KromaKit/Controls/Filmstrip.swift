@@ -86,6 +86,21 @@ public struct Filmstrip: View {
     /// which is not a file and so not a set of one — has no set at all.
     nonisolated public static func isWorthShowing(count: Int) -> Bool { count > 1 }
 
+    /// Whether opening this set should put a hidden strip back up.
+    ///
+    /// `main.rs` sets `show_strip = true` on every `add`, and the reason is
+    /// that somebody who hid the strip a fortnight ago and has just opened a
+    /// folder of ninety photographs wants to see them: the preference they set
+    /// was about a different set entirely.
+    ///
+    /// **On the crossing, not on every change.** A set going from five
+    /// photographs to four is still a set, and forcing the strip back there
+    /// would overrule a reader who had just put it away — every time they
+    /// closed a photograph, until they gave up.
+    nonisolated public static func shouldReappear(was: Int, now: Int) -> Bool {
+        isWorthShowing(count: now) && !isWorthShowing(count: was)
+    }
+
     // ---- which cells are on screen -----------------------------------------
 
     /// How many cells past the edge of the view to ask for.

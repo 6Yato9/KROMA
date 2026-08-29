@@ -554,3 +554,28 @@ final class FilmstripTests: XCTestCase {
         return nil
     }
 }
+
+/// When a hidden strip comes back.
+final class FilmstripReappearsTests: XCTestCase {
+    /// Opening a set puts it back, which is what `main.rs` does on every `add`.
+    func testOpeningASetPutsAHiddenStripBack() {
+        XCTAssertTrue(Filmstrip.shouldReappear(was: 0, now: 12), "a folder opened from nothing")
+        XCTAssertTrue(Filmstrip.shouldReappear(was: 1, now: 2), "a second photograph")
+    }
+
+    /// But only on the crossing. A set going from five to four is still a set,
+    /// and forcing the strip back there would overrule somebody who had just
+    /// put it away — every time they closed a photograph, until they gave up.
+    func testAChangeWithinASetDoesNotPutItBack() {
+        XCTAssertFalse(Filmstrip.shouldReappear(was: 5, now: 4))
+        XCTAssertFalse(Filmstrip.shouldReappear(was: 4, now: 5), "still a set before and after")
+        XCTAssertFalse(Filmstrip.shouldReappear(was: 2, now: 2))
+    }
+
+    /// And a set falling back to one photograph does not put it back either —
+    /// there would be nothing in it.
+    func testFallingBackToOneDoesNotPutItBack() {
+        XCTAssertFalse(Filmstrip.shouldReappear(was: 3, now: 1))
+        XCTAssertFalse(Filmstrip.shouldReappear(was: 1, now: 0))
+    }
+}
