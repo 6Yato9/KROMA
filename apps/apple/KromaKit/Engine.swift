@@ -783,6 +783,11 @@ public final class Session {
         return Thumbnail(width: Int(width), height: Int(height), rgba: rgba)
     }
 
+    /// Show the photograph with the whole stack switched off, or stop.
+    public func setBypassAll(_ bypass: Bool) throws {
+        try check(pe_session_set_bypass_all(handle, bypass))
+    }
+
     /// Open every photograph in a folder, returning how many were found.
     ///
     /// Throws when the folder holds nothing this application can read, which is

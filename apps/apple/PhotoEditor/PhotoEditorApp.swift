@@ -48,6 +48,10 @@ struct PhotoEditorApp: App {
             // In a menu at all because the filmstrip is the only other way to
             // move, and it can be put away.
             CommandMenu("Photo") {
+                Button("Bypass All") { store?.setBypassAll(!(store?.bypassAll ?? false)) }
+                    .keyboardShortcut("d", modifiers: [.command, .shift])
+                    .disabled(!(store?.snapshot.isOpen ?? false))
+                Divider()
                 Button("Next") { store?.showNext() }
                     .keyboardShortcut(.rightArrow, modifiers: .command)
                     .disabled(!(store?.hasNext ?? false))

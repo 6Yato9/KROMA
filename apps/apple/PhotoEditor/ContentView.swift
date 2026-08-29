@@ -381,6 +381,16 @@ struct ContentView: View {
             // Beside the scopes, because both are ways of looking at the
             // photograph rather than things done to it.
             CompareButton(store: store)
+            // Beside the comparison, because both answer "what did this look
+            // like before" — the comparison holds the two up together, and this
+            // simply takes the grade away.
+            Toggle(
+                "Bypass",
+                isOn: Binding(get: { store.bypassAll }, set: { store.setBypassAll($0) })
+            )
+            .toggleStyle(KromaToggleButtonStyle())
+            .disabled(!store.snapshot.isOpen)
+            .help("The photograph with the whole stack switched off")
             Toggle("Filmstrip", isOn: $showFilmstrip)
                 .toggleStyle(KromaToggleButtonStyle())
                 // Nothing to show and nothing to hide for a set of one, and the

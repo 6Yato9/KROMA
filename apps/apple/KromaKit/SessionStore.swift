@@ -667,6 +667,26 @@ public final class SessionStore {
     /// the crop. See ``SessionStore/setCropping(_:)``.
     public private(set) var cropping = false
 
+    /// Whether the viewer is showing the photograph with the stack switched
+    /// off, which is what the Bypass control is bound to.
+    ///
+    /// Stored rather than read through to the engine, for the reason
+    /// ``hasGrade`` is: `@Observable` tracks stored properties, and a toggle
+    /// bound to a computed one that reaches through would keep whatever state
+    /// it was built with.
+    public private(set) var bypassAll = false
+
+    /// Show the photograph with the whole stack switched off, or stop.
+    ///
+    /// Not an edit and not in the history: it is a way of *looking* at the
+    /// picture, like the crop framing and the comparison. An export writes the
+    /// grade whatever this is set to.
+    public func setBypassAll(_ bypass: Bool) {
+        run { try session.setBypassAll(bypass) }
+        guard problem == nil else { return }
+        bypassAll = bypass
+    }
+
     /// Open or close the crop tool's view of the photograph.
     ///
     /// The engine renders the enclosing frame while this is on, so the overlay

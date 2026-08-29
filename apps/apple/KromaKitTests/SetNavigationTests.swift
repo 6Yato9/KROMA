@@ -75,3 +75,39 @@ final class SetNavigationTests: XCTestCase {
         XCTAssertNil(store.problem, "moving through a set that is not there was an error")
     }
 }
+
+/// Switching the whole stack off to look at the photograph underneath.
+@MainActor
+final class BypassAllTests: XCTestCase {
+    /// It is a way of *looking*, so it must not touch the document — no edit,
+    /// nothing on the undo stack, and the rows still there when it goes off.
+    func testBypassingIsAViewAndNotAnEdit() throws {
+        let store = try XCTUnwrap(SessionStore())
+        store.openTestChart()
+        XCTAssertNotNil(store.addEffect("sharpen"), store.problem ?? "refused")
+        let rows = store.snapshot.rows.count
+        let version = store.snapshot.version
+
+        XCTAssertFalse(store.bypassAll)
+        store.setBypassAll(true)
+        XCTAssertTrue(store.bypassAll)
+        XCTAssertNil(store.problem)
+        XCTAssertEqual(store.snapshot.version, version, "bypassing edited the document")
+        XCTAssertEqual(store.snapshot.rows.count, rows, "bypassing removed a row for real")
+
+        store.setBypassAll(false)
+        XCTAssertFalse(store.bypassAll)
+        XCTAssertEqual(store.snapshot.rows.count, rows)
+    }
+
+    /// Stored, not read through to the engine — otherwise `@Observable` cannot
+    /// see it change and the toolbar toggle keeps whatever state it was built
+    /// with. The same defect Paste had.
+    func testBypassIsStoredSoThatItCanBeObserved() throws {
+        let store = try XCTUnwrap(SessionStore())
+        let stored = Mirror(reflecting: store).children.map(\.label)
+        XCTAssertTrue(
+            stored.contains("_bypassAll") || stored.contains("bypassAll"),
+            "bypassAll is computed, so nothing observes it changing")
+    }
+}

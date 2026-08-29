@@ -1513,6 +1513,35 @@ pub unsafe extern "C" fn pe_session_redo(s: *mut PeSession) -> i32 {
     })
 }
 
+/// Show the photograph with the whole stack switched off, or stop.
+///
+/// A property of the window, like the crop framing and the comparison: not an
+/// edit, not in the history, and an export renders the document either way —
+/// somebody who switched the stack off to look at the original and then
+/// exported would otherwise write the original out over their work.
+///
+/// Returns 0; `-1` for a null handle.
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_set_bypass_all(s: *mut PeSession, bypass: bool) -> i32 {
+    status(s, |s| {
+        s.set_bypass_all(bypass);
+        Ok(())
+    })
+}
+
+/// Whether the stack is switched off. `1` yes, `0` no — and `0` for a null
+/// handle, because a session that is not there is not bypassing anything.
+///
+/// # Safety
+/// `s` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_bypass_all(s: *mut PeSession) -> i32 {
+    with(s, 0, |s| i32::from(s.inner.bypass_all()))
+}
+
 /// Open every photograph in a folder, focused on the first.
 ///
 /// Returns how many were found — a shell says that out loud, because opening a

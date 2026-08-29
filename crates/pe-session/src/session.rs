@@ -313,6 +313,9 @@ pub struct Session {
     /// `view`, not of the document: it changes what is drawn and nothing about
     /// what would be exported.
     cropping: bool,
+    /// Whether the viewer is showing the photograph with the stack switched
+    /// off. See [`Session::set_bypass_all`].
+    bypass_all: bool,
     /// Which comparison the viewer is showing, and where its seam sits as a
     /// fraction of the frame's width. A property of the window like `view` and
     /// `cropping`: it changes what is drawn and nothing about what would be
@@ -356,6 +359,7 @@ impl Session {
             open_set: Vec::new(),
             view: Region::FULL,
             cropping: false,
+            bypass_all: false,
             compare: Compare::default(),
             wipe: 0.5,
             watcher: autosave::Watcher::new(),
@@ -495,6 +499,34 @@ impl Session {
     /// Whether the viewer is showing the whole straightened source.
     pub fn cropping(&self) -> bool {
         self.cropping
+    }
+
+    /// Show the photograph with the whole stack switched off, or stop.
+    ///
+    /// The cheapest honest bypass: render an empty stack. It costs one frame of
+    /// invalidation, and toggling back is free because the row fingerprints
+    /// have not changed — the stage cache still holds every one of them.
+    ///
+    /// The *stack* only. The colour pipeline stays, because that is what the
+    /// file's pixels mean rather than anything done to them, and the geometry
+    /// stays because a bypass is not a way to see outside the crop — that is
+    /// what the Image tab is for.
+    ///
+    /// A property of the window like [`Session::set_cropping`]: not an edit,
+    /// not in the history, and an export renders the document either way.
+    /// Somebody who bypassed the stack to look at the original and then
+    /// exported would otherwise write the original out over their work.
+    pub fn set_bypass_all(&mut self, bypass: bool) {
+        if self.bypass_all == bypass {
+            return;
+        }
+        self.bypass_all = bypass;
+        self.needs_render = true;
+    }
+
+    /// Whether the viewer is showing the photograph with the stack off.
+    pub fn bypass_all(&self) -> bool {
+        self.bypass_all
     }
 
     /// Hold the graded picture up against the ungraded one, or stop.
@@ -1437,9 +1469,23 @@ impl Session {
         // Read before the borrows below, so the framing can be worked out
         // without holding all of `self` while `self.gpu` is being written.
         let cropping = self.cropping;
+        let bypass = self.bypass_all;
         let gpu = self.gpu.context.as_ref().expect("context built above");
         let photo = self.photo.as_ref().ok_or(SessionError::NothingOpen)?;
-        let doc = photo.history.document();
+        // Cloned only while the stack is switched off, and cleared rather than
+        // skipped: everything downstream — the working texture's colour
+        // pipeline, the framing, the stage cache's keys — is written in terms
+        // of a document, and a second path through here that took none would be
+        // a second renderer to keep in step.
+        let bypassed;
+        let doc = if bypass {
+            let mut d = photo.history.document().clone();
+            d.stack.rows.clear();
+            bypassed = d;
+            &bypassed
+        } else {
+            photo.history.document()
+        };
 
         if self.gpu.source.is_none() {
             self.gpu.source = Some(
@@ -4845,5 +4891,63 @@ mod tests {
             "the sidecar does not carry the stack"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn switching_the_stack_off_is_a_view_and_not_an_edit() {
+        let mut s = Session::new();
+        s.open_test_chart(32, 32).unwrap();
+        let row = s.add_effect("exposure").unwrap();
+        s.set_float(row, "ev", 2.0).unwrap();
+        let version = s.snapshot_version();
+        let undo = s.undo_label();
+        assert!(undo.is_some(), "nothing to undo, so this proves nothing");
+
+        assert!(!s.bypass_all());
+        s.set_bypass_all(true);
+        assert!(s.bypass_all());
+        // The document is untouched: same version, same row, and nothing new on
+        // the undo stack to take the bypass back off with.
+        assert_eq!(
+            s.snapshot_version(),
+            version,
+            "bypassing edited the document"
+        );
+        assert!(
+            s.document()
+                .unwrap()
+                .stack
+                .find_by_effect("exposure")
+                .is_some()
+        );
+        assert_eq!(s.undo_label(), undo, "bypassing put a step on the history");
+
+        s.set_bypass_all(false);
+        assert!(!s.bypass_all());
+    }
+
+    /// The one that matters: an export writes the *grade*, whatever the viewer
+    /// happens to be showing. Somebody who switched the stack off to look at
+    /// the original and then exported would otherwise write the original out
+    /// over their work.
+    ///
+    /// The same shape as `an_export_is_not_a_comparison`, and for the same
+    /// reason — a view property that reached the file would be silent.
+    #[test]
+    fn an_export_is_not_a_bypass() {
+        let tmp = tempfile::tempdir().unwrap();
+        let photo = tmp.path().join("shot.png");
+        pe_io::save_png(&pe_io::test_chart(64, 64), &photo, &pe_color::space::SRGB).unwrap();
+
+        let mut s = Session::new();
+        s.open_path(&photo).unwrap();
+        s.set_export(export::Format::Png, 95);
+        let row = s.add_effect("exposure").unwrap();
+        s.set_float(row, "ev", 3.0).unwrap();
+
+        let graded = std::fs::read(s.export_current().unwrap()).unwrap();
+        s.set_bypass_all(true);
+        let bypassed = std::fs::read(s.export_current().unwrap()).unwrap();
+        assert_eq!(graded, bypassed, "the bypass was written to the file");
     }
 }
