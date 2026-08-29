@@ -64,6 +64,14 @@ struct PhotoEditorApp: App {
                 Button("Export All…") { exportAll() }
                     .keyboardShortcut("e", modifiers: [.command, .shift])
                     .disabled(!(store?.canStartBatch ?? false))
+                Button("Save Edit") { store?.saveEdit() }
+                    .keyboardShortcut("s", modifiers: .command)
+                    // The built-in chart is not a file, so there is nothing to
+                    // write a sidecar *beside*.
+                    .disabled(store?.snapshot.path == nil)
+                    .help("Writes <photo>.peproj beside the original")
+                Button("Load Edit…") { loadEdit() }
+                    .disabled(store?.snapshot.path == nil)
                 Button("Revert") { store?.revert() }
                     .disabled(!(store?.snapshot.isOpen ?? false))
             }
@@ -83,6 +91,25 @@ struct PhotoEditorApp: App {
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
         store?.openPaths(panel.urls)
+    }
+
+    /// A sidecar to pull over the photograph in hand.
+    ///
+    /// Opens beside the photograph, which is where `save_sidecar` puts one and
+    /// so where the reader's own is. Any `.peproj` will load, not only that
+    /// photograph's: moving a look from one shot to another by hand is the
+    /// point of the file existing.
+    private func loadEdit() {
+        guard let store, let open = store.snapshot.path else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Load edit"
+        panel.prompt = "Load"
+        panel.allowedContentTypes = [UTType(filenameExtension: "peproj") ?? .json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.directoryURL = URL(fileURLWithPath: open).deletingLastPathComponent()
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        store.loadEdit(url)
     }
 
     /// A folder of photographs, which is what a set usually is.

@@ -1872,6 +1872,17 @@ impl Session {
         let photo = self.photo.as_ref().ok_or(SessionError::NothingOpen)?;
         let path = photo.path.as_ref().ok_or(SessionError::NothingOpen)?;
         let out = path.with_extension("peproj");
+        // Swapping the extension can only land on a photograph if one is
+        // actually called `something.peproj`, which is close to impossible —
+        // and checked anyway, because "never write over an original" is worth
+        // being a rule rather than a likelihood. `apps/windows` makes the same
+        // check for the same reason.
+        if crate::export::would_overwrite_a_source(&self.open_set, &out) {
+            return Err(SessionError::Write(format!(
+                "{} is one of the photographs open",
+                out.display()
+            )));
+        }
         let json = photo
             .history
             .document()
@@ -4784,6 +4795,54 @@ mod tests {
         assert!(
             s.path().unwrap().ends_with("a.png"),
             "the set did not open on the first"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// "Never write over an original" is a rule, not a likelihood. Swapping the
+    /// extension can only collide if a photograph is genuinely called
+    /// `something.peproj`, and the check costs nothing.
+    #[test]
+    fn a_sidecar_is_refused_when_it_would_land_on_an_open_photograph() {
+        let dir = std::env::temp_dir().join("kroma-sidecar-collision");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A photograph whose name already ends in the sidecar's extension, so
+        // `with_extension` maps it onto itself.
+        let photo = dir.join("odd.peproj");
+        let img = pe_io::test_chart(8, 8);
+        pe_io::save_png(&img, &photo, &pe_color::space::SRGB).unwrap();
+
+        let mut s = Session::new();
+        s.open_paths(vec![photo.clone()]).unwrap();
+        let e = s.save_sidecar().unwrap_err();
+        assert!(matches!(e, SessionError::Write(_)), "{e}");
+        assert!(e.to_string().contains("one of the photographs open"), "{e}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// And the ordinary case still writes, beside the photograph.
+    #[test]
+    fn a_sidecar_is_written_beside_the_photograph() {
+        let dir = std::env::temp_dir().join("kroma-sidecar-write");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let photo = dir.join("shot.png");
+        let img = pe_io::test_chart(8, 8);
+        pe_io::save_png(&img, &photo, &pe_color::space::SRGB).unwrap();
+
+        let mut s = Session::new();
+        s.open_paths(vec![photo.clone()]).unwrap();
+        s.add_effect("sharpen").unwrap();
+        let out = s.save_sidecar().unwrap();
+        assert_eq!(out, dir.join("shot.peproj"));
+        assert!(out.exists(), "the sidecar was not written");
+
+        // And it reads back as the edit that was saved.
+        let text = std::fs::read_to_string(&out).unwrap();
+        assert!(
+            text.contains("sharpen"),
+            "the sidecar does not carry the stack"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

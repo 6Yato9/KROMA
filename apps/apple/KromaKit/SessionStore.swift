@@ -879,6 +879,31 @@ public final class SessionStore {
 
     // ---- persistence and export ------------------------------------------
 
+    // ---- the explicit save -------------------------------------------------
+
+    /// Write a `.peproj` beside the photograph.
+    ///
+    /// A sidecar is a decision — *this* is the edit, keep it, move it with the
+    /// photograph. The autosave is only where you happened to stop, and it
+    /// lives in Application Support rather than beside the file.
+    ///
+    /// Says where it went, because a file written silently somewhere the reader
+    /// cannot see is one they cannot be sure about.
+    public func saveEdit() {
+        var written: URL?
+        run { written = try session.saveSidecar() }
+        guard problem == nil, let written else { return }
+        notice = "saved \(written.lastPathComponent)"
+    }
+
+    /// Pull a sidecar back over whatever is showing, as one undo step.
+    public func loadEdit(_ url: URL) {
+        run { try session.loadSidecar(url) }
+        refresh()
+        guard problem == nil else { return }
+        notice = "loaded \(url.lastPathComponent)"
+    }
+
     public func revert() {
         run { try session.revert() }
         refresh()
