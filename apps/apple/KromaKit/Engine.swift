@@ -813,6 +813,15 @@ public final class Session {
         return URL(fileURLWithPath: String(cString: raw))
     }
 
+    /// A `.peproj` beside every photograph of the set that has an edit,
+    /// returning how many were written and how many were refused.
+    public func saveAllSidecars() throws -> (written: Int, failed: Int) {
+        var written: UInt32 = 0
+        var failed: UInt32 = 0
+        try check(pe_session_save_all_sidecars(handle, &written, &failed))
+        return (Int(written), Int(failed))
+    }
+
     public func loadSidecar(_ url: URL) throws {
         try check(url.path.withCString {
             pe_session_load_sidecar(handle, $0)

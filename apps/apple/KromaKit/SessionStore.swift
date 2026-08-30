@@ -940,6 +940,23 @@ public final class SessionStore {
         notice = "saved \(written.lastPathComponent)"
     }
 
+    /// A `.peproj` beside every photograph of the set that has an edit.
+    ///
+    /// Says both numbers when any were refused. A count on its own cannot tell
+    /// you whether the run went well — "saved 40 edits" reads as success when
+    /// nine of the forty-nine were skipped — so a run with failures is reported
+    /// as a problem rather than as a notice.
+    public func saveAllEdits() {
+        var counts = (written: 0, failed: 0)
+        run { counts = try session.saveAllSidecars() }
+        guard problem == nil else { return }
+        if counts.failed == 0 {
+            notice = counts.written == 1 ? "saved 1 edit" : "saved \(counts.written) edits"
+        } else {
+            problem = "saved \(counts.written) edits, \(counts.failed) failed"
+        }
+    }
+
     /// Pull a sidecar back over whatever is showing, as one undo step.
     public func loadEdit(_ url: URL) {
         run { try session.loadSidecar(url) }

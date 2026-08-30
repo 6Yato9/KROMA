@@ -1513,6 +1513,36 @@ pub unsafe extern "C" fn pe_session_redo(s: *mut PeSession) -> i32 {
     })
 }
 
+/// A `.peproj` beside every photograph of the set that has an edit.
+///
+/// Writes the counts through `written` and `failed`, either of which may be
+/// null. Returns 0; `-1` for a null handle; `-2` if the session refused, which
+/// is what nothing open gets.
+///
+/// Two numbers rather than one, because a single count cannot say whether the
+/// run went well: "saved 40" reads as success when nine of the forty-nine were
+/// skipped.
+///
+/// # Safety
+/// `s` must be valid or null. `written` and `failed` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_save_all_sidecars(
+    s: *mut PeSession,
+    written: *mut u32,
+    failed: *mut u32,
+) -> i32 {
+    status(s, |s| {
+        let (w, f) = s.save_all_sidecars()?;
+        if !written.is_null() {
+            unsafe { *written = w as u32 };
+        }
+        if !failed.is_null() {
+            unsafe { *failed = f as u32 };
+        }
+        Ok(())
+    })
+}
+
 /// Show the photograph with the whole stack switched off, or stop.
 ///
 /// A property of the window, like the crop framing and the comparison: not an

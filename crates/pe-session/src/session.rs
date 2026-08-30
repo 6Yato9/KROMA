@@ -1939,6 +1939,64 @@ impl Session {
         Ok(out)
     }
 
+    /// A `.peproj` beside every photograph of the set that has an edit.
+    ///
+    /// Returns how many were written and how many were refused, because a
+    /// number on its own cannot say whether the run went well: "saved 40" reads
+    /// as success when nine of the forty-nine were skipped.
+    ///
+    /// **Only photographs that have one.** A photograph nobody has opened and
+    /// nobody has pasted a grade onto has no edit, and a file full of defaults
+    /// beside it would be noise in somebody's folder. `apps/windows` says the
+    /// same and skips them for the same reason.
+    ///
+    /// The photograph in hand is written from the history that is *live*, not
+    /// from the copy parked in the set — the parked one is a frame behind
+    /// whatever has just been dragged.
+    pub fn save_all_sidecars(&mut self) -> Result<(usize, usize), SessionError> {
+        let sources = self.open_set.clone();
+        let mut written = 0usize;
+        let mut failed = 0usize;
+
+        let mut write = |path: &Path, doc: &Document| {
+            let out = path.with_extension("peproj");
+            // Never over an original, the rule `save_sidecar` keeps too.
+            if crate::export::would_overwrite_a_source(&sources, &out) {
+                failed += 1;
+                return;
+            }
+            match doc.to_json().map_err(|e| e.to_string()).and_then(|json| {
+                pe_io::write_bytes_atomically(&out, json.as_bytes()).map_err(|e| e.to_string())
+            }) {
+                Ok(()) => written += 1,
+                Err(_) => failed += 1,
+            }
+        };
+
+        let current = self.library.as_ref().map(|l| l.current());
+        if let Some(library) = self.library.as_ref() {
+            for (i, entry) in library.entries().iter().enumerate() {
+                if Some(i) == current {
+                    continue;
+                }
+                if let Some(doc) = entry.document() {
+                    write(&entry.path, doc);
+                }
+            }
+        }
+        if let Some(photo) = self.photo.as_ref()
+            && let Some(path) = photo.path.as_ref()
+        {
+            write(path, photo.history.document());
+        }
+        drop(write);
+
+        if written == 0 && failed == 0 {
+            return Err(SessionError::NothingOpen);
+        }
+        Ok((written, failed))
+    }
+
     /// Pull a sidecar back over the top of whatever is showing.
     pub fn load_sidecar(&mut self, path: impl AsRef<Path>) -> Result<(), SessionError> {
         let text = std::fs::read_to_string(path.as_ref()).map_err(|e| SessionError::Read {
@@ -4949,5 +5007,77 @@ mod tests {
         s.set_bypass_all(true);
         let bypassed = std::fs::read(s.export_current().unwrap()).unwrap();
         assert_eq!(graded, bypassed, "the bypass was written to the file");
+    }
+
+    /// Every photograph that has an edit, and no file beside the ones that do
+    /// not: a `.peproj` full of defaults is noise in somebody's folder.
+    #[test]
+    fn saving_all_writes_only_the_photographs_that_have_an_edit() {
+        let dir = std::env::temp_dir().join("kroma-save-all");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let img = pe_io::test_chart(8, 8);
+        for name in ["a.png", "b.png", "c.png"] {
+            pe_io::save_png(&img, dir.join(name), &pe_color::space::SRGB).unwrap();
+        }
+
+        let mut s = Session::new();
+        s.open_folder(&dir).unwrap();
+        // The set opens on a.png; edit it, then move to b.png and edit that.
+        s.add_effect("sharpen").unwrap();
+        s.focus(1).unwrap();
+        s.add_effect("dehaze").unwrap();
+
+        let (written, failed) = s.save_all_sidecars().unwrap();
+        assert_eq!(failed, 0, "a sidecar was refused");
+        assert_eq!(written, 2, "wrote for a photograph nobody had edited");
+        assert!(
+            dir.join("a.peproj").exists(),
+            "the photograph left behind was not written"
+        );
+        assert!(
+            dir.join("b.peproj").exists(),
+            "the photograph in hand was not written"
+        );
+        assert!(
+            !dir.join("c.peproj").exists(),
+            "a file full of defaults was written beside an untouched photograph"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The photograph in hand is written from the *live* history, not from the
+    /// copy parked in the set — which is a frame behind whatever was just done.
+    #[test]
+    fn saving_all_writes_the_photograph_in_hand_as_it_is_now() {
+        let dir = std::env::temp_dir().join("kroma-save-all-live");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let img = pe_io::test_chart(8, 8);
+        for name in ["one.png", "two.png"] {
+            pe_io::save_png(&img, dir.join(name), &pe_color::space::SRGB).unwrap();
+        }
+
+        let mut s = Session::new();
+        s.open_folder(&dir).unwrap();
+        s.add_effect("halation").unwrap();
+
+        let (written, failed) = s.save_all_sidecars().unwrap();
+        assert_eq!((written, failed), (1, 0));
+        let text = std::fs::read_to_string(dir.join("one.peproj")).unwrap();
+        assert!(
+            text.contains("halation"),
+            "the edit in hand was written a step behind"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn saving_all_with_nothing_open_is_refused() {
+        let mut s = Session::new();
+        assert!(matches!(
+            s.save_all_sidecars().unwrap_err(),
+            SessionError::NothingOpen
+        ));
     }
 }

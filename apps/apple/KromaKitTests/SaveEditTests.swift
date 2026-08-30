@@ -77,6 +77,45 @@ final class SaveEditTests: XCTestCase {
         XCTAssertEqual(store.snapshot.rows.count, without, "loading was not one step")
     }
 
+    /// Every photograph of the set that has an edit, and nothing beside the
+    /// ones that do not: a `.peproj` full of defaults is noise in a folder.
+    func testSavingAllWritesOnlyThePhotographsThatHaveAnEdit() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kroma-save-all-swift", isDirectory: true)
+        try? FileManager.default.removeItem(at: dir)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        for name in ["a", "b", "c"] {
+            let rep = try XCTUnwrap(
+                NSBitmapImageRep(
+                    bitmapDataPlanes: nil, pixelsWide: 8, pixelsHigh: 8, bitsPerSample: 8,
+                    samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                    colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+            let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+            try png.write(to: dir.appendingPathComponent("\(name).png"))
+        }
+
+        let store = try XCTUnwrap(SessionStore())
+        store.openFolder(dir)
+        XCTAssertNil(store.problem, store.problem ?? "")
+        XCTAssertEqual(store.library.count, 3)
+
+        store.addEffect("sharpen")
+        store.focus(1)
+        store.addEffect("dehaze")
+
+        store.saveAllEdits()
+        XCTAssertNil(store.problem, store.problem ?? "")
+        XCTAssertEqual(store.notice, "saved 2 edits")
+
+        let fm = FileManager.default
+        XCTAssertTrue(fm.fileExists(atPath: dir.appendingPathComponent("a.peproj").path))
+        XCTAssertTrue(fm.fileExists(atPath: dir.appendingPathComponent("b.peproj").path))
+        XCTAssertFalse(
+            fm.fileExists(atPath: dir.appendingPathComponent("c.peproj").path),
+            "a file full of defaults was written beside an untouched photograph")
+    }
+
     /// The built-in chart is not a file, so there is nothing to write a sidecar
     /// beside — which is what the menu item is greyed by.
     func testTheChartHasNothingToSaveBeside() throws {

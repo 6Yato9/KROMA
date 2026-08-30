@@ -89,6 +89,11 @@ struct PhotoEditorApp: App {
                     // write a sidecar *beside*.
                     .disabled(store?.snapshot.path == nil)
                     .help("Writes <photo>.peproj beside the original")
+                Button("Save All Edits") { store?.saveAllEdits() }
+                    // The set, not the photograph: with nothing else open this
+                    // is the same command as Save Edit under a longer name.
+                    .disabled((store?.library.count ?? 0) < 2)
+                    .help("A .peproj beside every photograph that has been edited")
                 Button("Load Edit…") { loadEdit() }
                     .disabled(store?.snapshot.path == nil)
                 Button("Revert") { store?.revert() }
