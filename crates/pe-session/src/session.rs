@@ -1973,23 +1973,27 @@ impl Session {
             }
         };
 
-        let current = self.library.as_ref().map(|l| l.current());
-        if let Some(library) = self.library.as_ref() {
-            for (i, entry) in library.entries().iter().enumerate() {
-                if Some(i) == current {
-                    continue;
-                }
-                if let Some(doc) = entry.document() {
-                    write(&entry.path, doc);
+        // Scoped, so the closure's borrow of the two counters ends before they
+        // are read below — rather than ended with a `drop`, which for a type
+        // that implements no `Drop` says less than the braces do.
+        {
+            let current = self.library.as_ref().map(|l| l.current());
+            if let Some(library) = self.library.as_ref() {
+                for (i, entry) in library.entries().iter().enumerate() {
+                    if Some(i) == current {
+                        continue;
+                    }
+                    if let Some(doc) = entry.document() {
+                        write(&entry.path, doc);
+                    }
                 }
             }
+            if let Some(photo) = self.photo.as_ref()
+                && let Some(path) = photo.path.as_ref()
+            {
+                write(path, photo.history.document());
+            }
         }
-        if let Some(photo) = self.photo.as_ref()
-            && let Some(path) = photo.path.as_ref()
-        {
-            write(path, photo.history.document());
-        }
-        drop(write);
 
         if written == 0 && failed == 0 {
             return Err(SessionError::NothingOpen);
