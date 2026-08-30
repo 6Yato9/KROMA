@@ -788,6 +788,19 @@ public final class Session {
         try check(pe_session_set_bypass_all(handle, bypass))
     }
 
+    /// Open whatever was dropped on the window, returning how many photographs
+    /// it came to. Folders are expanded by the engine.
+    @discardableResult
+    public func openDropped(_ urls: [URL]) throws -> Int {
+        let json = String(
+            data: try JSONEncoder().encode(urls.map(\.path)), encoding: .utf8) ?? "[]"
+        let n = json.withCString { pe_session_open_dropped(handle, $0) }
+        guard n >= 0 else {
+            throw EngineError(code: n, message: lastError ?? "no reason given")
+        }
+        return Int(n)
+    }
+
     /// Open every photograph in a folder, returning how many were found.
     ///
     /// Throws when the folder holds nothing this application can read, which is

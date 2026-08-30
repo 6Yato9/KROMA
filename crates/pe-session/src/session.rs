@@ -686,6 +686,34 @@ impl Session {
         Ok(n)
     }
 
+    /// Open whatever was dropped on the window: photographs, folders, or both.
+    ///
+    /// Returns how many photographs it came to. A dropped folder is as good as
+    /// a dropped file — dropping the folder is what people do when they mean
+    /// the whole shoot — and expanding it is [`Library::scan`]'s job here for
+    /// the reason it is in [`Session::open_folder`]: which extensions count is
+    /// one answer, and a shell walking the directory itself would be a second.
+    ///
+    /// A drop that comes to nothing is refused rather than opened, the same as
+    /// an empty folder: dragging a folder of documents onto the window should
+    /// say so, not empty the set.
+    pub fn open_dropped(&mut self, paths: Vec<PathBuf>) -> Result<usize, SessionError> {
+        let mut found = Vec::new();
+        for path in paths {
+            if path.is_dir() {
+                found.extend(Library::scan(&path));
+            } else {
+                found.push(path);
+            }
+        }
+        if found.is_empty() {
+            return Err(SessionError::NoPhotographs("what was dropped".to_string()));
+        }
+        let n = found.len();
+        self.open_paths(found)?;
+        Ok(n)
+    }
+
     /// Open a set of photographs, focused on the first.
     ///
     /// Only the first is decoded — a 24-megapixel frame is 96 MB of RGBA, so a
@@ -5083,5 +5111,45 @@ mod tests {
             s.save_all_sidecars().unwrap_err(),
             SessionError::NothingOpen
         ));
+    }
+
+    /// A dropped folder is as good as a dropped file, and a drop can be both.
+    #[test]
+    fn a_dropped_folder_is_expanded_and_a_dropped_file_is_not() {
+        let dir = std::env::temp_dir().join("kroma-dropped");
+        let _ = std::fs::remove_dir_all(&dir);
+        let shoot = dir.join("shoot");
+        std::fs::create_dir_all(&shoot).unwrap();
+        let img = pe_io::test_chart(8, 8);
+        for name in ["a.png", "b.png"] {
+            pe_io::save_png(&img, shoot.join(name), &pe_color::space::SRGB).unwrap();
+        }
+        let loose = dir.join("loose.png");
+        pe_io::save_png(&img, &loose, &pe_color::space::SRGB).unwrap();
+
+        let mut s = Session::new();
+        // The folder and the single file together, which is a drop somebody
+        // really makes.
+        let n = s.open_dropped(vec![shoot.clone(), loose.clone()]).unwrap();
+        assert_eq!(n, 3, "the folder was not expanded");
+        assert_eq!(s.library().map(|l| l.len()), Some(3));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A drop that comes to nothing says so rather than emptying the set.
+    #[test]
+    fn a_drop_of_nothing_readable_is_refused() {
+        let dir = std::env::temp_dir().join("kroma-dropped-nothing");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("notes.txt"), b"not a photograph").unwrap();
+
+        let mut s = Session::new();
+        s.open_test_chart(16, 16).unwrap();
+        let e = s.open_dropped(vec![dir.clone()]).unwrap_err();
+        assert!(matches!(e, SessionError::NoPhotographs(_)), "{e}");
+        // And the chart is still open: a refused drop changes nothing.
+        assert!(s.is_open());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

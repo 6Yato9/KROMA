@@ -1513,6 +1513,48 @@ pub unsafe extern "C" fn pe_session_redo(s: *mut PeSession) -> i32 {
     })
 }
 
+/// Open whatever was dropped on the window: photographs, folders, or both.
+///
+/// `paths_json` is a JSON array of paths. Returns how many photographs it came
+/// to; `-1` for a null handle or a malformed list; `-2` if the session refused,
+/// which is what a drop of nothing readable gets.
+///
+/// A dropped folder is expanded here rather than in a shell, for the reason
+/// [`pe_session_open_folder`] scans here: which extensions count is one answer.
+///
+/// # Safety
+/// `s` and `paths_json` must be valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pe_session_open_dropped(
+    s: *mut PeSession,
+    paths_json: *const c_char,
+) -> i32 {
+    let Some(json) = as_str(paths_json) else {
+        return -1;
+    };
+    let Ok(paths) = serde_json::from_str::<Vec<String>>(json) else {
+        return with(s, -1, |s| {
+            s.last_error = Some("open_dropped wants a JSON array of paths".to_string());
+            -1
+        });
+    };
+    with(s, -1, |s| {
+        match s
+            .inner
+            .open_dropped(paths.iter().map(std::path::PathBuf::from).collect())
+        {
+            Ok(n) => {
+                s.last_error = None;
+                i32::try_from(n).unwrap_or(i32::MAX)
+            }
+            Err(e) => {
+                s.last_error = Some(e.to_string());
+                -2
+            }
+        }
+    })
+}
+
 /// A `.peproj` beside every photograph of the set that has an edit.
 ///
 /// Writes the counts through `written` and `failed`, either of which may be

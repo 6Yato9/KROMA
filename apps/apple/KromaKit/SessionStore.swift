@@ -219,6 +219,19 @@ public final class SessionStore {
             : "opened \(count) photographs"
     }
 
+    /// Open whatever was dropped on the window: photographs, folders, or both.
+    ///
+    /// Cheaper for the reader than any menu, and the first thing people try.
+    public func openDropped(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        flush()
+        var count = 0
+        run { count = try session.openDropped(urls) }
+        refresh()
+        guard problem == nil else { return }
+        notice = count == 1 ? "opened 1 photograph" : "opened \(count) photographs"
+    }
+
     public func openPaths(_ urls: [URL]) {
         flush()
         run { try session.openPaths(urls) }

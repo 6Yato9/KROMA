@@ -65,6 +65,19 @@ struct ContentView: View {
             toolbar
             content
         }
+        // A photograph dropped anywhere on the window opens it, and a folder
+        // opens the whole shoot. `main.rs` calls this "cheaper for the user
+        // than any menu, and the first thing people try".
+        //
+        // The whole window rather than the viewer, because the viewer is a
+        // third of it and the edge of a drop target nobody can see is a target
+        // people miss. A dragging destination, not a mouse handler — see
+        // `MetalViewerTests`, which measures that the viewer keeps the pointer
+        // with both of these over it.
+        .dropDestination(for: URL.self) { urls, _ in
+            store.openDropped(urls)
+            return !urls.isEmpty
+        }
         .frame(minWidth: 900, minHeight: 560)
         // Behind the splits, so the seams between them are the panel grey
         // rather than whatever the window's own background happens to be.

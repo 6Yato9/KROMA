@@ -61,6 +61,35 @@ final class OpenFolderTests: XCTestCase {
         XCTAssertEqual(store.notice, "opened 1 photograph")
     }
 
+    /// A dropped folder is as good as a dropped file, and a drop can be both.
+    /// Dropping the folder is what people do when they mean the whole shoot.
+    func testADroppedFolderAndFileOpenTogether() throws {
+        let dir = try folder(named: "dropped", count: 2)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // One loose photograph outside the folder, dropped alongside it.
+        let loose = try folder(named: "dropped-loose", count: 1)
+        defer { try? FileManager.default.removeItem(at: loose) }
+        let file = loose.appendingPathComponent("photo0.png")
+
+        let store = try XCTUnwrap(SessionStore())
+        store.openDropped([dir, file])
+        XCTAssertNil(store.problem, store.problem ?? "")
+        XCTAssertEqual(store.library.count, 3, "the folder was not expanded")
+        XCTAssertEqual(store.notice, "opened 3 photographs")
+    }
+
+    /// A drop of nothing readable says so rather than emptying the set.
+    func testADropOfNothingReadableLeavesWhatIsOpen() throws {
+        let dir = try folder(named: "dropped-nothing", count: 0)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = try XCTUnwrap(SessionStore())
+        store.openTestChart()
+        store.openDropped([dir])
+        XCTAssertNotNil(store.problem, "a drop with no photographs in it was accepted")
+        XCTAssertTrue(store.snapshot.isOpen, "a refused drop closed the photograph")
+    }
+
     /// A folder with nothing readable in it is refused by name, and the refusal
     /// goes to `problem` — not to `notice`, which would draw it as a success.
     func testAFolderOfNothingIsRefusedByName() throws {

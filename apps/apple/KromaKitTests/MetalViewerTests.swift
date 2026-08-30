@@ -152,13 +152,17 @@ final class MetalViewerTests: XCTestCase {
                         CompareOverlay(store: store)
                     }
                 }
-                .dropDestination(for: DraggedEffect.self) { _, _ in true })
+                .dropDestination(for: DraggedEffect.self) { _, _ in true }
+                // And the window's own, which takes a dropped photograph. Two
+                // dragging destinations over the viewer, which is what
+                // `ContentView` actually draws.
+                .dropDestination(for: URL.self) { _, _ in true })
         defer { viewer?.stop() }
         let found = try XCTUnwrap(viewer)
         for at in Self.points {
             XCTAssertTrue(
                 host.hitTest(at) === found,
-                "the drop target took the pointer at \(at): the wheel, the pan and the "
+                "a drop target took the pointer at \(at): the wheel, the pan and the "
                     + "double-click would all go to it instead of to the picture")
         }
     }
