@@ -386,7 +386,11 @@ struct FilmstripCell: View {
     private var edited: some View {
         ZStack {
             Circle().fill(Palette.viewer.color).frame(width: 9, height: 9)
-            Circle().fill(Palette.title.color).frame(width: 5, height: 5)
+            // `EDITED`, not a text grey: the mark is a fact about the
+            // photograph rather than a label, and `main.rs` draws it in the
+            // same blue. It was `TITLE` here, which made one meaning two
+            // colours across the two shells.
+            Circle().fill(Palette.edited.color).frame(width: 5, height: 5)
         }
         .padding(4)
     }

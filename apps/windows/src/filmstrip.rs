@@ -169,7 +169,7 @@ fn draw(
         // pass is readable at a glance.
         let at = egui::pos2(cell.max.x - 7.0, cell.min.y + 7.0);
         painter.circle_filled(at, 4.0, egui::Color32::from_black_alpha(160));
-        painter.circle_filled(at, 2.5, egui::Color32::from_rgb(120, 200, 255));
+        painter.circle_filled(at, 2.5, crate::theme::colour::EDITED);
     }
 }
 

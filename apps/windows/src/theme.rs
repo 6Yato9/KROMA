@@ -56,6 +56,7 @@ pub mod colour {
     pub const SELECT: Color32 = c(pe_theme::colour::SELECT);
     pub const WARN: Color32 = c(pe_theme::colour::WARN);
     pub const ERROR: Color32 = c(pe_theme::colour::ERROR);
+    pub const EDITED: Color32 = c(pe_theme::colour::EDITED);
 
     /// Red, green and blue, in the order a parade draws them.
     pub const CHANNEL: [Color32; 3] = [

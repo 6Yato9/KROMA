@@ -745,9 +745,24 @@ public struct ScopesPanel: View {
             Toggle("RGB", isOn: $shown.waveformRGB)
                 .disabled(!shown.waveform)
             Toggle("Parade", isOn: $shown.parade)
-            Toggle("Vector", isOn: $shown.vectorscope)
+            // "Vectorscope", not "Vector": `main.rs` calls it that, and so
+            // does the well this toggle opens — a control and the panel it
+            // shows should not be two different words for one thing.
+            Toggle("Vectorscope", isOn: $shown.vectorscope)
             Toggle("Histogram", isOn: $shown.histogram)
-            Spacer()
+            Spacer(minLength: 8)
+            // What the numbers are *of*, which is not what is on screen.
+            // Somebody zoomed into a corner would otherwise read the scopes as
+            // describing the corner. `main.rs` says the same, in the same
+            // place, for the same reason.
+            Text("measured on the whole photograph, not the visible part")
+                .font(.system(size: 10))
+                .foregroundStyle(Palette.dim.color)
+                .lineLimit(1)
+                .fixedSize()
+                // It is a caption, not a control: it steps aside in a narrow
+                // window rather than pushing the toggles off the end.
+                .layoutPriority(-1)
         }
         // `SELECT`, not `ACCENT`. Which scopes are on screen is a *choice*,
         // and `.toggleStyle(.button)` painted it in the system accent — the

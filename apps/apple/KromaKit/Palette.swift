@@ -118,6 +118,11 @@ public enum Palette: String, CaseIterable, Sendable {
     case select = "SELECT"
     case warn = "WARN"
     case error = "ERROR"
+    /// The mark on a filmstrip cell whose photograph has been worked on. Its
+    /// own colour rather than a text grey: a fact about the photograph, not a
+    /// label, and it has to carry at thumbnail size over whatever the picture
+    /// happens to be.
+    case edited = "EDITED"
 
     /// The bytes, and the only place they are written.
     public var rgb: Rgb8 {
@@ -155,6 +160,7 @@ public enum Palette: String, CaseIterable, Sendable {
         case .select: Rgb8(46, 84, 122)
         case .warn: Rgb8(226, 168, 74)
         case .error: Rgb8(226, 96, 82)
+        case .edited: Rgb8(120, 200, 255)
         }
     }
 

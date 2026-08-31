@@ -138,6 +138,15 @@ pub mod colour {
         SELECT = (46, 84, 122);
         WARN = (226, 168, 74);
         ERROR = (226, 96, 82);
+        /// The mark on a filmstrip cell whose photograph has been worked on,
+        /// so a set half way through a pass is readable at a glance.
+        ///
+        /// Its own colour rather than a text grey: it is a *fact about the
+        /// photograph*, not a label, and it has to carry at thumbnail size over
+        /// whatever the picture happens to be. Blue because the warm end of the
+        /// scheme is spoken for — the accent titles the open effect and the
+        /// warning is amber.
+        EDITED = (120, 200, 255);
     }
 
     /// The three channel colours, in channel order.
