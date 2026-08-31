@@ -755,14 +755,19 @@ public struct ScopesPanel: View {
             // Somebody zoomed into a corner would otherwise read the scopes as
             // describing the corner. `main.rs` says the same, in the same
             // place, for the same reason.
-            Text("measured on the whole photograph, not the visible part")
-                .font(.system(size: 10))
-                .foregroundStyle(Palette.dim.color)
-                .lineLimit(1)
-                .fixedSize()
-                // It is a caption, not a control: it steps aside in a narrow
-                // window rather than pushing the toggles off the end.
-                .layoutPriority(-1)
+            //
+            // Whole or absent, the same as the GPU name in the toolbar.
+            // `layoutPriority(-1)` was not enough on its own: `fixedSize`
+            // pins the text to its full width whatever its priority, so the
+            // *toggles* gave way instead and read "W… R… P… V… Hi…".
+            ViewThatFits(in: .horizontal) {
+                Text("measured on the whole photograph, not the visible part")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Palette.dim.color)
+                    .lineLimit(1)
+                    .fixedSize()
+                Color.clear.frame(width: 0, height: 0)
+            }
         }
         // `SELECT`, not `ACCENT`. Which scopes are on screen is a *choice*,
         // and `.toggleStyle(.button)` painted it in the system accent — the

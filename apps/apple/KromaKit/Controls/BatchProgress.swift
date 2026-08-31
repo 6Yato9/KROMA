@@ -33,7 +33,11 @@ public struct BatchProgress: View {
     /// standing "0 failed" is a worry offered to everybody who never had one.
     private func running(_ counts: BatchCounts) -> some View {
         bar {
-            Text("Exporting \(counts.done + counts.failed) of \(counts.total)")
+            // Lower case, like every other running line in both shells:
+            // `main.rs` writes "exporting n of m" here and "grade copied",
+            // "saved n edits" in the status bar. A sentence that starts with a
+            // capital reads as a heading rather than as something happening.
+            Text("exporting \(counts.done + counts.failed) of \(counts.total)")
                 .foregroundStyle(Palette.title.color)
                 .monospacedDigit()
             track(counts.fraction)
